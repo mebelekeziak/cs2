@@ -118,11 +118,10 @@ effective limit. Accelerator `0x8BEB70` computes
 when the second term is positive. Its half-step split is recombined at `0x8E0A80`.
 For collision-free final velocity under the supplied current-speed model, the maximum-gain projection is
 `max(0, cap - availableAcceleration)`. The two symmetric directions allow
-steering toward camera/WASD intent without changing camera angles. The revised
-planner uses the same model to maximize heading change with a retained-speed
-target. Continuous A/D turning is velocity relative; release uses heading
-recovery with fractional-amplitude correction instead of alternating lateral
-speed-gain commands.
+steering toward camera/WASD intent without changing camera angles. Revision 7
+uses that model for full-input gain and useful-turn projections. Its policy and
+command replay changes are documented below; no additional engine ABI or offset
+is assumed.
 
 Modern jump helper `0x8C2630` updates actual press time even when the current
 `sv_jump_spam_penalty_time` rejects that press. Revised requests remain pending
@@ -303,4 +302,63 @@ held-input landings (139 at one command tick, 37 at two), observed dwell median
 observer recorded 432 ground-clear executions across 221 distinct jump ticks;
 duplicates represent repeated client prediction, not independent server jumps.
 Both x64 Release menu builds pass all ten suites, including 39 jump checks and
-19 replay checks. Further autostrafe changes were deferred by the user.
+19 replay checks. The subsequent steering request is implemented in revision 7.
+
+## Revision 7: aggressive directional gain and fresh replay intent
+
+The previous turning branch held velocity magnitude exactly constant whenever
+heading error exceeded 15 degrees. That is a zero-gain policy, including during
+continuous circles. Its smaller corrections could reduce analog amplitude to
+fit that fixed envelope. The replay branch also ran before physical keys and
+view yaw were sampled, retaining stale analog input across changed steering in
+the same sequence/base/tick. Jump stability does not require stale steering.
+
+The new policy derives both directions from the verified accelerator above.
+Let `S=length(v)`, `A=acceleration*wishSpeed*friction*dt`,
+`C=min(wishSpeedCap,wishSpeed)`, `q=dot(v,wishdir)`, and
+`a=min(A,max(0,C-q))`. A full-input impulse changes squared speed by
+`2*a*q+a*a`. Maximum gain uses `qGain=min(S,max(0,C-A))`.
+Near intent, select its mirror toward the desired heading. Large corrections
+maximize heading change while retaining half the maximum squared-speed gain:
+the full-impulse branch solves `q=(requiredGain-A*A)/(2*A)`, and the
+cap-limited branch solves `q=-sqrt(C*C-requiredGain)`. Choose the applicable
+branch and clamp to the feasible `[-S,qGain]` interval. If intent lies between
+the gain and turn heading changes, sixteen bounded scalar bisection iterations
+find its projection. All active outputs retain unit analog magnitude; there is
+one final candidate simulation and no angle scan. Weak acceleration still
+constrains turn authority; no cvar, speed, camera or velocity is written.
+
+This is an independently derived turn/gain policy. Background primary sources:
+[Valve's Source air accelerator](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/game/shared/gamemovement.cpp)
+and a [public CS2 directional autostrafer](https://github.com/cacamelio/weave-v3-csgo-and-cs2/blob/main/cs2/counterstrike2/feature/movement/movement_.cpp).
+The latter demonstrates eight-direction intent, newest-opposing-key arbitration
+and velocity-relative correction. Its source is not copied, and no proprietary
+Neverlose implementation is claimed. Installed CS2 code remains the authority
+for physics, layouts and integration.
+
+Physical keys and yaw are now sampled before replay. Changed steering uses the
+frozen starting velocity, physics and planner state for that command, updates
+only analog/direction input, and retains the selected jump edge exactly. Stable
+input reuses its plan without advancing solver state again. Newest observed
+opposing key presses win independently per axis; simultaneous first presses
+are neutral. Source/focus/settings/Space and command rollback reset priority.
+Airborne release returns historical assisted axes to physical input through the
+existing owned time-zero analog transition. It does not apply a braking impulse.
+
+The standalone before/after harness under `logs/revision7-comparison/` compiles
+the actual revision 6 solver from HEAD alongside revision 7, then independently
+integrates their command analogs. Synthetic physics: wish speed 250, cap 30,
+acceleration 12, friction 1, dt 1/64; initial speed 250, 128 commands, no ground
+or collision response. Rotating a held diagonal at +/-360 degrees/second gave
+392.810 -> 415.649 final speed and 7.277 -> 1.002 degrees mean heading error.
+The new solver gained on all 82 correction commands; the old solver gained on
+none of its 26 correction commands. Cycling eight WASD headings every eight
+commands gave 352.987 -> 379.340 final speed, with maximum end-of-block heading
+error 5.665 -> 5.370 degrees. Both signs were mirrored.
+
+At +/-500 degrees/second, the new solver's growing speed eventually exceeds
+the available turning rate: final speed 377.991, maximum lag 20.073 degrees.
+Preserving gain cannot provide arbitrary turn rate at arbitrary speed. These
+results are model comparisons, not client/server observations. Fractional
+prediction, collisions, ground rules and exact substep modifiers remain the
+limitations described above; the user must verify revision 7 in offline play.

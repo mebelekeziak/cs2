@@ -9,11 +9,11 @@ unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept;
 // Deterministic input corpus: ordinary commands, fractional fragments, weak
 // acceleration, and projection-clipped impulses. No live game timing claim.
 int main() {
-    constexpr std::array<AirPhysics, 7> physics{{
+    constexpr std::array<AirPhysics, 8> physics{{
         {250, 30, 12, 1, 1.0f / 64}, {250, 30, 12, 0.2f, 0.004f},
         {250, 30, 12, 1, 1.0f / 32}, {250, 3, 100, 1, 0.1f},
         {250, 250, 0.01f, 1, 0.0001f}, {250, 30, 0, 1, 1.0f / 64},
-        {250, 250, 100, 1, 0.1f}
+        {250, 250, 100, 1, 0.1f}, {250, 30, 12, 2, 1.0f / 64}
     }};
     constexpr int commands = 300000;
     unsigned int maximumEvaluations = 0;
@@ -41,7 +41,8 @@ int main() {
     }
 #ifdef CS2_STEERING_BENCHMARK
     // The cost bound is deterministic; elapsed time is reported without flaky
-    // hardware/load-dependent pass thresholds. Turn <=1, gain clipping adds <=1.
+    // hardware/load-dependent pass thresholds. Projection refinement has a
+    // separate fixed scalar bound; full candidate simulation remains <=2.
     std::printf("maximum_candidate_evaluations=%u bound=2\n", maximumEvaluations);
     return maximumEvaluations > 2 ? 1 : 0;
 #else

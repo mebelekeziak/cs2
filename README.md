@@ -35,6 +35,8 @@ shared between the menu and hotkeys, and last for the current run.
 Both features start enabled. Hold **Space** to activate them while playing the
 authorized built-in offline bot match. **WASD**, including diagonal combinations,
 selects camera-relative travel direction and rebuilds speed after slowing down.
+When opposing keys overlap, the most recently observed press wins on that axis;
+simultaneous first presses cancel. Diagonals remain available throughout a turn.
 Releasing all movement keys stops assisted steering; no autostop is implemented.
 The steering reads physical W/A/S/D before synthesized input, so generated
 side movement cannot latch the turn after release. The **Movement** menu tab
@@ -48,12 +50,16 @@ new buffer signal can start an earlier release/retry. Cooldown is measured from
 the conservative observation time, without mixing engine stamp clock domains.
 When the server's automatic bunnyhop mode is already enabled, held jump remains
 down throughout flight. The code reads that setting without changing it.
-Autostrafe first turns toward the requested heading while retaining modeled
-horizontal speed, then uses maximum-gain air impulses near that heading to build
-speed above the air projection cap. There is no retained entry-speed ceiling.
-Gain-stage excursions remain within 15 degrees of intent in the supplied model.
-No input leaves ordinary release behavior alone. It changes
-normalized movement and direction buttons without rotating the camera.
+Autostrafe uses full normalized input throughout air movement. Near the requested
+heading it selects the maximum-gain impulse toward intent; larger corrections
+choose the strongest turn retaining at least half the maximum squared-speed gain
+for that command. Continuous circles therefore gain speed during corrections,
+instead of alternating acceleration with turns that deliberately gain zero.
+There is no retained entry-speed ceiling or fixed 15-degree heading envelope.
+Small corrections between those two impulse directions use a bounded projection
+solve. Heading excursions scale with the current physics and speed.
+It changes normalized movement and direction buttons without rotating the camera.
+Releasing WASD restores ordinary axes before integration and leaves coasting alone.
 The first ground slice restores physical WASD axes after assisted air movement;
 ground movement otherwise stays under ordinary game input control.
 
@@ -166,20 +172,54 @@ with 94 ms in the earlier run. Median observed landing-to-takeoff speed change
 was zero. Engine tracing confirmed immediate client ground-clear/jump executions;
 prediction duplicates are not counted as independent authoritative jumps.
 Both Release menu builds pass all ten test suites, including 39 jump-planner
-checks and same-command ground-rewind regressions. The user still dislikes
-autostrafe and has deferred further steering work.
+checks and same-command ground-rewind regressions. The user still disliked
+autostrafe in this run.
+
+**Revision 7 aggressive steering:** replaces the zero-gain turn policy with the
+turn/gain solver described above. Physical keys and camera yaw are sampled before
+command replay; changed steering refreshes analogs from the frozen command-start
+velocity, physics and planner state. Repeating an unchanged command retains its
+output. The existing jump choice and edge remain stable across either kind of
+rebuild, including prediction-only ground changes. Newest opposing keys win,
+and release restores historical assisted axes through a time-zero transition.
+
+The implementation derives its projection choices from the locally verified CS2
+accelerator. Research references were Valve's published
+[Source air acceleration](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/game/shared/gamemovement.cpp)
+and a public [CS2 directional autostrafer](https://github.com/cacamelio/weave-v3-csgo-and-cs2/blob/main/cs2/counterstrike2/feature/movement/movement_.cpp).
+The latter supplied control-design background; its code, hardcoded angles and
+runtime layouts were not imported. Neverlose's implementation is not available
+for verification. Revision 7 still needs the user's offline gameplay test.
+
+**Revision 7 verification:** both public and diagnostic x64 Release builds pass
+all ten CTest suites, including 30 steering checks and 37 replay checks. The
+steering tests independently integrate emitted analogs, compare strong turns
+with a numerical oracle, and cover diagonal circles, immediate direction
+changes, camera wrapping, low-speed recovery and varied/fractional physics.
+The installed-client read-only verifier passes for the same inspected build.
+The standalone solver benchmark remains below one microsecond per command in
+the recorded runs; this does not measure the complete live callback.
+
+An independent two-second model comparison at 360 degrees/second with a diagonal
+held gives 393 → 416 final speed and 7.3 → 1.0 degrees mean heading error. The
+before/after harness and complete outputs are under `logs/revision7-comparison/`.
+Very fast intent rotation at rising speed can exceed available turning authority;
+useful gain and arbitrary direction changes cannot both be guaranteed by ordinary
+air physics. These are model results, with no live revision 7 run yet.
 
 Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
 WASD, including diagonals and low-speed recovery. Release WASD to check normal
-coasting with no autostop. The launcher writes movement telemetry to the existing
+coasting with no autostop. For revision 7, also cycle W → WA → A → AS → S → SD → D
+→ DW and turn the camera with a diagonal held. The launcher writes movement telemetry to the existing
 `logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
 
 * `MOVE_BUILD_VERIFIED` checks input identity/layout; `MOVE_OWNER` records an
   observed command callback. Build verification alone does not prove a jump.
-* `MOVE_CMD` samples inputs, synthesized buttons/analogs, velocity and current
-  physics roughly every two seconds while assistance runs.
+* `MOVE_CMD` samples physical intent, synthesized buttons/analogs, velocity,
+  requested heading, predicted speed and current physics roughly every two
+  seconds while assistance runs. Predictions are model outputs, not observations.
 * `MOVE_JUMP_RULES` reports successful reads or the specific unavailable jump
   field. `MOVE_CMD` separately records jump-rule and jump-plan validity.
 * `MOVE_PERF` reports mean/max assistance callback microseconds, airborne
@@ -200,7 +240,8 @@ coasting with no autostop. The launcher writes movement telemetry to the existin
   edge records incoming native bits and engine buttons before/after ingestion.
 * `MOVE_REPLAY` records rebuilt native bits and retained/restored event counts;
   repeated commands reuse a plan. Command tick changes can trigger a replan;
-  prediction-only ground changes preserve the selected input.
+  prediction-only ground changes preserve the selected jump input. Changed
+  physical keys/camera refresh steering only; `steering_refreshes` counts this.
 * `MOVE_GROUND_HANDOFF` records restoration of physical axes before the first
   ground slice. `MOVE_JUMP_EXEC` records the engine jump helper's immediate
   integration velocity, ground flag, buttons and stamps before/after execution.

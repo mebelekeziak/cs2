@@ -41,6 +41,7 @@ int lastSequence = -1, lastTick = -1;
 bool wasGrounded = false, haveGround = false;
 JumpState jumpState{};
 SteeringState steeringState{};
+MovementPhysicalIntentState physicalIntentState{};
 bool strafeControlled = false;
 std::uint64_t previousDirections = 0;
 float lastSpeed = 0;
@@ -59,11 +60,15 @@ struct ReplayCache {
     MovementReplayContext context{};
     MovementReplayPlan plan{};
     std::array<MovementReplayStep, 2> events{}; // Analog then jump.
+    // Steering refresh uses the command's original inputs, never the velocity
+    // already changed by predicting its previous output.
+    MovementReplaySteeringStart steeringStart{};
 };
 ReplayCache replay{};
 MovementSettings inputSettings{};
 bool haveInputSettings = false;
 std::uint64_t replayed = 0, replayNativeRepairs = 0, replayRestoredEvents = 0;
+std::uint64_t replaySteeringRefreshes = 0;
 ULONGLONG lastReplayReport = 0;
 LARGE_INTEGER timingFrequency{};
 std::uint64_t timedCalls = 0, timedAirCalls = 0;
@@ -126,6 +131,7 @@ void Reset() noexcept {
     lastSequence = lastTick = -1;
     wasGrounded = haveGround = false; lastSpeed = 0;
     ResetJump(jumpState); ResetAirSteering(steeringState);
+    physicalIntentState = {};
     lastJumpReadState = nullptr;
     replay = {}; haveInputSettings = false;
     for (auto& request : requests) request.sequence = -1;
@@ -391,7 +397,7 @@ bool CaptureStepOrder(Patch& patch) noexcept {
 }
 
 MovementReplayContext ReplayContext(const Pawn& pawn, const Patch& patch, int sequence, int tick,
-                                   const MovementSettings& settings) noexcept {
+                                   const MovementSettings& settings, const MovementReplayIntent& intent) noexcept {
     MovementReplayContext context{};
     context.valid = true; context.held = true;
     context.bunnyhop = settings.bunnyhop; context.autostrafe = settings.autostrafe;
@@ -402,6 +408,7 @@ MovementReplayContext ReplayContext(const Pawn& pawn, const Patch& patch, int se
     context.pawn = pawn.address; context.pawnIdentity = pawn.identity; context.services = pawn.services; context.system = pawn.system;
     context.controller = pawn.controller; context.controllerIdentity = pawn.controllerIdentity;
     context.pawnHandle = pawn.handle; context.controllerHandle = pawn.controllerHandle;
+    context.intent = intent;
     return context;
 }
 bool PutOwnedEvent(Patch& patch, unsigned event, const MovementSubtick& value) noexcept {
@@ -454,7 +461,9 @@ void RememberReplay(const Patch& patch, const MovementReplayContext& context,
                plan.strafe, plan.jumpEdge, reported};
 }
 void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& context) noexcept {
-    const auto plan = replay.plan; // No jump/steering planner state advances.
+    const auto refresh = MovementPlanReplaySteering(replay.steeringStart, replay.context.intent,
+        context.intent, replay.plan); // The selected jump input remains prediction-stable.
+    const auto plan = refresh.plan;
     const auto incoming = patch.buttons;
     const auto mask = MovementReplayMask(plan);
     patch.jump = plan.jump; patch.strafe = plan.strafe;
@@ -495,14 +504,23 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
     const unsigned restored = static_cast<unsigned>(patch.size - patch.originalSize);
     ++replayed; replayNativeRepairs += repaired; replayRestoredEvents += restored;
     RememberReplay(patch, context, plan, true);
+    if (refresh.refreshed) {
+        steeringState = refresh.state; strafeControlled = refresh.steering.valid;
+        previousDirections = patch.buttons.down & off::Directions;
+        ++replaySteeringRefreshes;
+    }
     const auto now = GetTickCount64();
     if (!lastReplayReport || now - lastReplayReport >= 2000) {
         lastReplayReport = now;
-        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu; cached plan reused without advancing planner",
+        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu steering_refresh=%u steering_refreshes=%llu physical=%.1f,%.1f held=0x%x yaw=%.3f predicted_valid=%u predicted_speed=%.3f; jump retained, changed steering uses frozen command-start state",
             context.sequence, context.simulationTick, repaired, plan.jumpEdge, plan.jumpDown, retained, restored,
             patch.originalSize, patch.size, incoming.down, incoming.changed, incoming.third,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, historicalForward, historicalLeft,
-            patch.forward, patch.left, replayed, replayNativeRepairs, replayRestoredEvents);
+            patch.forward, patch.left, replayed, replayNativeRepairs, replayRestoredEvents,
+            refresh.refreshed, replaySteeringRefreshes, context.intent.forward, context.intent.left,
+            static_cast<unsigned>(context.intent.heldMask), context.intent.viewYaw,
+            refresh.refreshed && refresh.steering.valid,
+            std::hypot(refresh.steering.predictedVelocityX, refresh.steering.predictedVelocityY));
     }
 }
 
@@ -533,12 +551,14 @@ void Process(void* input, void* commandPointer) noexcept {
     const auto settings = MovementGetSettings();
     if (haveInputSettings && (inputSettings.bunnyhop != settings.bunnyhop || inputSettings.autostrafe != settings.autostrafe)) {
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
+        physicalIntentState = {};
         strafeControlled = false; haveGround = false;
     }
     inputSettings = settings; haveInputSettings = true;
     const bool held = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
     if (!held || (!settings.bunnyhop && !settings.autostrafe)) {
         ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false;
+        physicalIntentState = {};
         strafeControlled = false; replay = {};
         State(held ? "movement disabled in settings" : "ready; hold Space"); return;
     }
@@ -574,10 +594,22 @@ void Process(void* input, void* commandPointer) noexcept {
     const float desiredForward = patch.forward, desiredLeft = patch.left;
     if (sequence < lastSequence || tick < lastTick) {
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false; strafeControlled = false;
+        physicalIntentState = {};
     }
     const bool grounded = (pawn.flags & off::OnGround) != 0;
     MarkStage(Stage::Layout);
-    const auto context = ReplayContext(pawn, patch, sequence, tick, settings);
+    namespace keys = movement_physical_keys;
+    const auto heldKeys = static_cast<std::uint8_t>(
+        ((GetAsyncKeyState('W') & 0x8000) ? keys::Forward : 0) |
+        ((GetAsyncKeyState('S') & 0x8000) ? keys::Back : 0) |
+        ((GetAsyncKeyState('A') & 0x8000) ? keys::Left : 0) |
+        ((GetAsyncKeyState('D') & 0x8000) ? keys::Right : 0));
+    auto intent = MovementResolvePhysicalIntent(physicalIntentState, heldKeys);
+    intent.viewValid = Read(patch.base + off::base::Angles, angles) && angles &&
+        Read(angles + 0x1C, yaw) && std::isfinite(yaw);
+    intent.viewYaw = yaw;
+    MarkStage(Stage::Keys);
+    auto context = ReplayContext(pawn, patch, sequence, tick, settings, intent);
     if (MovementCanReplay(replay.context, context)) { RepairReplay(pawn, patch, context); return; }
     const ReplayCache rebuilt = replay;
     const bool sameRebuiltSource = MovementReplaySameSource(rebuilt.context, context) &&
@@ -586,6 +618,11 @@ void Process(void* input, void* commandPointer) noexcept {
         // A pooled command/base or a source identity changed under the same
         // sequence, or prediction rolled back. Do not reuse the old plan.
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
+        physicalIntentState = {};
+        const auto priorIntent = intent;
+        intent = MovementResolvePhysicalIntent(physicalIntentState, heldKeys);
+        intent.viewYaw = priorIntent.viewYaw; intent.viewValid = priorIntent.viewValid;
+        context.intent = intent;
         haveGround = false; strafeControlled = false;
     }
     // A changed command tick can require another plan for this sequence, but
@@ -625,28 +662,36 @@ void Process(void* input, void* commandPointer) noexcept {
     SteeringOutput strafe{};
     MarkStage(Stage::Jump);
     SteeringState nextSteeringState = steeringState;
+    const SteeringState initialSteeringState = steeringState;
+    const auto initialDirections = strafeControlled ? previousDirections : (patch.buttons.down ^ patch.buttons.changed);
     AirPhysics physics{};
     physics.surfaceFriction = pawn.friction;
     const bool airSpeedValid = settings.autostrafe && !grounded && AirSpeed(pawn, physics.wishSpeed);
     MarkStage(Stage::SpeedModifiers);
-    if (airSpeedValid &&
-        Read(patch.base + off::base::Angles, angles) && angles && Read(angles + 0x1C, yaw) &&
+    const bool airSteeringAvailable = airSpeedValid && intent.viewValid &&
         Read(client + off::TickIntervalConstant, physics.interval) &&
-        Cvar(off::AirCap, physics.wishSpeedCap) && Cvar(off::AirAccelerate, physics.acceleration)) {
-        const float physicalForward = static_cast<float>((GetAsyncKeyState('W') & 0x8000) != 0) -
-                                      static_cast<float>((GetAsyncKeyState('S') & 0x8000) != 0);
-        const float physicalLeft = static_cast<float>((GetAsyncKeyState('A') & 0x8000) != 0) -
-                                   static_cast<float>((GetAsyncKeyState('D') & 0x8000) != 0);
-        MarkStage(Stage::Keys);
+        Cvar(off::AirCap, physics.wishSpeedCap) && Cvar(off::AirAccelerate, physics.acceleration) &&
+        std::isfinite(physics.interval) && physics.interval > 0 && physics.interval <= 0.1f &&
+        std::isfinite(physics.wishSpeedCap) && physics.wishSpeedCap > 0 &&
+        std::isfinite(physics.acceleration) && physics.acceleration >= 0 &&
+        std::isfinite(physics.surfaceFriction) && physics.surfaceFriction >= 0;
+    const StrafeInput initialSteeringInput{pawn.velocity[0], pawn.velocity[1], yaw,
+        intent.forward, intent.left, static_cast<std::uint32_t>(sequence)};
+    if (airSteeringAvailable) {
         strafe = PlanAirSteering(nextSteeringState, {pawn.velocity[0], pawn.velocity[1], yaw,
-                                  physicalForward, physicalLeft, static_cast<std::uint32_t>(sequence)}, physics);
+                                  intent.forward, intent.left, static_cast<std::uint32_t>(sequence)}, physics);
         MarkStage(Stage::Solver);
         if (strafe.valid) {
             patch.strafe = true; patch.forward = strafe.forward; patch.left = strafe.left;
             patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
-            const auto prior = strafeControlled ? previousDirections : (patch.buttons.down ^ patch.buttons.changed);
-            MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, prior);
+            MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, initialDirections);
         }
+    }
+    const bool airHandoff = airSteeringAvailable && !strafe.valid && strafeControlled;
+    if (airHandoff) {
+        patch.strafe = true; patch.forward = intent.forward; patch.left = intent.left;
+        patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
+        MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, initialDirections);
     }
     // The first ground slice starts with the prior simulated air axes, before
     // final command ingestion. Restore physical input through the same owned
@@ -693,6 +738,7 @@ void Process(void* input, void* commandPointer) noexcept {
     const MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
                                   jump.down, patch.forward, patch.left, patch.buttons};
     RememberReplay(patch, context, plan);
+    replay.steeringStart = {airSteeringAvailable, initialSteeringInput, initialSteeringState, physics, initialDirections};
     strafeControlled = strafe.valid;
     previousDirections = patch.buttons.down & off::Directions;
     if (patch.jump) jumpState = nextJumpState;
@@ -715,13 +761,15 @@ void Process(void* input, void* commandPointer) noexcept {
         lastReport = now;
         std::uint8_t precision = 0;
         const bool rules = Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::JumpPrecision, precision);
-        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u",
+        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u target_heading=%.3f predicted_valid=%u predicted_speed=%.3f air_handoff=%u",
             sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], jump.down, jump.fresh,
-            patch.strafe, patch.forward, patch.left, desiredForward, desiredLeft, yaw, strafe.wishYaw, strafe.accelerationStep,
+            patch.strafe, patch.forward, patch.left, intent.forward, intent.left, yaw, strafe.wishYaw, strafe.accelerationStep,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, patch.size, callbacks, modified, presses, strafes, rejected,
             physics.wishSpeedCap, physics.acceleration, physics.wishSpeed, physics.surfaceFriction, physics.interval,
             penalty, autoBhop, precision, rules, historicalForward, historicalLeft, static_cast<unsigned>(strafe.mode),
-            strafe.headingError, strafe.headingChange, jumpRulesValid, jump.valid);
+            strafe.headingError, strafe.headingChange, jumpRulesValid, jump.valid,
+            std::remainder(yaw + std::atan2(intent.left, intent.forward) * 57.295779513f, 360.0f),
+            strafe.valid, std::hypot(strafe.predictedVelocityX, strafe.predictedVelocityY), airHandoff);
     }
 }
 void HookFinalize(void* input, void* command) noexcept {
@@ -842,7 +890,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=6 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_gain stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes subticks=time_zero");
+    Log("MOVE_IMPLEMENTATION revision=7 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=time_zero");
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

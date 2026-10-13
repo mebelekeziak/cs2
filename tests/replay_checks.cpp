@@ -164,5 +164,142 @@ int main() {
     Expect(MovementReplaySameSource(cached, current),
            "command tick progress can request another plan while preserving its pending state and owned messages");
     Expect(!MovementCanReplay({}, cached), "discarded cache cannot replay after release or lifecycle invalidation");
+
+    namespace keys = movement_physical_keys;
+    MovementPhysicalIntentState physical{};
+    auto physicalW = MovementResolvePhysicalIntent(physical, keys::Forward);
+    auto physicalWS = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Back);
+    bool newestForwardStable = physicalW.forward == 1 && physicalWS.forward == -1;
+    for (int frame = 0; frame < 10000; ++frame)
+        newestForwardStable &= MovementResolvePhysicalIntent(physical, keys::Forward | keys::Back).forward == -1;
+    Expect(newestForwardStable, "newly pressed S immediately wins over held W and survives repeated producer polls");
+    const auto survivingW = MovementResolvePhysicalIntent(physical, keys::Forward);
+    const auto repressedS = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Back);
+    Expect(survivingW.forward == 1 && repressedS.forward == -1,
+        "releasing the winning opposing key restores the survivor and a new press wins again");
+    physical = {};
+    MovementResolvePhysicalIntent(physical, keys::Back);
+    const auto newestW = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Back);
+    const auto sameAxesNewMask = MovementResolvePhysicalIntent(physical, keys::Forward);
+    Expect(newestW.forward == 1 && sameAxesNewMask.forward == 1 &&
+        MovementReplayIntentChanged(newestW, sameAxesNewMask),
+        "physical press changes remain distinguishable when newest-key arbitration resolves to the same axes");
+    physical = {};
+    const auto simultaneous = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Back | keys::Left | keys::Right);
+    bool simultaneousStable = !simultaneous.forward && !simultaneous.left;
+    for (int frame = 0; frame < 10000; ++frame) {
+        const auto heldTogether = MovementResolvePhysicalIntent(physical, simultaneous.heldMask);
+        simultaneousStable &= !heldTogether.forward && !heldTogether.left;
+    }
+    Expect(simultaneousStable, "simultaneous first opposing presses are neutral and never invent a newest key on replay");
+    auto survivingDiagonal = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Right);
+    auto newLeft = MovementResolvePhysicalIntent(physical, keys::Forward | keys::Left | keys::Right);
+    Expect(survivingDiagonal.forward == 1 && survivingDiagonal.left == -1 && newLeft.forward == 1 && newLeft.left == 1,
+        "newest A/D arbitration is independent from the forward axis and preserves diagonals");
+    MovementResolvePhysicalIntent(physical, 0);
+    Expect(!physical.forward && !physical.left && !physical.heldMask,
+        "all physical releases clear the retained newest-key axes");
+    physical = {};
+    const auto lifecycleReset = MovementResolvePhysicalIntent(physical, keys::Left | keys::Right);
+    Expect(!lifecycleReset.left, "a lifecycle reset discards prior opposing-key priority");
+
+    MovementReplaySteeringStart steeringStart{};
+    steeringStart.available = true;
+    steeringStart.input = {250, 0, 0, 1, 0, 123};
+    steeringStart.physics = {250, 30, 12, 1, 1.0f / 64};
+    steeringStart.state.turnSide = -1;
+    steeringStart.directions = off::Forward;
+    auto initialState = steeringStart.state;
+    const auto initialSteering = PlanAirSteering(initialState, steeringStart.input, steeringStart.physics);
+    auto initialAirPlan = press;
+    initialAirPlan = MovementRefreshReplaySteering(initialAirPlan, initialSteering.forward,
+        initialSteering.left, steeringStart.directions);
+    MovementReplayIntent initialIntent{1, 0, 0, true, keys::Forward};
+    auto airContext = cached; airContext.grounded = false; airContext.intent = initialIntent;
+    const auto sameJump = [](const MovementReplayPlan& first, const MovementReplayPlan& second) {
+        return first.jump == second.jump && first.jumpEdge == second.jumpEdge && first.jumpDown == second.jumpDown &&
+            !(((first.buttons.down ^ second.buttons.down) | (first.buttons.changed ^ second.buttons.changed) |
+               (first.buttons.third ^ second.buttons.third)) & movement_offsets::Jump);
+    };
+    const auto near = [](float first, float second) { return std::abs(first - second) < 0.00001f; };
+    MovementReplayIntent leftIntent{0, 1, 0, true, keys::Left};
+    current = airContext; current.grounded = true; current.intent = leftIntent;
+    auto retarget = MovementPlanReplaySteering(steeringStart, initialIntent, leftIntent, initialAirPlan);
+    auto expectedState = steeringStart.state;
+    auto expectedInput = steeringStart.input; expectedInput.forward = 0; expectedInput.left = 1;
+    const auto expectedSteering = PlanAirSteering(expectedState, expectedInput, steeringStart.physics);
+    Expect(MovementCanReplay(airContext, current) && retarget.refreshed && retarget.steering.valid &&
+        near(retarget.plan.forward, expectedSteering.forward) && near(retarget.plan.left, expectedSteering.left) &&
+        sameJump(initialAirPlan, retarget.plan),
+        "W-to-A during a same-command ground rewind refreshes real steering while retaining the causative jump press");
+    bool frozenRetarget = true, stableRetarget = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        current = airContext; current.grounded = (frame & 1) != 0; current.intent = leftIntent;
+        retarget = MovementPlanReplaySteering(steeringStart, initialIntent, leftIntent, initialAirPlan);
+        frozenRetarget &= MovementCanReplay(airContext, current) && sameJump(initialAirPlan, retarget.plan) &&
+            near(retarget.steering.predictedVelocityX, expectedSteering.predictedVelocityX) &&
+            near(retarget.steering.predictedVelocityY, expectedSteering.predictedVelocityY);
+        const auto stable = MovementPlanReplaySteering(steeringStart, leftIntent, leftIntent, retarget.plan);
+        stableRetarget &= !stable.refreshed && near(stable.plan.forward, retarget.plan.forward) &&
+            near(stable.plan.left, retarget.plan.left) && sameJump(retarget.plan, stable.plan);
+    }
+    Expect(frozenRetarget && steeringStart.input.velocityX == 250 && !steeringStart.input.velocityY &&
+        steeringStart.state.turnSide == -1 && steeringStart.physics.interval == 1.0f / 64,
+        "10000 prediction rewinds retarget from immutable command-start velocity, side and physics");
+    Expect(stableRetarget, "unchanged physical input reuses refreshed analogs without another solver/state step");
+    auto turnedCamera = initialIntent; turnedCamera.viewYaw = 90;
+    const auto cameraRefresh = MovementPlanReplaySteering(steeringStart, initialIntent, turnedCamera, initialAirPlan);
+    expectedState = steeringStart.state; expectedInput = steeringStart.input; expectedInput.viewYaw = 90;
+    const auto expectedCamera = PlanAirSteering(expectedState, expectedInput, steeringStart.physics);
+    Expect(cameraRefresh.refreshed && near(cameraRefresh.plan.forward, expectedCamera.forward) &&
+        near(cameraRefresh.plan.left, expectedCamera.left) && sameJump(initialAirPlan, cameraRefresh.plan),
+        "same-command camera turn immediately refreshes camera-relative axes with the original jump unchanged");
+    auto wrappedCamera = initialIntent; wrappedCamera.viewYaw = 360;
+    auto wrapStart = initialIntent; wrapStart.viewYaw = 179;
+    auto wrapEnd = initialIntent; wrapEnd.viewYaw = -179;
+    Expect(!MovementReplayIntentChanged(initialIntent, wrappedCamera) && MovementReplayIntentChanged(wrapStart, wrapEnd),
+        "equivalent full-turn yaw does not refresh while a real turn across the yaw seam does");
+    MovementReplayIntent releasedIntent{0, 0, 90, true, 0};
+    const auto releaseRefresh = MovementPlanReplaySteering(steeringStart, turnedCamera, releasedIntent, cameraRefresh.plan);
+    const auto physicalRelease = MovementReplayButtons({off::Jump | off::Forward | off::Left | 1,
+        off::Jump | off::Forward, 0x100}, releaseRefresh.plan);
+    const auto stopAssistance = MovementAnalogTransition(releaseRefresh.plan.forward, releaseRefresh.plan.left, -0.6f, 0.8f);
+    Expect(releaseRefresh.refreshed && !releaseRefresh.steering.valid && releaseRefresh.plan.strafe &&
+        !releaseRefresh.plan.forward && !releaseRefresh.plan.left && !(physicalRelease.down & off::Directions) &&
+        sameJump(cameraRefresh.plan, releaseRefresh.plan) && (physicalRelease.down & 1) && physicalRelease.third == 0x100 &&
+        near(-0.6f + stopAssistance.forwardDelta, 0) && near(0.8f + stopAssistance.leftDelta, 0),
+        "airborne WASD release replaces historical assisted axes before integration without braking or losing jump/attack");
+    messages.clear(); owned = {}; allocator = 0x1000;
+    Reconcile(messages, owned, MovementAnalogTransition(cameraRefresh.plan.forward, cameraRefresh.plan.left, 1, 0), allocator);
+    const auto releasedAddress = owned.address;
+    bool releaseEventStable = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        const float historyForward = frame & 1 ? 0.25f : -0.6f, historyLeft = frame & 1 ? -0.5f : 0.8f;
+        const auto event = MovementAnalogTransition(releaseRefresh.plan.forward, releaseRefresh.plan.left, historyForward, historyLeft);
+        Reconcile(messages, owned, event, allocator);
+        releaseEventStable &= messages.size() == 1 && owned.address == releasedAddress &&
+            near(historyForward + messages.front().value.forwardDelta, 0) &&
+            near(historyLeft + messages.front().value.leftDelta, 0);
+    }
+    Expect(releaseEventStable, "release refresh reuses one owned analog event with fresh history through 10000 rebuilds");
+    auto releaseAirPlan = initialAirPlan;
+    releaseAirPlan.jumpDown = false; MovementEncodeJump(releaseAirPlan.buttons, false, true);
+    const auto retainedRelease = MovementPlanReplaySteering(steeringStart, initialIntent, leftIntent, releaseAirPlan);
+    Expect(retainedRelease.refreshed && sameJump(releaseAirPlan, retainedRelease.plan) &&
+        !(retainedRelease.plan.buttons.down & off::Jump) && (retainedRelease.plan.buttons.changed & off::Jump),
+        "steering refresh also retains an already selected jump release edge exactly");
+    auto unobservedView = leftIntent; unobservedView.viewValid = false;
+    const auto fallbackAxes = MovementPlanReplaySteering(steeringStart, initialIntent, unobservedView, initialAirPlan);
+    Expect(fallbackAxes.refreshed && !fallbackAxes.steering.valid && !fallbackAxes.plan.forward && fallbackAxes.plan.left == 1 &&
+        sameJump(initialAirPlan, fallbackAxes.plan),
+        "unavailable view returns physical axes rather than keeping stale assisted steering and still preserves the jump");
+    auto groundStart = steeringStart; groundStart.available = false;
+    const auto frozenGround = MovementPlanReplaySteering(groundStart, initialIntent, leftIntent, press);
+    Expect(!frozenGround.refreshed && !frozenGround.plan.strafe && sameJump(press, frozenGround.plan),
+        "predicting an originally grounded command airborne does not invent an air plan or replan its jump");
+    auto previouslyReleased = press;
+    const auto acquireAir = MovementPlanReplaySteering(steeringStart, releasedIntent, leftIntent, previouslyReleased);
+    Expect(acquireAir.refreshed && acquireAir.steering.valid && acquireAir.plan.strafe && sameJump(press, acquireAir.plan),
+        "a new WASD press can acquire air steering in a command that originally had no directional assistance");
     return failures ? 1 : 0;
 }
