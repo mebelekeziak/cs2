@@ -1,5 +1,6 @@
 #include "movement_math.h"
 #include "movement_command.h"
+#include "movement_offsets.h"
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -122,5 +123,17 @@ int main() {
     Expect(jumpEvent.presence == 7 && jumpEvent.button == 2 && jumpEvent.pressed && jumpEvent.when == 0 &&
            !jumpEvent.forwardDelta && !jumpEvent.leftDelta,
            "jump event is separate so button decoder cannot discard analog movement");
+    // A new base value is consumed after slices. The ground handoff must also
+    // replace historical airborne axes before the first slice, and native
+    // direction flags must agree without damaging the jump/attack edge.
+    const float airForward = -0.6f, airLeft = 0.8f;
+    const auto landingInput = MovementAnalogTransition(1, 0, airForward, airLeft);
+    MovementButtons landingButtons{1 | 2 | 8, 1 | 2, 0x100};
+    MovementEncodeStrafe(landingButtons, 1, 0, 16 | 512);
+    Expect(std::abs(airForward + landingInput.forwardDelta - 1) < 0.00001f &&
+           std::abs(airLeft + landingInput.leftDelta) < 0.00001f &&
+           (landingButtons.down & movement_offsets::Directions) == movement_offsets::Forward &&
+           (landingButtons.down & 3) == 3 && (landingButtons.changed & 3) == 3 && landingButtons.third == 0x100,
+           "landing handoff integrates physical W before ground movement while preserving attack and jump edges");
     return failures ? 1 : 0;
 }

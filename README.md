@@ -43,6 +43,9 @@ has independent toggles, also available through F8/F9 with the menu hidden.
 Bunnyhop retains a pending press across command callbacks instead of releasing
 it on the next command. Engine input/press feedback, takeoff and the controller's
 simulation tick counter drive bounded retries and release acknowledgement.
+After observing press processing, another grounded simulation tick without a
+new buffer signal can start an earlier release/retry. Cooldown is measured from
+the conservative observation time, without mixing engine stamp clock domains.
 When the server's automatic bunnyhop mode is already enabled, held jump remains
 down throughout flight. The code reads that setting without changing it.
 Autostrafe first turns toward the requested heading while retaining modeled
@@ -51,7 +54,8 @@ speed above the air projection cap. There is no retained entry-speed ceiling.
 Gain-stage excursions remain within 15 degrees of intent in the supplied model.
 No input leaves ordinary release behavior alone. It changes
 normalized movement and direction buttons without rotating the camera.
-Grounded movement remains under ordinary game input control.
+The first ground slice restores physical WASD axes after assisted air movement;
+ground movement otherwise stays under ordinary game input control.
 
 Air acceleration, air wish-speed cap, surface friction, effective server/weapon
 speed limit, surface speed factor, stamina, jump cooldown and engine tick quantum come from the current engine
@@ -138,6 +142,33 @@ fractional landing timing. Collisions, prediction/substep timing and the game's
 jump/speed rules can change the resulting speed. Exact per-substep duck, walking
 and firing speed transitions are not mirrored by the air solver.
 
+**Revision 6 landing follow-up:** revision 5's live run
+`logs/overlay-14292-134363818907289145.log` records callback means around
+50–60 microseconds, confirming the millisecond preflight stalls were removed.
+However, 92 held-input landing episodes had a repeated six-command-tick
+press/release/retry pattern; prediction corrections complicate the raw ground
+flag transitions. The engine clears the usable stamp on successful jumps, so an
+invalid stamp alone cannot diagnose a rejected press. The concrete replay bug
+was treating predicted ground changes as new input: 164 of 625 commands received
+opposite jump outputs during rebuilds. Revision 6 keeps the selected input for
+the same command sequence/base/tick despite that prediction result. It restores
+physical ground axes before integration, shortens observed-processing retries,
+and adds a read-only before/after engine jump trace to distinguish actual jump
+execution from later prediction corrections. Engine friction and the current
+bunnyhop speed rule still apply; no match setting is changed.
+
+**Observed revision 6 result:** the user reported that bunnyhop works perfectly
+in the offline match. The snapshot of
+`logs/overlay-32264-134363831973223334.log` had zero opposite jump outputs across
+442 commands. Of 176 qualifying held-Space landing episodes, 139 took off after
+one command tick and 37 after two; observed wall-time median was 16 ms, compared
+with 94 ms in the earlier run. Median observed landing-to-takeoff speed change
+was zero. Engine tracing confirmed immediate client ground-clear/jump executions;
+prediction duplicates are not counted as independent authoritative jumps.
+Both Release menu builds pass all ten test suites, including 39 jump-planner
+checks and same-command ground-rewind regressions. The user still dislikes
+autostrafe and has deferred further steering work.
+
 Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
@@ -168,7 +199,11 @@ coasting with no autostop. The launcher writes movement telemetry to the existin
   physics/output confirmation. Every mismatch and first ingestion of a jump
   edge records incoming native bits and engine buttons before/after ingestion.
 * `MOVE_REPLAY` records rebuilt native bits and retained/restored event counts;
-  repeated commands reuse a plan while ground/tick progress can trigger a replan.
+  repeated commands reuse a plan. Command tick changes can trigger a replan;
+  prediction-only ground changes preserve the selected input.
+* `MOVE_GROUND_HANDOFF` records restoration of physical axes before the first
+  ground slice. `MOVE_JUMP_EXEC` records the engine jump helper's immediate
+  integration velocity, ground flag, buttons and stamps before/after execution.
 * `MOVE_STATE` / `MOVE_SOURCE` / `MOVE_STOPPED_RESIDENT` explain inactivity,
   lifecycle changes and completed mutation shutdown.
 

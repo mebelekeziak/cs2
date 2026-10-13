@@ -122,7 +122,7 @@ int main() {
     current.simulationTick += 1;
     Expect(MovementCanReplay(cached, current), "same source command can rebuild as predicted simulation advances");
     bool invalidated = true;
-    for (int change = 0; change < 19; ++change) {
+    for (int change = 0; change < 18; ++change) {
         current = cached;
         switch (change) {
         case 0: current.held = false; break;
@@ -143,14 +143,26 @@ int main() {
         case 15: ++current.pawnHandle; break;
         case 16: ++current.controllerHandle; break;
         case 17: ++current.commandTick; break;
-        case 18: current.grounded = false; break;
         }
         invalidated &= !MovementCanReplay(cached, current);
     }
-    Expect(invalidated, "Space loss, settings, rollback, ground/tick progress, owner and all source identity changes reject cached plans");
+    Expect(invalidated, "Space loss, settings, rollback, command tick, owner and all source identity changes reject cached plans");
+    auto pendingContext = cached;
+    bool pressStable = true, releaseStable = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        current = pendingContext; current.grounded = (frame & 1) != 0;
+        const auto stablePress = MovementReplayButtons({0, 0, 0}, press);
+        pressStable &= MovementCanReplay(pendingContext, current) && (stablePress.down & off::Jump) &&
+            (stablePress.changed & off::Jump);
+        const auto stableRelease = MovementReplayButtons({off::Jump, 0, 0}, release);
+        releaseStable &= MovementCanReplay(pendingContext, current) && !(stableRelease.down & off::Jump) &&
+            (stableRelease.changed & off::Jump);
+    }
+    Expect(pressStable, "predicted takeoff and ground rewinds cannot replace the causative command press with a release");
+    Expect(releaseStable, "predicted ground changes cannot invent a new press in an already planned release command");
     current = cached; ++current.commandTick; current.grounded = false;
     Expect(MovementReplaySameSource(cached, current),
-           "ground/tick progress requests another plan without invalidating its pending jump state or owned messages");
+           "command tick progress can request another plan while preserving its pending state and owned messages");
     Expect(!MovementCanReplay({}, cached), "discarded cache cannot replay after release or lifecycle invalidation");
     return failures ? 1 : 0;
 }

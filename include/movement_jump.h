@@ -11,9 +11,9 @@ enum class JumpPhase : unsigned char { Ready, Pending, Releasing };
 struct JumpState {
     JumpPhase phase = JumpPhase::Ready;
     bool down = false;
-    std::uint32_t requestTick = 0, releaseTick = 0, lastSimulationTick = 0;
-    bool haveClock = false;
-    JumpStamp baselineActual{};
+    std::uint32_t requestTick = 0, releaseTick = 0, lastSimulationTick = 0, consumptionTick = 0;
+    bool haveClock = false, haveConsumption = false, usableBuffered = false;
+    JumpStamp baselineActual{}, baselineUsable{};
 };
 struct JumpInput {
     bool grounded = false, engineDown = false, modern = false, autoBunnyhop = false;

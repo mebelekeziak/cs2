@@ -9,6 +9,11 @@ namespace movement_offsets {
 inline constexpr std::ptrdiff_t Input = 0x2572460;
 inline constexpr std::ptrdiff_t InputVtable = 0x1C97B28;
 inline constexpr std::ptrdiff_t Finalize = 0xCEC510;
+inline constexpr std::ptrdiff_t ModernJump = 0x8C2630;
+inline constexpr unsigned char ModernJumpBytes[]{
+    0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0xd1,
+    0x48,0x81,0xec,0x88,0x00,0x00,0x00,0x8b,0x9a,0xd4,0x00,0x00,0x00,0x4c,0x8b,0xf2
+};
 inline constexpr std::ptrdiff_t EffectiveMaxSpeed = 0x8CD030;
 inline constexpr unsigned char MaxSpeedBytes[]{
     0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x30,0x48,0x8b,0xf9
@@ -48,6 +53,8 @@ namespace controller {
 inline constexpr std::ptrdiff_t TickBase = 0x6B8;
 }
 namespace services {
+inline constexpr std::ptrdiff_t Pawn = 0x38;
+inline constexpr std::ptrdiff_t ModernJumpState = 0x6C8;
 inline constexpr std::ptrdiff_t MaxSpeed = 0x1AC;
 inline constexpr std::ptrdiff_t Friction = 0x26C;
 inline constexpr std::ptrdiff_t SurfaceData = 0x278;
@@ -58,6 +65,11 @@ inline constexpr std::ptrdiff_t CommandLeft = 0x1A4;
 inline constexpr std::ptrdiff_t ModernActual = 0x6D8;
 inline constexpr std::ptrdiff_t ModernUsable = 0x6E0;
 inline constexpr std::ptrdiff_t ModernLanded = 0x6E8;
+}
+namespace move_data {
+inline constexpr std::ptrdiff_t Velocity = 0x38;
+inline constexpr std::ptrdiff_t Tick = 0xD4;
+inline constexpr std::ptrdiff_t Fraction = 0xDC;
 }
 inline constexpr std::uint32_t OnGround = 1, WaterJump = 4, Frozen = 32;
 inline constexpr std::uint8_t Walk = 2;

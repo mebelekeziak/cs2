@@ -2,6 +2,21 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+bool ValidStamp(const JumpStamp& stamp) noexcept {
+    return stamp.tick >= 0 && std::isfinite(stamp.fraction) && stamp.fraction >= 0 && stamp.fraction < 1;
+}
+bool AdvancedStamp(const JumpStamp& stamp, const JumpStamp& baseline) noexcept {
+    return ValidStamp(stamp) && (!ValidStamp(baseline) || stamp.tick > baseline.tick ||
+        (stamp.tick == baseline.tick && stamp.fraction > baseline.fraction));
+}
+void BeginRequest(JumpState& state, const JumpInput& in) noexcept {
+    state.phase = JumpPhase::Pending; state.down = true;
+    state.requestTick = in.simulationTick; state.baselineActual = in.actual; state.baselineUsable = in.usable;
+    state.haveConsumption = false; state.usableBuffered = false;
+}
+}
+
 void ResetJump(JumpState& state) noexcept { state = {}; }
 JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
     JumpOutput out{};
@@ -15,30 +30,43 @@ JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
     } else if (!in.grounded) {
         ResetJump(state);
     } else if (state.phase == JumpPhase::Ready) {
-        state.phase = JumpPhase::Pending; state.down = true;
-        state.requestTick = in.simulationTick; state.baselineActual = in.actual;
+        BeginRequest(state, in);
     } else if (state.phase == JumpPhase::Pending) {
-        const bool pressConsumed = in.modern && (in.actual.tick != state.baselineActual.tick ||
-            in.actual.fraction != state.baselineActual.fraction);
+        const bool pressConsumed = in.modern && AdvancedStamp(in.actual, state.baselineActual);
         out.acknowledged = pressConsumed || in.engineDown;
+        if (pressConsumed && !state.haveConsumption) {
+            // Observing consumption occurs at or after the engine processed
+            // the press. This simulation clock is only compared with itself;
+            // actual/usable stamps remain in their own engine clock domain.
+            state.haveConsumption = true; state.consumptionTick = in.simulationTick;
+        }
+        if (in.modern && AdvancedStamp(in.usable, state.baselineUsable)) state.usableBuffered = true;
         // Command callbacks are not simulation steps. Retain the request across
-        // duplicate ticks while a bounded simulation grace interval allows
-        // consumption/takeoff. Failed attempts get an acknowledged release
-        // before another fresh edge, with a full quantum of cooldown margin.
+        // duplicate ticks. Usable stamps can clear on successful jumps and
+        // actual stamps alone prove processing, not takeoff. If another real
+        // simulation tick after observing the press still finds us grounded,
+        // with no advancing buffer signal, begin a release/retry instead of
+        // waiting the entire grace period. This also bounds obstructed input.
         const double elapsed = static_cast<double>(in.simulationTick - state.requestTick) * in.interval;
         const double grace = std::max(static_cast<double>(in.penalty), static_cast<double>(in.bufferWindow)) + in.interval;
         // A usable stamp is not an indefinite acknowledgement: the engine can
         // retain it after an obstructed attempt. Even an undelivered request is
         // retried once real predicted simulation has advanced beyond grace.
-        if (elapsed > grace) {
+        const bool missingTakeoff = state.haveConsumption && !state.usableBuffered &&
+            in.simulationTick > state.consumptionTick;
+        if (missingTakeoff || elapsed > grace) {
             state.phase = JumpPhase::Releasing; state.down = false; state.releaseTick = in.simulationTick;
         }
     } else {
         const double releasedFor = static_cast<double>(in.simulationTick - state.releaseTick) * in.interval;
-        const double sincePress = static_cast<double>(in.simulationTick - state.requestTick) * in.interval;
-        if (!in.engineDown && releasedFor >= in.interval && sincePress > in.penalty + in.interval) {
-            state.phase = JumpPhase::Pending; state.down = true;
-            state.requestTick = in.simulationTick; state.baselineActual = in.actual;
+        const auto cooldownStart = state.haveConsumption ? state.consumptionTick : state.requestTick;
+        const double sincePress = static_cast<double>(in.simulationTick - cooldownStart) * in.interval;
+        // Modern consumption has a conservative observed start, so another
+        // arbitrary tick of cooldown margin is unnecessary. Without that
+        // observation retain the earlier request-time safety margin.
+        const double cooldown = static_cast<double>(in.penalty) + (state.haveConsumption ? 0 : in.interval);
+        if (!in.engineDown && releasedFor >= in.interval && sincePress > cooldown) {
+            BeginRequest(state, in);
         }
     }
     out.valid = true; out.down = state.down;

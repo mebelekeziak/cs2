@@ -1,6 +1,7 @@
 #include "movement.h"
 #include "movement_math.h"
 #include "movement_jump.h"
+#include "movement_jump_trace.h"
 #include "movement_steering.h"
 #include "movement_command.h"
 #include "movement_replay.h"
@@ -30,6 +31,7 @@ std::atomic<bool> enabled{false};
 std::atomic<const char*> status{"movement not initialized"};
 SRWLOCK commandLock = SRWLOCK_INIT;
 bool stopEverRequested = false; // Protected by commandLock.
+bool jumpTracePrepared = false;
 DWORD owner = 0;
 std::uintptr_t sourcePawn = 0, sourceServices = 0;
 std::uintptr_t sourceController = 0;
@@ -586,8 +588,9 @@ void Process(void* input, void* commandPointer) noexcept {
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
         haveGround = false; strafeControlled = false;
     }
-    // Ground/tick progression can require another plan for this sequence, but
+    // A changed command tick can require another plan for this sequence, but
     // must keep the pending/releasing phase and recognize still-owned events.
+    // Prediction-only ground changes reuse the existing plan above.
     replay = {};
     const float speed = std::hypot(pawn.velocity[0], pawn.velocity[1]);
     if (haveGround && grounded != wasGrounded) {
@@ -645,6 +648,16 @@ void Process(void* input, void* commandPointer) noexcept {
             MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, prior);
         }
     }
+    // The first ground slice starts with the prior simulated air axes, before
+    // final command ingestion. Restore physical input through the same owned
+    // analog transition path; this performs no ground steering or braking.
+    const bool groundHandoff = settings.autostrafe && grounded && strafeControlled &&
+        std::isfinite(desiredForward) && std::isfinite(desiredLeft);
+    if (groundHandoff) {
+        patch.strafe = true; patch.forward = desiredForward; patch.left = desiredLeft;
+        patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
+        MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, previousDirections);
+    }
     if (!patch.jump && !patch.strafe) { State("movement physics unavailable"); return; }
     patch.commandPresence |= 1;
     if (!PrepareSteps(patch, sameRebuiltSource ? &rebuilt : nullptr) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
@@ -680,7 +693,7 @@ void Process(void* input, void* commandPointer) noexcept {
     const MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
                                   jump.down, patch.forward, patch.left, patch.buttons};
     RememberReplay(patch, context, plan);
-    strafeControlled = patch.strafe;
+    strafeControlled = strafe.valid;
     previousDirections = patch.buttons.down & off::Directions;
     if (patch.jump) jumpState = nextJumpState;
     else ResetJump(jumpState);
@@ -693,8 +706,10 @@ void Process(void* input, void* commandPointer) noexcept {
             jumpInput.actual.tick, jumpInput.actual.fraction, jumpInput.usable.tick, jumpInput.usable.fraction,
             jumpInput.landed.tick, jumpInput.landed.fraction, jumpInput.engineDown, penalty, jumpInput.bufferWindow, legacy, autoBhop);
     }
-    ++modified; strafes += patch.strafe;
-    State(patch.strafe ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
+    ++modified; strafes += strafe.valid;
+    if (groundHandoff) Log("MOVE_GROUND_HANDOFF sequence=%d tick=%d history=%.5f,%.5f physical=%.5f,%.5f speed=%.3f; restore physical axes before ground integration",
+        sequence, tick, historicalForward, historicalLeft, patch.forward, patch.left, speed);
+    State(strafe.valid ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
     const auto now = GetTickCount64();
     if (!lastReport || now - lastReport >= 2000) {
         lastReport = now;
@@ -822,18 +837,24 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     if (ingestQueue != MH_OK) { State("ingestion hook queue failed"); return false; }
     const auto queue = MH_QueueEnableHook(reinterpret_cast<void*>(method));
     if (queue != MH_OK) { Log("MOVE_HOOK_FAILED queue=%s", MH_StatusToString(queue)); State("command hook queue failed"); return false; }
+    jumpTracePrepared = MovementJumpTracePrepare(MovementTelemetryPush);
+    if (!jumpTracePrepared) Log("MOVE_JUMP_TRACE_UNAVAILABLE; assistance remains enabled with command/ingestion telemetry");
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=5 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_gain stages=enabled pending_jump=simulation_clock subticks=time_zero");
+    Log("MOVE_IMPLEMENTATION revision=6 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_gain stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes subticks=time_zero");
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {
     AcquireSRWLockExclusive(&commandLock);
-    if (!stopEverRequested) enabled.store(true, std::memory_order_release);
+    if (!stopEverRequested) {
+        enabled.store(true, std::memory_order_release);
+        MovementJumpTraceEnable(jumpTracePrepared);
+    }
     ReleaseSRWLockExclusive(&commandLock);
 }
 void MovementStop(const char* reason) noexcept {
+    MovementJumpTraceEnable(false);
     enabled.store(false, std::memory_order_release);
     AcquireSRWLockExclusive(&commandLock);
     stopEverRequested = true;

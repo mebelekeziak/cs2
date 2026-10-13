@@ -12,6 +12,13 @@ import struct
 
 EXPECTED_HASH = "44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008"
 CHECKS = {
+    "modern_jump_observer": (0x8C2630, "405553565741564157488d6c24d14881ec880000008b9ad40000004c8bf2"),
+    "modern_jump_call": (0x8DE88B, "488d8bc8060000e8993dfeff"),
+    "modern_jump_services": (0x8C2662, "488b4908"),
+    "modern_jump_fraction": (0x8C2656, "f30f10b2dc000000"),
+    "modern_jump_live_ground": (0x8DE8A6, "488b4338488bd7488bcbf680f403000001"),
+    "modern_jump_velocity_xy": (0x8E7363, "8b47288946388b472c89463c"),
+    "modern_jump_velocity_z": (0x8E760A, "f30f590b450fb6cf498bcef30f110b"),
     "command_finalizer": (0xCEC510, "48895c2408488974241048897c24184c8974242055488d6c24e04881ec200100"),
     "command_finalizer_call": (0xB659E8, "498b07498bcf488b542430ff5030"),
     "effective_maxspeed": (0x8CD030, "48895c24084889742420574883ec30488bf9"),
@@ -80,6 +87,39 @@ def verify_cvar_offsets(image, header_path):
             raise SystemExit(f"Legacy selector value addressing differs at 0x{compare_site:X}")
     return verified
 
+
+def verify_jump_trace_offsets(image, header_path):
+    header = re.sub(r"//[^\n]*|/\*.*?\*/", "", header_path.read_text(encoding="utf-8-sig"), flags=re.S)
+
+    def literal(name, scope=None):
+        source = header if scope is None else re.search(rf"namespace\s+{scope}\s*\{{([^}}]*)\}}", header, re.S).group(1)
+        match = re.search(rf"\bptrdiff_t\s+{name}\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)\s*;", source)
+        if not match:
+            raise SystemExit(f"Missing literal jump trace source offset: {scope or ''}::{name}")
+        return int(match.group(1), 0)
+
+    # CALL rel32 + LEA RCX[services+disp32] independently identify the hook and receiver.
+    target = 0x8DE892 + 5 + struct.unpack_from("<i", image, 0x8DE893)[0]
+    state_offset = struct.unpack_from("<i", image, 0x8DE88E)[0]
+    observed = {
+        "ModernJump": (literal("ModernJump"), target),
+        "services::ModernJumpState": (literal("ModernJumpState", "services"), state_offset),
+        "services::Pawn": (literal("Pawn", "services"), image[0x8DE8A9]),
+        "move_data::Tick": (literal("Tick", "move_data"), struct.unpack_from("<i", image, 0x8C2647)[0]),
+        "move_data::Fraction": (literal("Fraction", "move_data"), struct.unpack_from("<i", image, 0x8C265A)[0]),
+        "move_data::Velocity": (literal("Velocity", "move_data"), image[0x8E7368]),
+    }
+    for name, (source, decoded) in observed.items():
+        if source != decoded:
+            raise SystemExit(f"Jump trace source mismatch: {name}=0x{source:X}; machine operand requires 0x{decoded:X}")
+    prefix = re.search(r"ModernJumpBytes\[\]\s*\{([^}]*)\}", header, re.S)
+    if not prefix:
+        raise SystemExit("Missing ModernJumpBytes source prefix")
+    expected = bytes(int(token.strip(), 0) for token in prefix.group(1).split(",") if token.strip())
+    if bytes(image[target:target + len(expected)]) != expected:
+        raise SystemExit("ModernJumpBytes source prefix differs from installed function")
+    return {name: hex(decoded) for name, (_, decoded) in observed.items()}
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client", type=Path, default=Path(
@@ -110,6 +150,7 @@ def main():
         if bytes(image[rva:rva + len(want)]) != want:
             raise SystemExit(f"Evidence differs: {name} at 0x{rva:X}")
     verified_cvars = verify_cvar_offsets(image, args.header)
+    verified_jump_trace = verify_jump_trace_offsets(image, args.header)
     assert struct.unpack_from("<Q", image, 0x1C97B28 + 6 * 8)[0] - image_base == 0xCEC510
     interval = struct.unpack_from("<f", image, 0x1AC0064)[0]
     assert interval > 0
@@ -123,7 +164,8 @@ def main():
         "machine": hex(machine), "timestamp": hex(timestamp), "image_size": hex(image_size),
         "input": "embedded object RVA 0x2572460", "finalize_slot": 6,
         "tick_quantum_from_engine_seconds": interval, "verified_code": list(CHECKS),
-        "source_offsets": str(args.header), "verified_cvars": verified_cvars}, indent=2))
+        "source_offsets": str(args.header), "verified_cvars": verified_cvars,
+        "verified_jump_trace": verified_jump_trace}, indent=2))
 
 if __name__ == "__main__":
     main()

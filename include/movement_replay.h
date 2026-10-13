@@ -27,7 +27,10 @@ inline bool MovementReplaySameSource(const MovementReplayContext& cached,
 inline bool MovementCanReplay(const MovementReplayContext& cached,
                               const MovementReplayContext& current) noexcept {
     return MovementReplaySameSource(cached, current) && cached.sequence == current.sequence &&
-        cached.commandTick == current.commandTick && cached.grounded == current.grounded &&
+        // Ground is a result of predicting this input, not a new input identity.
+        // Changing its planned edge based on that result can erase the very
+        // jump that produced a takeoff during the next prediction replay.
+        cached.commandTick == current.commandTick &&
         current.simulationTick >= cached.simulationTick;
 }
 

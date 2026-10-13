@@ -24,7 +24,7 @@ target_include_directories(imgui_dx11 PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_
 target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
 add_library(cs2_overlay SHARED src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp
   src/movement_settings.cpp src/movement_math.cpp src/movement.cpp src/movement_command.cpp
-  src/movement_jump.cpp src/movement_steering.cpp src/movement_telemetry.cpp)
+  src/movement_jump.cpp src/movement_steering.cpp src/movement_telemetry.cpp src/movement_jump_trace.cpp)
 if(NOT CS2_DIAGNOSTIC_UI)
   target_sources(cs2_overlay PRIVATE src/public_menu.cpp)
 endif()

@@ -253,3 +253,54 @@ invalidate replay eligibility. Fresh live verification remains necessary.
 Public and diagnostic x64 Release builds pass all ten CTest suites. Seventeen
 replay checks include 10,000-frame physical-button rebuilds, event retention/loss,
 pool reuse for unrelated actions, fresh historical deltas and cache invalidation.
+
+## Revision 6: prediction-stable input and ground handoff
+
+The PID 14292 log contained 164 of 625 native commands with opposite assisted
+jump edges during rebuilds; 163 flipped with unchanged simulation tick. For
+example, sequence 1443 selected a ground press, predicted a takeoff, and replaced
+its own press with a release. Sequence 1444 alternated press/release/press while
+the engine stamp rewound. Ground is an output of predicting that command;
+it must not invalidate the selected input. Same sequence/base/tick now retains
+the cached plan despite ground changes. Source, settings, held-input, command
+tick and simulation rollback checks remain. Analog deltas still use fresh
+historical axes. New regressions exercise 10,000 ground/air prediction rewinds
+without changing the original press or release.
+
+On the first grounded command after assisted air movement, physical base analog
+values alone arrive too late for the first integration slice. The handoff now
+emits the owned analog transition to physical axes and aligns native direction
+bits, preserving jump/attack/camera data. It performs no ground steering or
+autostop. The pending planner can release a processed request earlier after a
+further grounded simulation tick without a new buffer signal, then retries only
+after engine release and strictly elapsed cooldown from observed processing.
+Actual/usable stamps are never subtracted from the simulation clock.
+
+Modern helper `void(state*, moveData*)` at `0x8C2630` is called at `0x8DE892`:
+`0x8DE874` passes move-data in RDX; `0x8DE88B` passes services+0x6C8 in RCX;
+the return is ignored. State+8 points to services; services+0x38 points to pawn.
+Move-data integration velocity is XYZ at +0x38/+0x3C/+0x40, raw tick +0xD4,
+fraction +0xDC. Jump clears live pawn flag +0x3F4 through the ground-reset path.
+The observer verifies local pawn/controller full identities and owner links,
+copies these fields before/after original execution, and enqueues diagnostics.
+It does not mutate engine state or retain pawn pointers. Disabled observation
+still forwards through retained code. The installed-binary verifier checks the
+observer prefix, caller and source field offsets independently.
+
+An invalid usable stamp is not a rejection marker: successful helper `0x8E6FB0`
+clears usable at `0x8E737C`. Its near-landing path can restore stored horizontal
+velocity. Separately, ground friction `0x8CB090` runs from grounded walk after
+jump dispatch, while successful same-slice takeoff bypasses it. When the live
+`sv_enablebunnyhopping` setting is false (wrapper `0x25292D8`, registration
+`0xB1D27`), jump helper `0x8DBD80` limits full velocity to services maxspeed×1.1.
+No setting is written by the revision; these paths explain why ingestion alone
+cannot diagnose landing speed loss.
+
+The user reported perfect bunnyhop behavior in the subsequent offline run.
+PID 32264 snapshot: 0/442 commands with opposite jump outputs, 176 qualifying
+held-input landings (139 at one command tick, 37 at two), observed dwell median
+16 ms versus earlier 94 ms, median landing-to-takeoff speed change zero. The
+observer recorded 432 ground-clear executions across 221 distinct jump ticks;
+duplicates represent repeated client prediction, not independent server jumps.
+Both x64 Release menu builds pass all ten suites, including 39 jump checks and
+19 replay checks. Further autostrafe changes were deferred by the user.
