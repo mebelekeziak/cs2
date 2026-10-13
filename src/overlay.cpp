@@ -19,6 +19,8 @@
 #include <cstdarg>
 #include <cwchar>
 #include <algorithm>
+#include "esp_draw.h"
+#include "player_reader.h"
 
 #ifndef CS2_WORKSPACE_ROOT
 #define CS2_WORKSPACE_ROOT L"C:\\Users\\dawid\\Documents\\ChatGPT\\cs2"
@@ -84,6 +86,8 @@ void Log(const char* format, ...) {
     FlushFileBuffers(logFile);
     ReleaseSRWLockExclusive(&logLock);
 }
+
+void EspLog(const char* message) { Log("%s", message); }
 
 bool OpenLog(const wchar_t* suppliedPath) {
     // The remote caller owns the allocation until OverlayStart's thread exits.
@@ -174,6 +178,7 @@ struct ScopedImGuiContext {
 };
 
 void ReleaseRendererOnOwner(const char* reason) {
+    PlayerReaderInvalidate(reason);
     if (imguiContext) {
         ImGuiContext* previous = ImGui::GetCurrentContext();
         ImGui::SetCurrentContext(imguiContext);
@@ -333,6 +338,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     }
     if (!renderTarget && !CreateRenderTarget(chain)) { stopRequested.store(true); return; }
     const bool foreground = GetForegroundWindow() == selectedWindow;
+    EspPollControls(foreground);
     const bool insertNow = foreground && (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
     const bool endNow = foreground && (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     if (insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
@@ -347,22 +353,37 @@ void DrawFrame(IDXGISwapChain* chain) {
         static_cast<float>(counterFrequency.QuadPart), 0.001f, 0.25f);
     previousCounter = now;
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
+    const auto players = PlayerReaderCapture();
+    ImDrawList* espList = ImGui::GetForegroundDrawList();
+    const int beforeEsp = espList->VtxBuffer.Size;
+    const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
+    const int espVertices = espList->VtxBuffer.Size - beforeEsp;
     if (visible) {
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.90f);
-        ImGui::Begin("CS2 overlay diagnostics", nullptr, ImGuiWindowFlags_AlwaysAutoResize |
+        ImGui::Begin("CS2 player ESP", nullptr, ImGuiWindowFlags_AlwaysAutoResize |
             ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse);
         ImGui::TextUnformatted("D3D11 / Dear ImGui");
         ImGui::Text("Back buffer: %u x %u", targetWidth, targetHeight);
         ImGui::Text("Render thread: %lu", renderThread);
         ImGui::Text("Frame: %llu", static_cast<unsigned long long>(frameCount + 1));
+        ImGui::Text("Reader: %s", PlayerReaderStatus());
+        ImGui::Text("Players: %zu | drawing: %zu | matrix: %s", players.playerCount,
+            espStats.drawn, players.matrixValid ? "valid" : "unavailable");
+        const auto& settings = EspGetSettings();
+        ImGui::Text("F1 ESP: %s | max: %.0fm (-/+)", settings.enabled ? "ON" : "OFF", settings.maxDistanceMeters);
+        ImGui::Text("F2 names: %s | F3 boxes: %s", settings.names ? "ON" : "OFF", settings.boxes ? "ON" : "OFF");
+        ImGui::Text("F4 distance: %s | F5 health: %s", settings.distance ? "ON" : "OFF", settings.health ? "ON" : "OFF");
+        ImGui::Text("F6 teammates: %s | F7 armor: %s", settings.teammates ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
+        if (!players.distanceAvailable) ImGui::TextUnformatted("Distance unavailable: awaiting local live pawn.");
         ImGui::Separator();
-        ImGui::TextUnformatted("Insert: toggle   End: stop");
+        ImGui::TextUnformatted("Insert: panel   End: stop");
         ImGui::TextUnformatted("Stopped code remains resident until game exit.");
         ImGui::End();
     }
     ImGui::Render();
-    if (visible && ImGui::GetDrawData()->TotalVtxCount > 0) {
+    PlayerReaderReportDraw(espStats, espVertices, ImGui::GetDrawData()->TotalVtxCount, io.DisplaySize.x, io.DisplaySize.y);
+    if (ImGui::GetDrawData()->TotalVtxCount > 0) {
         SupplementalState state(context.Get(), device->GetFeatureLevel());
         ID3D11RenderTargetView* target = renderTarget.Get();
         context->OMSetRenderTargets(1, &target, nullptr);
@@ -487,6 +508,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (!OpenLog(absoluteLogPath)) { startState.store(-1); return 2; }
     Log("OverlayStart pid=%lu x64=%s ImGui=%s MinHook=1.3.4; no initialization in DllMain",
         GetCurrentProcessId(), sizeof(void*) == 8 ? "yes" : "no", IMGUI_VERSION);
+    EspSetLogCallback(&EspLog);
+    PlayerReaderSetLogCallback(&EspLog);
     callbackTls = TlsAlloc();
     if (callbackTls == TLS_OUT_OF_INDEXES) { Log("Dynamic TLS allocation failed=%lu", GetLastError()); startState.store(-1); return 7; }
     void* present = nullptr;

@@ -20,7 +20,8 @@ add_library(imgui_dx11 STATIC
   ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
 target_include_directories(imgui_dx11 PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
-add_library(cs2_overlay SHARED src/overlay.cpp)
+add_library(cs2_overlay SHARED src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp)
+target_include_directories(cs2_overlay PRIVATE include)
 target_link_libraries(cs2_overlay PRIVATE imgui_dx11 minhook user32)
 target_compile_definitions(cs2_overlay PRIVATE CS2_WORKSPACE_ROOT=L"${CMAKE_SOURCE_DIR}")
 add_executable(mapper src/loader.cpp)
@@ -31,7 +32,17 @@ foreach(target imgui_dx11 cs2_overlay mapper)
   target_compile_options(${target} PRIVATE /W4 /Zc:threadSafeInit-)
 endforeach()
 target_link_options(cs2_overlay PRIVATE /INCREMENTAL:NO)
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(esp_checks tests/esp_checks.cpp src/esp_draw.cpp)
+  target_include_directories(esp_checks PRIVATE include)
+  target_link_libraries(esp_checks PRIVATE imgui_dx11 user32)
+  target_compile_definitions(esp_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+  target_compile_options(esp_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME esp_checks COMMAND esp_checks)
+endif()
 add_custom_command(TARGET cs2_overlay POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:cs2_overlay>/licenses"
   COMMAND ${CMAKE_COMMAND} -E copy "${imgui_SOURCE_DIR}/LICENSE.txt" "$<TARGET_FILE_DIR:cs2_overlay>/licenses/imgui-LICENSE.txt"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/third_party/cs2-dumper-LICENSE.txt" "$<TARGET_FILE_DIR:cs2_overlay>/licenses/cs2-dumper-LICENSE.txt"
   COMMAND ${CMAKE_COMMAND} -E copy "${minhook_SOURCE_DIR}/LICENSE.txt" "$<TARGET_FILE_DIR:cs2_overlay>/licenses/minhook-LICENSE.txt")

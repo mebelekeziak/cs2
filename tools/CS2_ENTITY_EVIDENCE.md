@@ -1,0 +1,170 @@
+# Installed-client entity layout evidence
+
+This records read-only investigation on October 13, 2026. It concerns the CS2
+client, not a dedicated server/plugin. No installed game files were modified.
+
+## Installation and generation
+
+Installed client DLL:
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
+SHA-256 `44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008`,
+AMD64 (`0x8664`), PE timestamp `0x6AC7FFFA`, SizeOfImage `0x2994000`.
+`steam.inf`: patch `1.41.9.0`, client/server `2000930`, source revision `11106093`,
+version date October 8, 2026; appmanifest build ID `25815307`.
+
+The official [a2x/cs2-dumper repository](https://github.com/a2x/cs2-dumper) documents
+native read-only process-memory dumping while CS2 is at the main menu. Downloaded
+the official [0.1.3 release binary](https://github.com/a2x/cs2-dumper/releases/tag/0.1.3)
+to `logs/research/cs2-dumper.exe`. SHA-256 matched the GitHub release asset digest:
+`501368ffb8f252b3cfb70fee6177b6ab4bbb21cad480724af17720d74ce44bbb`.
+The inspected upstream source checkout is `4116de000e085d62bbd42334c67b35bda37bda4f`;
+this is a source reference, not a claim about the release binary's build commit.
+Upstream is MIT licensed; its checkout retains `LICENSE` in `logs/research/cs2-dumper`.
+The binary/checkout are investigation artifacts, not runtime dependencies.
+
+From the checkout directory, with the fresh disconnected-main-menu process
+PID 14532 running:
+
+```powershell
+..\cs2-dumper.exe -o generated -f hpp,json -vv *> dump-console.log
+```
+
+Output: 29 offsets across 5 modules, 3301 classes and 568 enums across 18 modules.
+`dwSensitivity` and `dwSoundSystem_engineViewData` patterns were stale and failed;
+the requested player fields and globals were present. No offsets were copied
+from the upstream pre-generated output directory.
+
+Local JSON content hashes:
+
+* `offsets.json`: `d8f824a6007381d3c484914ba6450e226a17483e5f2c83880115f2f4c059f2b6`
+* `client_dll.json`: `8916976681b167a052160289fc37de99ced6beef3fbf2f63b02f0f251e33c4c7`
+
+`tools/inspect_cs2.py` extracts the minimal schema/global header and captures
+read-only entity evidence using Windows `OpenProcess(PROCESS_VM_READ)` and
+`ReadProcessMemory`. It uses standard-library Python only. `--pid` additionally
+requires a module inventory captured for that exact process:
+
+```powershell
+(Get-Process -Id 14532).Modules |
+  Where-Object ModuleName -In 'client.dll','engine2.dll','cs2.exe','schemasystem.dll' |
+  Select-Object ModuleName,@{Name='Base';Expression={$_.BaseAddress.ToInt64()}},ModuleMemorySize,FileName |
+  ConvertTo-Json | Set-Content logs/research/modules.json
+python tools/inspect_cs2.py --pid 14532 > logs/research/installed-client.json
+python tools/inspect_cs2.py --header include/cs2_offsets.h > logs/research/header-provenance.json
+```
+
+The tool refuses header generation/entity reads when the installed DLL or input
+dump changes. A new game build requires a new live schema/global dump and new
+binary-layout verification before updating those evidence hashes/constants.
+
+## Entity identities and serialized handles
+
+The locally generated `dwEntityList` and `dwGameEntitySystem` both equal
+`client.dll + 0x2711598`; upstream labels an `int32` at system `+0x2120` as
+highest index. **Live gameplay later disproved its use as an enumeration bound**
+(details below). Keep it diagnostic only and enumerate the 64 table buckets.
+Unlike a historical `0x78` identity stride, this exact client uses `0x70`.
+
+Disassembly of the installed DLL at RVA `0x21D8E0` gives a complete entity handle
+lookup. The function loads a table pointer from global RVA `0x2366770` and:
+
+```text
+21D8E4  mov edx, dword ptr [rcx + 0x10]
+21D8EA  cmp edx, -1
+21D8EF  mov r10, qword ptr [rip + 0x2148e7a] ; next RIP21D8F6 => RVA2366770
+21D8FB  cmp edx, -2
+21D900  mov r8d, edx
+21D903  and r8d, 0x7fff
+21D90D  shr rax, 9
+21D914  mov r11, qword ptr [r10 + rax*8]
+21D91D  and ecx, 0x1ff
+21D923  imul rax, rcx, 0x70
+21D927  add rax, r11
+21D92C  cmp dword ptr [rax + 0x10], edx
+21D92F  jne invalid
+21D948  mov rcx, qword ptr [rcx]
+```
+
+Another independent lookup around RVA `0x29EA10` compares bucket index against
+`0x40`, confirming 64 buckets of 512 identities, maximum index 32767.
+Complete disassembly evidence is retained in
+`logs/research/entity-disassembly.txt` and `logs/research/entity-shift.txt`.
+
+Live PID14532 observations associate the table global with the generated system:
+system `0x4382F474800`; table global contents `0x4382F474810`, exactly system+0x10.
+Thus resolve identity as
+`read_pointer(system + 0x10 + 8*(index>>9)) + 0x70*(index&0x1FF)`.
+The table is embedded at system+0x10; do not dereference another table pointer.
+Object pointer is at identity+0; the full 32-bit handle is at identity+0x10.
+Exact equality against the requested handle validates both index and generation.
+The full handle is not reflected by the schema and was obtained from disassembly.
+
+All 13 live menu identities had matching identity->object and object->identity
+backreferences (`CEntityInstance::m_pEntity`, schema offset0x10).
+Controller index1: designer `cs_player_controller`, name `peroxide`, handle
+`0x340001`, pawn handle `0x5D000B`. It resolved exactly to index11 designer
+`c_cs_player_for_precache`, while `dwLocalPlayerPawn` was null. These were menu
+samples. **The designer label also appears on real live bots, as subsequently
+verified below; it cannot distinguish precache from active gameplay.** Other
+observed menu designers include `worldent`, `cs_player_manager`, `cs_gamerules`,
+`vote_controller`, and `c_cs_observer_for_precache`.
+
+## Schema types, projection, and limits
+
+Generated HPP type comments confirm `m_iszPlayerName` is inline `char[128]`,
+`m_sSanitizedPlayerName` is `CUtlString`, `m_designerName` is `CUtlSymbolLarge`,
+and `m_hPlayerPawn` is `CHandle<C_CSPlayerPawn>`. Use the inline name to avoid
+assuming CUtlString internals.
+
+Scene fields are schema-verified `Vector m_vecAbsOrigin` at0xC8,
+`QAngle m_angAbsRotation` at0xD4, `float32 m_flAbsScale` at0xE0,
+`bool m_bDormant` at0x103. Collision `Vector` mins/maxs are at0x40/0x4C.
+`m_nodeToWorld` at0x10 is **CTransformWS**, not a matrix. Its exact structure
+layout was not established and should not be assumed. Menu samples produced
+eight floats `[0,0,0,1,0,0,0,1]`; that sample alone cannot establish component order.
+Observed menu precache collision bounds were `[-16,-16,0]` to `[16,16,72]`.
+
+Locally generated `dwViewMatrix` is RVA0x2561CD0; 16 live finite floats were
+captured in `installed-client.json`. This establishes readable matrix data at
+the exact generated location. Main-menu data alone does not prove projection
+over live player entities or correct screen box placement. The user/private
+offline gameplay test must verify player designers, changing serials, positions,
+matrix projection and actual on-screen draw output. The reader's data provenance
+and identity validation can be tested independently of visible ESP.
+
+## Subsequent private bot-match evidence and corrections
+
+The user entered a built-in private bot match in PID14532. A read-only capture
+is retained in `logs/research/live-bot-client.json`. No server interaction was
+performed by this research agent. Ten `cs_player_controller` identities were
+observed. Seven resolved bot pawns within the initial diagnostic enumeration
+bound had the exact designer label **`c_cs_player_for_precache`**, live map
+positions, nonzero varied scene rotations, valid collision pointers and bounds.
+For example Ulric's controller pawn handle `0x14100EE` resolves exactly to
+identity index238 at `0x4384CBD6828`, with the same serialized handle and object
+backreference, object `0x438EED49000`, origin
+`[1302.48535,-832.17792,-167.96875]`, yaw84.9431 and bounds[-16,-16,0]..[16,16,72].
+Ferris, Miguel, Ulysses, Waldo, Vox and Dios had the same designer label with
+different live origins and exact serialized-handle matches. Filtering these
+pawns to designer `player` or rejecting the observed `for_precache` label is
+therefore incorrect for this installed client. Use the observed label together
+with controller/handle identity validation, health/life/team and geometry.
+
+The reported `+0x2120` value was270 in this sample, while the local controller's
+pawn handle `0xA001A1` has index417 and other bot pawn handles have indices274
+and281. Thus the upstream highest-index label cannot safely bound enumeration.
+The updated tool defaults to scanning all 64 buckets (32768 slots); its optional
+`--reported-bound` flag reproduces the narrower diagnostic scan explicitly.
+The process exited before a second full-table capture, so health/life/team and
+reverse controller-handle values for this sample were not captured. A fresh
+process/private bot match is needed to verify those additional fields.
+
+The old Source SDK documents world-aligned collision bounds for SOLID_BBOX in
+[C_BaseEntity](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/game/client/c_baseentity.h),
+and its [collisionproperty.cpp](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/game/shared/collisionproperty.cpp)
+applies rotation only to entity-space collision bounds. This is supporting
+background, **not proof of Source2's current solid flags or pawn collision mode**.
+The local schema exposes uint8 solid flags0x5A and solid type0x5B. Applying scene
+yaw unconditionally to square collision bounds can change the projected box;
+the actual current collision mode should be read and verified before making
+an exact geometry claim. Current live samples all had absScale1.0.

@@ -1,6 +1,111 @@
-# CS2 main-menu D3D11 overlay
+# CS2 player ESP and D3D11 overlay
 
-Minimal x64 client overlay and explicit manual mapper. No gameplay features. The DLL contains graphics probing, hook validation and diagnostics; there is no separate graphics test application. Installed game files are not modified.
+x64 client overlay with player ESP and an explicit manual mapper. Installed game files are not modified. Existing workspace work was preserved before ESP in commit `db1d345`.
+
+
+## Player ESP
+
+Names, outlined player boxes, distance labels, a maximum distance filter, health
+bars/text, optional armor and team colors are implemented. Defaults show both
+teams within 150m; armor text is off. Boxes project the eight corners of the
+current collision bounds using copied scene position/angles/scale. They enclose
+the collision hull, not animated model bones. Team colors: CT blue, T amber.
+
+| Key | Action |
+| --- | --- |
+| F1 | Toggle ESP |
+| F2 | Toggle usernames |
+| F3 | Toggle boxes |
+| F4 | Toggle distance labels (range filtering remains active) |
+| F5 | Toggle health bars and HP text |
+| F6 | Include/exclude teammates |
+| F7 | Toggle armor text |
+| - / + | Change maximum distance by 25m, clamped to 10–1000m; keypad works too |
+| Insert | Toggle the diagnostics panel; ESP and acquisition keep running |
+| End | Cooperative stop |
+
+Keys are polled while the game window is foreground. They are not consumed, so
+the game can also respond to any overlapping bindings. There is no mouse menu,
+window-procedure replacement or game input interception. Settings are per run.
+
+Entity acquisition now runs on **every selected Present**, replacing the first
+20Hz implementation. The view matrix is also copied for every rendered frame.
+Actual refresh follows the client's frame rate. Logging remains at roughly two
+second intervals. Acquisition uses read-only memory copies on the render thread,
+never calls engine entity methods, and rejects mismatching full serialized handles,
+identity backreferences, changed pawn links and changed source/scene identities.
+This is a best-effort copied snapshot, not an engine-synchronized transaction.
+All state is discarded when its module/render source changes or the overlay stops.
+
+Offsets were generated from this installed client and independently checked
+against its machine code and live memory. The DLL checks client PE architecture,
+timestamp and image size before applying them. This is a build compatibility check,
+not a session gate. Never substitute online pre-generated offsets. See
+[entity evidence](tools/CS2_ENTITY_EVIDENCE.md) and
+[read-only inspection/header tool](tools/inspect_cs2.py).
+
+The first live bot test exposed two corrected assumptions: active bot pawns use
+`c_cs_player_for_precache` too, and the dumper's reported highest index can be
+below live pawn indices. The reader enumerates all 64 verified identity buckets
+and resolves controller pawn handles directly. A wrong pawn class has its own
+counter and diagnostic record. No cached raw entity pointer is used for drawing.
+
+Distance uses the conventional Source unit-to-meter factor 0.0254 and the local
+live pawn's position. If a live local pawn is unavailable (for example while dead
+or spectating), distance labels and range filtering are temporarily unavailable;
+other valid player geometry can still render. Dormant, dead, invalid and local
+players are excluded. Near-camera edges are clipped and offscreen rectangles
+are rejected. No visibility trace or skeleton rendering is implemented. Exact
+Source2 world-aligned collision flag semantics have not been verified; applying
+scene yaw may broaden the square collision box relative to the game's hull.
+
+## ESP diagnostics and verification
+
+Use a workspace log path such as `logs/esp.log`. The DLL appends to it; keep logs
+from each run separate when comparing builds.
+
+* `ESP_BUILD_VERIFIED` records the actual module and checked build identity.
+* `ESP_SOURCE` / `ESP_INVALIDATE` / `ESP_STATE` record source and lifecycle changes.
+* `ESP_SCAN` records occupied slots, controllers, live players, dead/dormant pawns,
+  stale handles, rejected classes, bounds failures, read failures and acquisition time.
+* `ESP_PLAYER` records each accepted name, serialized handle, team, health, armor,
+  position, distance, world corners and screen rectangle. Projection codes are
+  0 visible, 1 invalid input, 2 behind camera, 3 offscreen, 4 degenerate.
+* `ESP_REJECT` records rejected pawn designer labels.
+* `ESP_DRAW` distinguishes filtering/projection results, actual players drawn,
+  ESP vertices and total overlay vertices. Vertex submission alone is not proof
+  of visible output; the screenshot/user observation provides that confirmation.
+* `ESP_SETTINGS` logs initial settings and each hotkey change.
+
+Every-frame acquisition and telemetry run independently of panel/ESP visibility.
+Logging stops after cooperative cleanup completes.
+
+```powershell
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+```
+
+The retained `esp_checks` executable checks known projection geometry, invalid
+inputs, clipping, filter accounting and actual ImGui primitive generation; it
+uses synthetic data, has no window and does not load the game. It is enabled by
+CMake's `BUILD_TESTING` (use `-DBUILD_TESTING=OFF` to omit it).
+
+October 13, 2026: Release build succeeded without project warnings; all ten
+checks passed. PID 7972 mapped successfully at `0x180000000`. The user's offline
+bot-match screenshot showed names, team-colored boxes, meter labels and health
+bars; the panel showed nine live players and four drawing. Matching
+`logs/esp.log` recorded ten controllers, changing health/positions, nine or ten
+live players, valid matrix/distance data, zero read/bounds/class failures and
+roughly 1ms acquisition samples. This verified the initial 20Hz version.
+The subsequently requested every-Present refresh build compiles and passes the
+same tests; **its live performance still needs testing after a normal restart**.
+The running PID 7972 mapping remains the earlier 20Hz version; it was left active.
+Use End or normal game exit to stop that copy. Do not map another copy into it.
+
+The first test process PID 14532 was intentionally cooperatively stopped for a
+rebuild; `logs/esp-test.log` records `STOPPED_RESIDENT`. The vanished panel was
+cleanup, not a crash or physical unload. The user then exited that process.
+Computer UI control was stopped with Escape; the active DLL is independent of it.
 
 ## Inspected installation
 
@@ -24,7 +129,7 @@ Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, and preser
 
 ## Launch and inject
 
-All runs must remain at the disconnected main menu or an authorized offline/private session. Environment verification is an operator responsibility. The loader has no session/name/protection-module gates. Do not connect to public multiplayer. No private server was configured or used here.
+All runs must remain at the disconnected main menu or an authorized offline/private session. Environment verification is an operator responsibility. The loader has no session/name/protection-module gates. Do not connect to public multiplayer. No dedicated server was configured. The user verified ESP in built-in offline Practice with bots.
 
 The test launch used only presentation options, with no security settings or protection changes:
 
@@ -40,13 +145,13 @@ New-Item -ItemType Directory -Path '.\logs' -Force | Out-Null
 .\build\Release\mapper.exe --pid 9944 --dll 'C:\Users\dawid\Documents\ChatGPT\cs2\build\Release\cs2_overlay.dll' --log 'C:\Users\dawid\Documents\ChatGPT\cs2\logs\overlay-final.log'
 ```
 
-Replace 9944 with the current PID; the number above identifies the final verification session only. Inspect the supplied log for verified target methods, the actual swap chain/device, and rendered-frame evidence. A mapper success code means initialization returned successfully; it does not by itself prove a visible frame. Map once per process; the final verification process already contains a stopped mapping.
+Replace 9944 with the current PID; the number above identifies the final verification session only. Inspect the supplied log for verified target methods, the actual swap chain/device, and rendered-frame evidence. A mapper success code means initialization returned successfully; it does not by itself prove a visible frame. Map once per process. Restart normally before loading a rebuilt DLL; resident callbacks keep using the code that was originally mapped.
 
 The mapper does not use LoadLibrary injection or call any LoadLibrary variant. It relocates PE sections, resolves imports and forwarders from the target modules' actual export tables, applies section permissions, registers x64 unwind metadata for the image and bootstrap, calls the DLL's CRT entrypoint, then invokes `OverlayStart` outside the loader lock. It does not conceal the mapping or change the game's security settings. Static TLS, delay imports, CLR and CFG-enabled payloads are unsupported and rejected. Missing dependencies must already be loaded; the mapper does not load them remotely. This is a restricted manual mapper, not a complete implementation of the Windows loader. No exceptions may escape the startup functions; the bootstrap does not catch them.
 
 ## Overlay and shutdown
 
-The overlay displays diagnostic information only. Insert toggles visibility; End requests cooperative stop when the game window is foreground. No game-window procedure is replaced. Rendering and ImGui lifecycle work occur on the verified Present thread; resource ownership is synchronized with ResizeBuffers. The DLL supplements the ImGui DX11 backend's state backup, releases its back-buffer references before resizing and invalidates device-dependent state when necessary.
+The overlay displays player ESP and diagnostics. Insert toggles the panel; End requests cooperative stop when the game window is foreground. No game-window procedure is replaced. Rendering and ImGui lifecycle work occur on the verified Present thread; resource ownership is synchronized with ResizeBuffers. The DLL supplements the ImGui DX11 backend's state backup, releases its back-buffer references before resizing and invalidates device-dependent state when necessary.
 
 The exact stop command uses the base printed by the successful mapping operation:
 
@@ -58,7 +163,7 @@ Replace the PID/base with the values from your own mapping and use the same unch
 
 Diagnostics are written by the DLL only to the supplied path under the compiled workspace root. ImGui automatic INI and log output are disabled.
 
-## Results
+## Historical overlay-skeleton results
 
 Verified October 13, 2026; DLL timestamps below are UTC (Warsaw is UTC+2 on this date).
 
@@ -71,7 +176,7 @@ Verified October 13, 2026; DLL timestamps below are UTC (Warsaw is UTC+2 on this
 
 Logs: `logs/overlay.log` and `logs/overlay-final.log`. These are written by the DLL; the mapper only prints its bootstrap/stop result to the invoking console.
 
-Final SHA-256 hashes:
+Historical skeleton SHA-256 hashes (superseded by the ESP build):
 
 * `cs2_overlay.dll`: `00A479502B231C564A5856BFA1B21270D0112438247D69670147181B953A17E6`.
 * `mapper.exe`: `66D4FEBCAC30C7EBC21A9B3E79522623D967A5BD0AF6941ABFF050CD0F5A67CC`.
