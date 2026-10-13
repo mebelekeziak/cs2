@@ -1,0 +1,523 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <d3d11.h>
+#include <d3d11_1.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#include <MinHook.h>
+#include <imgui.h>
+#include <imgui_impl_dx11.h>
+#include <atomic>
+#include <mutex>
+#include <cstdint>
+#include <cstdio>
+#include <cstdarg>
+#include <cwchar>
+#include <algorithm>
+
+#ifndef CS2_WORKSPACE_ROOT
+#define CS2_WORKSPACE_ROOT L"C:\\Users\\dawid\\Documents\\ChatGPT\\cs2"
+#endif
+
+namespace {
+using Microsoft::WRL::ComPtr;
+using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+using ResizeFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
+PresentFn originalPresent = nullptr;
+ResizeFn originalResize = nullptr;
+void* presentCandidate = nullptr;
+void* resizeCandidate = nullptr;
+std::atomic<bool> stopRequested{false};
+std::atomic<bool> stopped{false};
+std::atomic<long> startState{0};
+std::recursive_mutex renderMutex;
+SRWLOCK logLock = SRWLOCK_INIT;
+HANDLE logFile = INVALID_HANDLE_VALUE;
+IDXGISwapChain* selectedChain = nullptr; // Identity only: do not retain a game-owned chain.
+HWND selectedWindow = nullptr;
+DWORD renderThread = 0;
+ComPtr<ID3D11Device> device;
+ComPtr<ID3D11DeviceContext> context;
+ComPtr<ID3D11RenderTargetView> renderTarget;
+ImGuiContext* imguiContext = nullptr;
+bool backendInitialized = false;
+bool deviceObjectsDirty = false;
+bool visible = true;
+bool insertDown = false;
+bool endDown = false;
+bool threadChangeLogged = false;
+bool firstPresentReported = false;
+IDXGISwapChain* lastRejectedChain = nullptr;
+unsigned rendererGeneration = 0;
+std::uint64_t frameCount = 0;
+LARGE_INTEGER previousCounter{};
+LARGE_INTEGER counterFrequency{};
+UINT targetWidth = 0, targetHeight = 0;
+// Dynamic Windows TLS avoids any dependency on loader-provided static TLS slots.
+DWORD callbackTls = TLS_OUT_OF_INDEXES;
+bool InCallback() { return TlsGetValue(callbackTls) != nullptr; }
+void SetInCallback(bool active) { TlsSetValue(callbackTls, active ? reinterpret_cast<void*>(1) : nullptr); }
+
+void Log(const char* format, ...) {
+    if (logFile == INVALID_HANDLE_VALUE) return;
+    char buffer[2048];
+    SYSTEMTIME time{};
+    GetSystemTime(&time);
+    int prefix = snprintf(buffer, sizeof(buffer), "%04u-%02u-%02uT%02u:%02u:%02u.%03uZ [tid=%lu] ",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond,
+        time.wMilliseconds, GetCurrentThreadId());
+    if (prefix < 0) return;
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer + prefix, sizeof(buffer) - static_cast<size_t>(prefix) - 2, format, args);
+    va_end(args);
+    size_t length = strnlen_s(buffer, sizeof(buffer) - 2);
+    buffer[length++] = '\r'; buffer[length++] = '\n';
+    AcquireSRWLockExclusive(&logLock);
+    DWORD written = 0;
+    WriteFile(logFile, buffer, static_cast<DWORD>(length), &written, nullptr);
+    FlushFileBuffers(logFile);
+    ReleaseSRWLockExclusive(&logLock);
+}
+
+bool OpenLog(const wchar_t* suppliedPath) {
+    // The remote caller owns the allocation until OverlayStart's thread exits.
+    if (!suppliedPath || wcsnlen_s(suppliedPath, 32768) >= 32768) return false;
+    wchar_t full[32768], root[32768];
+    DWORD length = GetFullPathNameW(suppliedPath, 32768, full, nullptr);
+    DWORD rootLength = GetFullPathNameW(CS2_WORKSPACE_ROOT, 32768, root, nullptr);
+    if (!length || length >= 32768 || !rootLength || rootLength >= 32767) return false;
+    while (rootLength > 0 && root[rootLength - 1] == L'\\') --rootLength;
+    root[rootLength++] = L'\\'; root[rootLength] = L'\0';
+    if (_wcsnicmp(full, root, rootLength) != 0) return false;
+    // Fail on missing directory. The loader creates the workspace diagnostics directory.
+    logFile = CreateFileW(full, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    return logFile != INVALID_HANDLE_VALUE;
+}
+
+bool VerifyMethod(void* method, const char* name) {
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(method, &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT)
+        return false;
+    const DWORD protection = memory.Protect & 0xff;
+    if ((memory.Protect & PAGE_GUARD) || (protection != PAGE_EXECUTE && protection != PAGE_EXECUTE_READ &&
+        protection != PAGE_EXECUTE_READWRITE && protection != PAGE_EXECUTE_WRITECOPY)) return false;
+    HMODULE owner = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(method), &owner)) return false;
+    wchar_t path[32768];
+    if (!GetModuleFileNameW(owner, path, 32768)) return false;
+    const wchar_t* basename = wcsrchr(path, L'\\');
+    basename = basename ? basename + 1 : path;
+    const auto rva = reinterpret_cast<std::uintptr_t>(method) - reinterpret_cast<std::uintptr_t>(owner);
+    Log("Probe %s candidate=%p owner=%ls base=%p RVA=0x%llx protection=0x%lx", name, method,
+        path, owner, static_cast<unsigned long long>(rva), memory.Protect);
+    return _wcsicmp(basename, L"dxgi.dll") == 0 || _wcsicmp(basename, L"d3d11.dll") == 0;
+}
+
+LRESULT CALLBACK ProbeWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+bool ProbeMethods(void*& present, void*& resize) {
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    wchar_t className[96];
+    swprintf_s(className, L"CS2OverlayProbe_%lu_%llu", GetCurrentProcessId(), GetTickCount64());
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = ProbeWindowProc;
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = className;
+    if (!RegisterClassExW(&windowClass)) { Log("Probe RegisterClassEx failed=%lu", GetLastError()); return false; }
+    HWND window = CreateWindowExW(0, className, L"D3D11 method discovery", WS_OVERLAPPEDWINDOW,
+        0, 0, 64, 64, nullptr, nullptr, instance, nullptr);
+    bool success = false;
+    if (window) {
+        DXGI_SWAP_CHAIN_DESC desc{};
+        desc.BufferDesc.Width = 64; desc.BufferDesc.Height = 64;
+        desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        desc.BufferCount = 1; desc.OutputWindow = window;
+        desc.Windowed = TRUE; desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        ComPtr<IDXGISwapChain> chain;
+        ComPtr<ID3D11Device> probeDevice;
+        ComPtr<ID3D11DeviceContext> probeContext;
+        D3D_FEATURE_LEVEL feature{};
+        HRESULT result = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+            nullptr, 0, D3D11_SDK_VERSION, &desc, &chain, &probeDevice, &feature, &probeContext);
+        Log("In-DLL hidden D3D11 probe hr=0x%08lx feature=0x%x", result, feature);
+        if (SUCCEEDED(result)) {
+            void** methods = *reinterpret_cast<void***>(chain.Get());
+            // IDXGISwapChain COM layout from the Windows SDK, not game offsets.
+            present = methods[8]; resize = methods[13];
+            success = VerifyMethod(present, "IDXGISwapChain::Present[8]") &&
+                VerifyMethod(resize, "IDXGISwapChain::ResizeBuffers[13]");
+            probeContext->ClearState(); probeContext->Flush();
+        }
+    } else Log("Probe CreateWindowEx failed=%lu", GetLastError());
+    DestroyWindow(window);
+    UnregisterClassW(className, instance);
+    return success;
+}
+
+struct ScopedImGuiContext {
+    ImGuiContext* previous = ImGui::GetCurrentContext();
+    ScopedImGuiContext() { ImGui::SetCurrentContext(imguiContext); }
+    ~ScopedImGuiContext() { ImGui::SetCurrentContext(previous); }
+};
+
+void ReleaseRendererOnOwner(const char* reason) {
+    if (imguiContext) {
+        ImGuiContext* previous = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(imguiContext);
+        if (backendInitialized) ImGui_ImplDX11_Shutdown();
+        backendInitialized = false;
+        ImGui::DestroyContext(imguiContext);
+        if (previous != imguiContext) ImGui::SetCurrentContext(previous);
+        imguiContext = nullptr;
+    }
+    renderTarget.Reset(); context.Reset(); device.Reset();
+    deviceObjectsDirty = false;
+    Log("Renderer resources released generation=%u reason=%s frames=%llu", rendererGeneration, reason,
+        static_cast<unsigned long long>(frameCount));
+}
+
+void CleanupOnRenderThread(const char* reason) {
+    ReleaseRendererOnOwner(reason);
+    stopped.store(true, std::memory_order_release);
+    Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
+        reason, static_cast<unsigned long long>(frameCount));
+}
+
+bool CreateRenderTarget(IDXGISwapChain* chain) {
+    ComPtr<ID3D11Texture2D> buffer;
+    HRESULT result = chain->GetBuffer(0, IID_PPV_ARGS(&buffer));
+    if (FAILED(result)) { Log("GetBuffer failed hr=0x%08lx", result); return false; }
+    D3D11_TEXTURE2D_DESC desc{};
+    buffer->GetDesc(&desc);
+    targetWidth = desc.Width; targetHeight = desc.Height;
+    result = device->CreateRenderTargetView(buffer.Get(), nullptr, &renderTarget);
+    Log("CreateRenderTargetView hr=0x%08lx dimensions=%ux%u format=%u", result, targetWidth, targetHeight, desc.Format);
+    return SUCCEEDED(result);
+}
+
+bool InitializeOnRenderThread(IDXGISwapChain* chain) {
+    ++rendererGeneration;
+    frameCount = 0;
+    firstPresentReported = false;
+    HRESULT result = chain->GetDevice(IID_PPV_ARGS(&device));
+    if (FAILED(result)) {
+        Log("Real chain GetDevice(ID3D11Device) failed hr=0x%08lx; stop requested", result);
+        stopRequested.store(true); return false;
+    }
+    device->GetImmediateContext(&context);
+    ComPtr<IDXGIDevice> dxgiDevice;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC adapterDesc{};
+    if (SUCCEEDED(device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) adapter->GetDesc(&adapterDesc);
+    Log("REAL_D3D11 chain=%p hwnd=%p owner_tid=%lu device=%p context=%p feature=0x%x adapter=%ls vendor=0x%x deviceid=0x%x",
+        chain, selectedWindow, renderThread, device.Get(), context.Get(), device->GetFeatureLevel(),
+        adapterDesc.Description, adapterDesc.VendorId, adapterDesc.DeviceId);
+    ImGuiContext* previous = ImGui::GetCurrentContext();
+    IMGUI_CHECKVERSION();
+    imguiContext = ImGui::CreateContext();
+    ImGui::SetCurrentContext(imguiContext);
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr; io.LogFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
+    ImGui::StyleColorsDark();
+    backendInitialized = ImGui_ImplDX11_Init(device.Get(), context.Get());
+    bool objects = backendInitialized && ImGui_ImplDX11_CreateDeviceObjects();
+    ImGui::SetCurrentContext(previous);
+    QueryPerformanceFrequency(&counterFrequency);
+    QueryPerformanceCounter(&previousCounter);
+    if (!objects || !CreateRenderTarget(chain)) {
+        Log("Renderer initialization incomplete; cooperative stop requested");
+        stopRequested.store(true); return false;
+    }
+    return true;
+}
+
+bool VerifyRealChain(IDXGISwapChain* chain, DXGI_SWAP_CHAIN_DESC& desc,
+    ComPtr<ID3D11Device>& actualDevice) {
+    DWORD pid = 0;
+    if (FAILED(chain->GetDesc(&desc)) || !desc.OutputWindow || !IsWindowVisible(desc.OutputWindow)) return false;
+    GetWindowThreadProcessId(desc.OutputWindow, &pid);
+    if (pid != GetCurrentProcessId() || FAILED(chain->GetDevice(IID_PPV_ARGS(&actualDevice)))) return false;
+    void** methods = *reinterpret_cast<void***>(chain);
+    bool match = methods[8] == presentCandidate && methods[13] == resizeCandidate;
+    if (!match && lastRejectedChain != chain) {
+        Log("Real chain rejected=%p Present=%p Resize=%p; probe=%p/%p. Both callback paths must match before retaining back buffer.",
+            chain, methods[8], methods[13], presentCandidate, resizeCandidate);
+        lastRejectedChain = chain;
+    }
+    return match;
+}
+
+// ImGui v1.91.9b backs up most draw state, but does not preserve HS/DS/CS,
+// OM targets/UAVs, or release GS class-instance references. Save those here;
+// clear GS before invoking its backend so the backend never acquires its instances.
+// Save all SRVs too: binding the back buffer can implicitly unbind aliasing SRVs.
+struct SupplementalState {
+    ID3D11DeviceContext* ctx;
+    ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    ID3D11DepthStencilView* dsv = nullptr;
+    ID3D11UnorderedAccessView* omUavs[D3D11_1_UAV_SLOT_COUNT]{};
+    ID3D11UnorderedAccessView* csUavs[D3D11_1_UAV_SLOT_COUNT]{};
+    ID3D11ShaderResourceView* srvs[6][D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT]{};
+    ID3D11GeometryShader* gs = nullptr;
+    ID3D11HullShader* hs = nullptr;
+    ID3D11DomainShader* ds = nullptr;
+    ID3D11ComputeShader* cs = nullptr;
+    ID3D11ClassInstance* instances[4][256]{};
+    UINT counts[4]{256, 256, 256, 256};
+    UINT uavSlots;
+    SupplementalState(ID3D11DeviceContext* c, D3D_FEATURE_LEVEL feature) : ctx(c),
+        uavSlots(feature >= D3D_FEATURE_LEVEL_11_1 ? D3D11_1_UAV_SLOT_COUNT : D3D11_PS_CS_UAV_REGISTER_COUNT) {
+        ctx->OMGetRenderTargets(8, rtvs, &dsv);
+        ctx->OMGetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, uavSlots, omUavs);
+        ctx->CSGetUnorderedAccessViews(0, uavSlots, csUavs);
+        ctx->VSGetShaderResources(0, 128, srvs[0]); ctx->PSGetShaderResources(0, 128, srvs[1]);
+        ctx->GSGetShaderResources(0, 128, srvs[2]); ctx->HSGetShaderResources(0, 128, srvs[3]);
+        ctx->DSGetShaderResources(0, 128, srvs[4]); ctx->CSGetShaderResources(0, 128, srvs[5]);
+        ctx->GSGetShader(&gs, instances[0], &counts[0]);
+        ctx->HSGetShader(&hs, instances[1], &counts[1]);
+        ctx->DSGetShader(&ds, instances[2], &counts[2]);
+        ctx->CSGetShader(&cs, instances[3], &counts[3]);
+        ctx->GSSetShader(nullptr, nullptr, 0);
+        UINT preserve[D3D11_1_UAV_SLOT_COUNT];
+        std::fill_n(preserve, D3D11_1_UAV_SLOT_COUNT, UINT(-1));
+        ID3D11UnorderedAccessView* empty[D3D11_1_UAV_SLOT_COUNT]{};
+        ctx->OMSetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, uavSlots, empty, preserve);
+        ctx->CSSetUnorderedAccessViews(0, uavSlots, empty, preserve);
+    }
+    ~SupplementalState() {
+        ctx->OMSetRenderTargets(0, nullptr, nullptr);
+        UINT preserve[D3D11_1_UAV_SLOT_COUNT];
+        std::fill_n(preserve, D3D11_1_UAV_SLOT_COUNT, UINT(-1));
+        UINT rtvCount = 0;
+        for (UINT i = 0; i < 8; ++i) if (rtvs[i]) rtvCount = i + 1;
+        ctx->OMSetRenderTargetsAndUnorderedAccessViews(rtvCount, rtvs, dsv, rtvCount,
+            uavSlots - rtvCount, omUavs + rtvCount, preserve + rtvCount);
+        ctx->CSSetUnorderedAccessViews(0, uavSlots, csUavs, preserve);
+        ctx->VSSetShaderResources(0, 128, srvs[0]); ctx->PSSetShaderResources(0, 128, srvs[1]);
+        ctx->GSSetShaderResources(0, 128, srvs[2]); ctx->HSSetShaderResources(0, 128, srvs[3]);
+        ctx->DSSetShaderResources(0, 128, srvs[4]); ctx->CSSetShaderResources(0, 128, srvs[5]);
+        ctx->GSSetShader(gs, instances[0], counts[0]); ctx->HSSetShader(hs, instances[1], counts[1]);
+        ctx->DSSetShader(ds, instances[2], counts[2]); ctx->CSSetShader(cs, instances[3], counts[3]);
+        if (gs) gs->Release(); if (hs) hs->Release(); if (ds) ds->Release(); if (cs) cs->Release();
+        for (auto& stage : instances) for (auto* instance : stage) if (instance) instance->Release();
+        for (auto& stage : srvs) for (auto* srv : stage) if (srv) srv->Release();
+        for (auto* rtv : rtvs) if (rtv) rtv->Release();
+        for (auto* uav : omUavs) if (uav) uav->Release();
+        for (auto* uav : csUavs) if (uav) uav->Release();
+        if (dsv) dsv->Release();
+    }
+};
+
+void DrawFrame(IDXGISwapChain* chain) {
+    ScopedImGuiContext scopedContext;
+    if (deviceObjectsDirty) {
+        ImGui_ImplDX11_InvalidateDeviceObjects();
+        if (!ImGui_ImplDX11_CreateDeviceObjects()) {
+            Log("Device object recreation failed; stop requested"); stopRequested.store(true); return;
+        }
+        deviceObjectsDirty = false;
+    }
+    if (!renderTarget && !CreateRenderTarget(chain)) { stopRequested.store(true); return; }
+    const bool foreground = GetForegroundWindow() == selectedWindow;
+    const bool insertNow = foreground && (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    const bool endNow = foreground && (GetAsyncKeyState(VK_END) & 0x8000) != 0;
+    if (insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
+    if (endNow && !endDown) { stopRequested.store(true); Log("End requested cooperative shutdown"); }
+    insertDown = insertNow; endDown = endNow;
+    if (stopRequested.load()) return;
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(targetWidth), static_cast<float>(targetHeight));
+    io.DeltaTime = std::clamp(static_cast<float>(now.QuadPart - previousCounter.QuadPart) /
+        static_cast<float>(counterFrequency.QuadPart), 0.001f, 0.25f);
+    previousCounter = now;
+    ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
+    if (visible) {
+        ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.90f);
+        ImGui::Begin("CS2 overlay diagnostics", nullptr, ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse);
+        ImGui::TextUnformatted("D3D11 / Dear ImGui");
+        ImGui::Text("Back buffer: %u x %u", targetWidth, targetHeight);
+        ImGui::Text("Render thread: %lu", renderThread);
+        ImGui::Text("Frame: %llu", static_cast<unsigned long long>(frameCount + 1));
+        ImGui::Separator();
+        ImGui::TextUnformatted("Insert: toggle   End: stop");
+        ImGui::TextUnformatted("Stopped code remains resident until game exit.");
+        ImGui::End();
+    }
+    ImGui::Render();
+    if (visible && ImGui::GetDrawData()->TotalVtxCount > 0) {
+        SupplementalState state(context.Get(), device->GetFeatureLevel());
+        ID3D11RenderTargetView* target = renderTarget.Get();
+        context->OMSetRenderTargets(1, &target, nullptr);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        if (!frameCount) Log("FIRST_OVERLAY_DRAW submitted vertices=%d indices=%d (display confirmation requires observation)",
+            ImGui::GetDrawData()->TotalVtxCount, ImGui::GetDrawData()->TotalIdxCount);
+        ++frameCount;
+    }
+}
+
+HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, UINT flags) {
+    if (InCallback() || stopped.load(std::memory_order_acquire) || (flags & DXGI_PRESENT_TEST))
+        return originalPresent(chain, syncInterval, flags);
+    SetInCallback(true);
+    {
+        std::lock_guard lock(renderMutex);
+        if (!selectedChain && !stopRequested.load()) {
+            DXGI_SWAP_CHAIN_DESC desc{};
+            ComPtr<ID3D11Device> actualDevice;
+            if (VerifyRealChain(chain, desc, actualDevice)) {
+                void** methods = *reinterpret_cast<void***>(chain);
+                Log("REAL_CHAIN_METHODS chain=%p Present[8]=%p matches_probe=yes Resize[13]=%p matches_probe=yes hwnd=%p",
+                    chain, methods[8], methods[13], desc.OutputWindow);
+                selectedChain = chain; selectedWindow = desc.OutputWindow; renderThread = GetCurrentThreadId();
+                InitializeOnRenderThread(chain);
+            }
+        } else if (selectedChain != chain && !stopRequested.load() && !stopped.load()) {
+            DXGI_SWAP_CHAIN_DESC desc{};
+            ComPtr<ID3D11Device> actualDevice;
+            if (VerifyRealChain(chain, desc, actualDevice) && desc.OutputWindow == selectedWindow) {
+                if (GetCurrentThreadId() == renderThread) {
+                    Log("Swapchain identity changed old=%p new=%p; same window and owner thread, rebuilding renderer", selectedChain, chain);
+                    ReleaseRendererOnOwner("swapchain replacement");
+                    selectedChain = chain;
+                    InitializeOnRenderThread(chain);
+                } else {
+                    stopRequested.store(true);
+                    Log("Replacement swapchain arrived on tid=%lu owner=%lu; stop pending original thread", GetCurrentThreadId(), renderThread);
+                }
+            }
+        }
+        if (selectedChain == chain && !stopped.load()) {
+            if (renderThread != GetCurrentThreadId()) {
+                stopRequested.store(true);
+                if (!threadChangeLogged) {
+                    Log("Render ownership changed old=%lu current=%lu; rendering halted. Cleanup awaits original render thread; DLL resident.",
+                        renderThread, GetCurrentThreadId());
+                    threadChangeLogged = true;
+                }
+            } else {
+                DXGI_SWAP_CHAIN_DESC currentDesc{};
+                ComPtr<ID3D11Device> currentDevice;
+                if (FAILED(chain->GetDesc(&currentDesc)) || currentDesc.OutputWindow != selectedWindow ||
+                    !IsWindow(selectedWindow) || FAILED(chain->GetDevice(IID_PPV_ARGS(&currentDevice)))) {
+                    Log("Selected swapchain/window lifecycle no longer valid; stop requested");
+                    stopRequested.store(true);
+                } else if (device && currentDevice.Get() != device.Get()) {
+                    Log("Device identity changed for chain=%p old=%p new=%p; rebuilding on owner thread", chain, device.Get(), currentDevice.Get());
+                    ReleaseRendererOnOwner("device replacement/address reuse");
+                    InitializeOnRenderThread(chain);
+                }
+                if (stopRequested.load()) CleanupOnRenderThread("requested or invalid lifecycle");
+                else {
+                    DrawFrame(chain);
+                    if (stopRequested.load()) CleanupOnRenderThread("requested during render");
+                }
+            }
+        } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
+            stopped.store(true);
+            Log("STOPPED_RESIDENT before selecting a real chain; hooks/DLL retained.");
+        }
+    }
+    HRESULT result = originalPresent(chain, syncInterval, flags);
+    {
+        std::lock_guard lock(renderMutex);
+        if (chain == selectedChain && frameCount && !firstPresentReported) {
+            Log("FIRST_PRESENT_AFTER_DRAW hr=0x%08lx generation=%u sync=%u flags=0x%x; visible output requires observation",
+                result, rendererGeneration, syncInterval, flags);
+            firstPresentReported = true;
+        }
+    }
+    if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) {
+        std::lock_guard lock(renderMutex);
+        if (chain == selectedChain && !stopped.load()) {
+            Log("Present device loss hr=0x%08lx removal_reason=0x%08lx; stop requested", result,
+                device ? device->GetDeviceRemovedReason() : result);
+            stopRequested.store(true);
+            if (GetCurrentThreadId() == renderThread) CleanupOnRenderThread("device loss");
+        }
+    }
+    SetInCallback(false);
+    return result;
+}
+
+HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* chain, UINT count, UINT width, UINT height,
+    DXGI_FORMAT format, UINT flags) {
+    if (InCallback() || stopped.load()) return originalResize(chain, count, width, height, format, flags);
+    SetInCallback(true);
+    HRESULT result;
+    {
+        std::lock_guard lock(renderMutex);
+        if (chain == selectedChain) {
+            // COM resource Release is thread-safe. ImGui/context work is deferred to the owning Present thread.
+            renderTarget.Reset();
+            deviceObjectsDirty = true;
+            Log("ResizeBuffers begin requested=%ux%u buffers=%u format=%u render_tid=%lu", width, height, count, format, renderThread);
+        }
+        result = originalResize(chain, count, width, height, format, flags);
+        if (chain == selectedChain) {
+            Log("ResizeBuffers result=0x%08lx; target recreation deferred to next Present", result);
+            if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) stopRequested.store(true);
+        }
+    }
+    SetInCallback(false);
+    return result;
+}
+} // namespace
+
+extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absoluteLogPath) {
+    long expected = 0;
+    if (!startState.compare_exchange_strong(expected, 1)) return 1;
+    if (!OpenLog(absoluteLogPath)) { startState.store(-1); return 2; }
+    Log("OverlayStart pid=%lu x64=%s ImGui=%s MinHook=1.3.4; no initialization in DllMain",
+        GetCurrentProcessId(), sizeof(void*) == 8 ? "yes" : "no", IMGUI_VERSION);
+    callbackTls = TlsAlloc();
+    if (callbackTls == TLS_OUT_OF_INDEXES) { Log("Dynamic TLS allocation failed=%lu", GetLastError()); startState.store(-1); return 7; }
+    void* present = nullptr;
+    void* resize = nullptr;
+    if (!ProbeMethods(present, resize)) { Log("Method discovery/owner verification failed; no hooks installed"); startState.store(-1); return 3; }
+    presentCandidate = present; resizeCandidate = resize;
+    MH_STATUS status = MH_Initialize();
+    if (status != MH_OK) { Log("MH_Initialize failed=%s", MH_StatusToString(status)); startState.store(-1); return 4; }
+    status = MH_CreateHook(present, reinterpret_cast<LPVOID>(&HookPresent), reinterpret_cast<LPVOID*>(&originalPresent));
+    if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
+    if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
+    status = MH_QueueEnableHook(present);
+    if (status == MH_OK) status = MH_QueueEnableHook(resize);
+    if (status == MH_OK) status = MH_ApplyQueued();
+    if (status != MH_OK) {
+        stopRequested.store(true);
+        Log("Hook activation failed=%s; stop requested; retain all code/trampolines (partial activation possible)", MH_StatusToString(status));
+        startState.store(-1); return 6;
+    }
+    startState.store(2);
+    Log("HOOKS_INSTALLED; waiting for an observed real D3D11 Present. Discovery alone does not confirm game rendering.");
+    return 0;
+}
+
+extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
+    stopRequested.store(true, std::memory_order_release);
+    Log("STOP_REQUESTED; cleanup needs next Present on original render thread. No thread forced/physical unload.");
+    return stopped.load(std::memory_order_acquire) ? 0 : 1;
+}
+
+BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
+    // No hook installation, renderer initialization, thread work, or teardown under loader lock.
+    return TRUE;
+}
