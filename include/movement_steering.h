@@ -1,12 +1,11 @@
 #pragma once
 #include "movement_math.h"
 
-enum class SteeringMode : unsigned char { Idle, Turning, Recovering, Aligned };
+enum class SteeringMode : unsigned char { Idle, Turning, Accelerating };
 
 struct SteeringState {
     SteeringMode mode = SteeringMode::Idle;
     int turnSide = 0;
-    float retainedSpeed = 0;
 };
 
 struct SteeringOutput {
@@ -18,9 +17,10 @@ struct SteeringOutput {
     SteeringMode mode = SteeringMode::Idle;
 };
 
-// Input directions are physical intent, before movement synthesis. Positive left
-// continuously turns counter-clockwise; releasing it recovers view-forward (or
-// view-backward while S is held). The camera itself is never modified.
+// Physical WASD selects camera-relative travel heading, including diagonals.
+// No net input returns an invalid plan, leaving ordinary release behavior alone.
+// Speed gain above the air projection cap uses bounded lateral impulses near
+// that heading. Turning still obeys supplied acceleration. Camera is unchanged.
 // physics.interval is the duration actually simulated by this command fragment.
 // Reset state at pawn/airborne lifecycle changes and whenever steering is disabled.
 SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& input,

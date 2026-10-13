@@ -25,7 +25,8 @@ int main() {
             const float speed = (i % 3 == 0) ? 30.0f : (i % 3 == 1 ? 250.0f : 800.0f);
             const auto out = PlanAirSteering(state,
                 {speed, static_cast<float>(i % 7 - 3), static_cast<float>(i % 360 - 180),
-                 0, i % 4 == 0 ? 0.0f : (i % 4 == 1 ? 1.0f : -1.0f),
+                 i % 3 == 0 ? 1.0f : (i % 3 == 1 ? -1.0f : 0.0f),
+                 i % 4 == 0 ? 0.0f : (i % 4 == 1 ? 1.0f : -1.0f),
                  static_cast<std::uint32_t>(i + 1)}, physics[i % physics.size()]);
             checksum += out.predictedVelocityX + out.predictedVelocityY + out.forward + out.left;
 #ifdef CS2_STEERING_BENCHMARK
@@ -40,9 +41,9 @@ int main() {
     }
 #ifdef CS2_STEERING_BENCHMARK
     // The cost bound is deterministic; elapsed time is reported without flaky
-    // hardware/load-dependent pass thresholds. Turn <=11, recovery adds <=2.
-    std::printf("maximum_candidate_evaluations=%u bound=13\n", maximumEvaluations);
-    return maximumEvaluations > 13 ? 1 : 0;
+    // hardware/load-dependent pass thresholds. Turn <=1, gain clipping adds <=1.
+    std::printf("maximum_candidate_evaluations=%u bound=2\n", maximumEvaluations);
+    return maximumEvaluations > 2 ? 1 : 0;
 #else
     (void)maximumEvaluations;
 #endif

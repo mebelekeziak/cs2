@@ -212,3 +212,44 @@ jump/FPS validation. Comparison evidence is in `logs/steering-perf/`.
 Full local disassembly and read-only investigation scripts are retained under
 `logs/input-investigation/` and `logs/physics-investigation/`. These diagnostic
 paths are ignored by Git; this summary and the verification tool are tracked.
+
+## WASD revision and live stall trace
+
+The user reported nearly flawless jumping but poor steering and severe airborne
+FPS loss with revision 3. Its PID 20344 log recorded air callback means around
+11–12 ms. Revision 4 replaced circle/recovery behavior with camera-relative WASD
+heading and gain: turn toward the requested heading, then use the two mirrored
+maximum-gain impulses to build speed near that heading. No entry-speed ceiling
+remains. The gain envelope is 15 degrees and candidate work is bounded by two.
+No net movement input returns no steering plan; no autostop is added.
+Twenty-five independent acceleration/trajectory checks exercise all eight
+directions, low-speed recovery, reversals, camera changes and extreme rules.
+
+Revision 4 live log `logs/overlay-15980-134363808628744714.log` confirmed a
+performance cost outside the math. Weighted means: layout preflight 3957 µs,
+subticks 425 µs, history 370 µs, append 290 µs, apply 286 µs; engine speed 6.22 µs and
+solver 3.05 µs. Air callback mean 5866 µs. Stage counts differ because layout also
+runs grounded; these do not establish an exact per-air percentage. All command
+preflight paths repeatedly used VirtualQuery. Revision 5 removes those kernel
+queries and uses guarded byte-preserving writable probes solely on command
+storage owned by the callback. It retains guarded Apply and stale-source checks,
+and does not cache page permissions. Tests exercise immutable, inaccessible and
+cross-page storage while verifying preserved bytes. Standalone API and machine
+code investigation is retained in `logs/air-stall/`.
+
+That run exposed a latent duplicate-command bug as well. Producer
+`0xB65970..0xB659CB` rebuilds native buttons from physical input through
+`0x4C0D20` before calling the finalizer at `0xB659F3`, even when reusing a
+sequence. Skipping the duplicate therefore allows held physical Space to
+overwrite a synthetic release. The prior PID 20344 log had 75 grounded press requests and
+74 takeoffs with no grounded failed-release transitions; PID 15980 had 20 requests,
+11 takeoffs and 9 failed releases with unchanged actual stamps and engineDown=1.
+Those copied counts support the diagnosis; they are not independent server
+confirmation. Revision 5 repairs a rebuilt duplicate using the cached plan
+without advancing jump/steering state. It reuses only exact matching generated
+pointer/payload events, recalculates analog deltas from current historical input,
+and preserves unrelated button/camera/action data. Lifecycle/settings/rollback
+invalidate replay eligibility. Fresh live verification remains necessary.
+Public and diagnostic x64 Release builds pass all ten CTest suites. Seventeen
+replay checks include 10,000-frame physical-button rebuilds, event retention/loss,
+pool reuse for unrelated actions, fresh historical deltas and cache invalidation.

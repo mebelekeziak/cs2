@@ -33,8 +33,9 @@ shared between the menu and hotkeys, and last for the current run.
 ## Movement assistance
 
 Both features start enabled. Hold **Space** to activate them while playing the
-authorized built-in offline bot match. Hold **A/D** for continuous sharp turns;
-release A/D to recover travel toward your camera heading (backward with S).
+authorized built-in offline bot match. **WASD**, including diagonal combinations,
+selects camera-relative travel direction and rebuilds speed after slowing down.
+Releasing all movement keys stops assisted steering; no autostop is implemented.
 The steering reads physical W/A/S/D before synthesized input, so generated
 side movement cannot latch the turn after release. The **Movement** menu tab
 has independent toggles, also available through F8/F9 with the menu hidden.
@@ -44,10 +45,11 @@ it on the next command. Engine input/press feedback, takeoff and the controller'
 simulation tick counter drive bounded retries and release acknowledgement.
 When the server's automatic bunnyhop mode is already enabled, held jump remains
 down throughout flight. The code reads that setting without changing it.
-Autostrafe maximizes heading change under a retained-speed target instead of
-chasing a fixed sideways heading and unlimited speed gain. It brakes excess
-entry speed above the current wish-speed limit to tighten turns; release uses
-small analog corrections to remove remaining lateral velocity. It changes
+Autostrafe first turns toward the requested heading while retaining modeled
+horizontal speed, then uses maximum-gain air impulses near that heading to build
+speed above the air projection cap. There is no retained entry-speed ceiling.
+Gain-stage excursions remain within 15 degrees of intent in the supplied model.
+No input leaves ordinary release behavior alone. It changes
 normalized movement and direction buttons without rotating the camera.
 Grounded movement remains under ordinary game input control.
 
@@ -77,7 +79,7 @@ including a 393ms grounded interval, and confirmed fixed sideways steering.
 This prompted the pending-jump/continuous-turn revision and explicit subtick
 integration transitions.
 
-**Latest live failure:** revision 2 (`90a6db4`) in
+**Earlier live failure:** revision 2 (`90a6db4`) in
 `logs/overlay-39840-134363788528589904.log` generated zero assisted jump presses.
 The legacy-jump reader was given the value-pointer slot instead of the Cvar
 wrapper start, so jump-rule reads failed. Revision 3 corrects that address and
@@ -91,7 +93,7 @@ guarded memory copies, the Cvar pointer-slot mistake and bounded deferred loggin
 The read-only verifier independently resolves Cvar registration operands and
 rejects a source header containing the previous erroneous address.
 
-The air solver now evaluates at most 13 candidates instead of scanning/refining
+The revision 3 air solver evaluated at most 13 candidates instead of scanning/refining
 angles; its standalone median dropped from 11.29 to 0.99 microseconds per
 command on the same input corpus. Command reads use guarded in-process copies
 instead of a kernel read per scalar. Movement callbacks enqueue bounded records;
@@ -101,9 +103,36 @@ every line. File writes still run on the render thread. `MOVE_PERF` measures
 assistance callback work, including command-lock acquisition, separately for
 airborne commands; it excludes the original engine finalizer and rendering.
 
-Revision 3 has not been loaded into CS2. Those local measurements do not prove
-live FPS improvement or jump success; landing speed retention still needs
-observation. Ground
+**Latest live result:** the user reported nearly flawless bunnyhop for revision 3
+(`cf1a3b2`), but poor steering and severe FPS drops. Its log
+`logs/overlay-20344-134363800072269150.log` records airborne assistance means
+around 11–12 milliseconds, compared with tens of microseconds in idle/ground-only
+windows. A fast standalone solver did not resolve that runtime cost.
+
+**Revision 4 test:** directional WASD steering replaces continuous circles and
+release-forward recovery. Twenty-five independent steering checks cover all
+eight directions gaining from standstill/low speed, reversal, camera changes,
+rebuilding after a slowdown, cap/duration extremes and no assisted movement on
+release. The analytical planner evaluates at most two candidates. `MOVE_STAGE`
+splits live callback cost into controls, pawn/layout reads, jump, engine speed
+lookup, speed modifiers, physical keys, solver, subticks/history, append, apply
+and diagnostics; `MOVE_PERF` separately records command-lock waits.
+The user's live profiling run (`logs/overlay-15980-134363808628744714.log`) showed
+layout preflight alone averaging about 4 milliseconds, plus several hundred
+microseconds per subtick/history/append check. The engine speed lookup and solver
+took only a few microseconds; lock waits were negligible. Those preflight paths
+issued repeated VirtualQuery calls. Revision 5 replaces them with guarded,
+byte-preserving writable probes on the engine callback's owned command storage.
+It does not cache page permissions across commands.
+
+That run also exposed missed hops: unchanged simulation jump stamps after
+grounded press attempts. The producer rebuilds native buttons even when reusing
+a command sequence, which invalidates the earlier assumption that such commands
+could be skipped. Revision 5 repairs rebuilt commands using the cached plan,
+preserving its timing and reusing matching generated events instead of appending
+duplicates. Public and diagnostic x64 Release builds pass all ten CTest suites,
+including 17 replay checks and writable-probe failure/preservation checks.
+These changes need a fresh live run. Ground
 command timing and a full tick acceleration calculation do not establish perfect
 fractional landing timing. Collisions, prediction/substep timing and the game's
 jump/speed rules can change the resulting speed. Exact per-substep duck, walking
@@ -112,7 +141,8 @@ and firing speed transitions are not mirrored by the air solver.
 Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
-the mouse/A/D, then release A/D to test recovery. The launcher writes movement telemetry to the existing
+WASD, including diagonals and low-speed recovery. Release WASD to check normal
+coasting with no autostop. The launcher writes movement telemetry to the existing
 `logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
 
 * `MOVE_BUILD_VERIFIED` checks input identity/layout; `MOVE_OWNER` records an
@@ -125,6 +155,9 @@ the mouse/A/D, then release A/D to test recovery. The launcher writes movement t
   mean/max microseconds and dropped log records, roughly every two seconds.
   Queued records retain their producing thread and creation uptime; the outer
   UTC timestamp identifies the later drain.
+* `MOVE_STAGE` reports calls and mean/max microseconds for each completed stage
+  in that window. This isolates engine calls and command preparation from the
+  planner. Both timing records exclude the original finalizer and rendering.
 * `MOVE_LAND` / `MOVE_TAKEOFF` record grounded transitions and horizontal speeds;
   these copied state observations need comparison with actual gameplay.
 * `MOVE_JUMP` records emitted press/release, pending phase, simulation progress,
@@ -132,7 +165,10 @@ the mouse/A/D, then release A/D to test recovery. The launcher writes movement t
   assumed identical.
 * `MOVE_CONSUMED` compares requested values with movement-service values after
   the engine ingests the command. Observed ingestion is still separate from
-  physics/output confirmation.
+  physics/output confirmation. Every mismatch and first ingestion of a jump
+  edge records incoming native bits and engine buttons before/after ingestion.
+* `MOVE_REPLAY` records rebuilt native bits and retained/restored event counts;
+  repeated commands reuse a plan while ground/tick progress can trigger a replan.
 * `MOVE_STATE` / `MOVE_SOURCE` / `MOVE_STOPPED_RESIDENT` explain inactivity,
   lifecycle changes and completed mutation shutdown.
 

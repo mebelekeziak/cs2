@@ -3,6 +3,7 @@
 #include "movement_jump.h"
 #include "movement_steering.h"
 #include "movement_command.h"
+#include "movement_replay.h"
 #include "movement_offsets.h"
 #include "movement_memory.h"
 #include "movement_telemetry.h"
@@ -44,14 +45,43 @@ float lastSpeed = 0;
 ULONGLONG lastReport = 0;
 std::uint64_t callbacks = 0, modified = 0, presses = 0, strafes = 0, rejected = 0;
 ULONGLONG lastConsumeReport = 0;
-struct Request { int sequence = -1; float forward = 0, left = 0; MovementButtons buttons{}; };
+struct Request {
+    int sequence = -1;
+    float forward = 0, left = 0;
+    MovementButtons buttons{};
+    std::uint64_t mask = 0;
+    bool strafe = false, jumpEdge = false, edgeReported = false;
+};
 std::array<Request, 256> requests{};
+struct ReplayCache {
+    MovementReplayContext context{};
+    MovementReplayPlan plan{};
+    std::array<MovementReplayStep, 2> events{}; // Analog then jump.
+};
+ReplayCache replay{};
+MovementSettings inputSettings{};
+bool haveInputSettings = false;
+std::uint64_t replayed = 0, replayNativeRepairs = 0, replayRestoredEvents = 0;
+ULONGLONG lastReplayReport = 0;
 LARGE_INTEGER timingFrequency{};
 std::uint64_t timedCalls = 0, timedAirCalls = 0;
 double totalUs = 0, maximumUs = 0, totalAirUs = 0, maximumAirUs = 0;
 ULONGLONG lastTimingReport = 0;
 bool airborneWork = false;
 const char* lastJumpReadState = nullptr;
+enum class Stage : unsigned { Controls, Pawn, Layout, Jump, EngineSpeed, SpeedModifiers, Keys, Solver, Subticks, History, Append, Apply, Diagnostics, Count };
+struct StageSample { double total = 0, maximum = 0; std::uint64_t count = 0; };
+std::array<StageSample, static_cast<unsigned>(Stage::Count)> stageSamples{};
+LARGE_INTEGER stageStart{};
+double totalLockUs = 0, maximumLockUs = 0;
+
+void MarkStage(Stage stage) noexcept {
+    LARGE_INTEGER end{}; QueryPerformanceCounter(&end);
+    const double us = 1000000.0 * (end.QuadPart - stageStart.QuadPart) / timingFrequency.QuadPart;
+    auto& sample = stageSamples[static_cast<unsigned>(stage)];
+    sample.total += us; sample.maximum = std::max(sample.maximum, us); ++sample.count;
+    stageStart = end;
+}
 
 void Log(const char* format, ...) noexcept {
     if (!logger) return;
@@ -70,18 +100,7 @@ bool Copy(std::uintptr_t address, void* output, std::size_t bytes) noexcept {
 }
 template<class T> bool Read(std::uintptr_t address, T& output) noexcept { return Copy(address, &output, sizeof(output)); }
 bool Writable(std::uintptr_t address, std::size_t bytes) noexcept {
-    if (address < 0x10000 || address > 0x00007fffffffffffULL - bytes) return false;
-    const auto end = address + bytes;
-    while (address < end) {
-        MEMORY_BASIC_INFORMATION memory{};
-        if (VirtualQuery(reinterpret_cast<void*>(address), &memory, sizeof(memory)) != sizeof(memory) ||
-            memory.State != MEM_COMMIT || (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
-        const DWORD protection = memory.Protect & 0xff;
-        if (protection != PAGE_READWRITE && protection != PAGE_WRITECOPY &&
-            protection != PAGE_EXECUTE_READWRITE && protection != PAGE_EXECUTE_WRITECOPY) return false;
-        address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
-    }
-    return true;
+    return MovementOwnedWritable(address, bytes);
 }
 template<class T> bool Cvar(std::ptrdiff_t rva, T& value) noexcept {
     return MovementReadCvar(client + rva, value);
@@ -89,12 +108,15 @@ template<class T> bool Cvar(std::ptrdiff_t rva, T& value) noexcept {
 bool EffectiveSpeed(std::uintptr_t pawn, float& speed) noexcept {
     // Locally verified engine helper, RCX=pawn and XMM0=float result. Invoke
     // only on the engine command owner; it includes server and weapon limits.
+    bool valid = false;
     __try {
         speed = reinterpret_cast<float (*)(void*)>(client + off::EffectiveMaxSpeed)(reinterpret_cast<void*>(pawn));
-        return std::isfinite(speed) && speed > 0 && speed < 100000;
+        valid = std::isfinite(speed) && speed > 0 && speed < 100000;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        valid = false;
     }
+    MarkStage(Stage::EngineSpeed);
+    return valid;
 }
 void Reset() noexcept {
     sourcePawn = sourceServices = sourceController = 0; sourceHandle = UINT32_MAX;
@@ -103,6 +125,7 @@ void Reset() noexcept {
     wasGrounded = haveGround = false; lastSpeed = 0;
     ResetJump(jumpState); ResetAirSteering(steeringState);
     lastJumpReadState = nullptr;
+    replay = {}; haveInputSettings = false;
     for (auto& request : requests) request.sequence = -1;
     strafeControlled = false; previousDirections = 0;
 }
@@ -226,6 +249,7 @@ struct Patch {
     int originalSize = 0;
     std::array<std::uintptr_t, 128> originalOrder{};
     bool orderCaptured = false;
+    std::array<int, 2> ownedIndices{-1, -1};
 };
 bool Apply(const Patch& patch) noexcept {
     // Keep SEH in a function without C++ unwinding objects. The command callback
@@ -249,7 +273,7 @@ bool Apply(const Patch& patch) noexcept {
         return false;
     }
 }
-bool PrepareSteps(Patch& patch) noexcept {
+bool PrepareSteps(Patch& patch, const ReplayCache* saved = nullptr) noexcept {
     int capacity = 0, allocated = 0;
     std::uintptr_t rep = 0;
     if (!Read(patch.base + off::base::SubtickSize, patch.size) ||
@@ -267,7 +291,15 @@ bool PrepareSteps(Patch& patch) noexcept {
             !Read(step.address, step.value) || !Writable(step.address + 0x10, sizeof(MovementSubtick) - 0x10) ||
             (step.value.presence & ~0x7fu) || !std::isfinite(step.value.when) || step.value.when < 0 || step.value.when > 1)
             return false;
-        MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
+        bool owned = false;
+        if (saved) {
+            for (unsigned event = 0; event < saved->events.size(); ++event) {
+                if (patch.ownedIndices[event] < 0 && MovementOwnsReplayStep(saved->events[event], step.address, step.value)) {
+                    patch.ownedIndices[event] = i; owned = true; break;
+                }
+            }
+        }
+        if (!owned) MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
     }
     return true;
 }
@@ -306,7 +338,7 @@ bool AppendStep(Patch& patch, const MovementSubtick& value) noexcept {
     return true;
 }
 bool FinishStepOrder(const Patch& patch) noexcept {
-    if (patch.size == patch.originalSize) return true;
+    if (patch.size == patch.originalSize && patch.ownedIndices[0] < 0 && patch.ownedIndices[1] < 0) return true;
     std::uintptr_t rep = 0;
     std::array<std::uintptr_t, 128> pointers{}, ordered{};
     if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
@@ -315,8 +347,13 @@ bool FinishStepOrder(const Patch& patch) noexcept {
     // Place generated time-zero events first; preserve the original event order
     // and keep every owned pointer in the container exactly once.
     int written = 0;
-    for (int i = patch.originalSize; i < patch.size; ++i) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
-    for (int i = 0; i < patch.originalSize; ++i) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
+    for (int index : patch.ownedIndices) {
+        if (index >= 0) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(index)];
+    }
+    for (int i = 0; i < patch.size; ++i) {
+        if (i != patch.ownedIndices[0] && i != patch.ownedIndices[1])
+            ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
+    }
     __try {
         std::memcpy(reinterpret_cast<void*>(rep + 8), ordered.data(), static_cast<std::size_t>(patch.size) * 8);
         return true;
@@ -342,7 +379,7 @@ void RollbackSteps(const Patch& patch) noexcept {
     __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 bool CaptureStepOrder(Patch& patch) noexcept {
-    if (patch.size == patch.originalSize) return true;
+    if (patch.size == patch.originalSize && patch.ownedIndices[0] < 0 && patch.ownedIndices[1] < 0) return true;
     std::uintptr_t rep = 0;
     if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
         !Copy(rep + 8, patch.originalOrder.data(), static_cast<std::size_t>(patch.size) * 8) ||
@@ -351,8 +388,125 @@ bool CaptureStepOrder(Patch& patch) noexcept {
     return true;
 }
 
+MovementReplayContext ReplayContext(const Pawn& pawn, const Patch& patch, int sequence, int tick,
+                                   const MovementSettings& settings) noexcept {
+    MovementReplayContext context{};
+    context.valid = true; context.held = true;
+    context.bunnyhop = settings.bunnyhop; context.autostrafe = settings.autostrafe;
+    context.sequence = sequence; context.commandTick = tick;
+    context.grounded = (pawn.flags & off::OnGround) != 0;
+    context.owner = owner; context.simulationTick = pawn.simulationTick;
+    context.command = patch.command; context.base = patch.base;
+    context.pawn = pawn.address; context.pawnIdentity = pawn.identity; context.services = pawn.services; context.system = pawn.system;
+    context.controller = pawn.controller; context.controllerIdentity = pawn.controllerIdentity;
+    context.pawnHandle = pawn.handle; context.controllerHandle = pawn.controllerHandle;
+    return context;
+}
+bool PutOwnedEvent(Patch& patch, unsigned event, const MovementSubtick& value) noexcept {
+    const int index = patch.ownedIndices[event];
+    if (index < 0) {
+        const int added = patch.size;
+        if (!AppendStep(patch, value)) return false;
+        patch.ownedIndices[event] = added;
+    } else {
+        // Exact ownership was established before sanitizing physical events.
+        // Fresh historical axes can change the analog delta during a rebuild.
+        auto& old = patch.steps[static_cast<std::size_t>(index)].value;
+        const auto vtable = old.vtable, arena = old.arena;
+        const auto cachedSize = old.cachedSize;
+        old = value; old.vtable = vtable; old.arena = arena; old.cachedSize = cachedSize;
+    }
+    return true;
+}
+void RetireOwnedEvent(Patch& patch, unsigned event) noexcept {
+    if (patch.ownedIndices[event] >= 0) {
+        MovementSubtick neutral{}; neutral.presence = 4; // Retain only time zero.
+        PutOwnedEvent(patch, event, neutral);
+    }
+}
+bool ReadHistory(const Pawn& pawn, const Patch& patch, float& forward, float& left) noexcept {
+    MovementButtons buttons{};
+    if (!Read(pawn.services + off::services::Buttons, buttons) ||
+        !Read(pawn.services + off::services::CommandForward, forward) ||
+        !Read(pawn.services + off::services::CommandLeft, left) ||
+        !std::isfinite(forward) || !std::isfinite(left) ||
+        !Writable(patch.base + off::base::SubtickSize, sizeof(int))) return false;
+    if (!(buttons.down & (off::Forward | off::Back))) forward = 0;
+    if (!(buttons.down & (off::Left | off::Right))) left = 0;
+    return true;
+}
+void RememberReplay(const Patch& patch, const MovementReplayContext& context,
+                    const MovementReplayPlan& plan, bool repeated = false) noexcept {
+    replay.context = context; replay.plan = plan;
+    for (unsigned event = 0; event < replay.events.size(); ++event) {
+        const int index = patch.ownedIndices[event];
+        if (index < 0) replay.events[event] = {};
+        else {
+            const auto& step = patch.steps[static_cast<std::size_t>(index)];
+            replay.events[event] = {step.address, step.value};
+        }
+    }
+    auto& request = requests[static_cast<std::size_t>(context.sequence) % requests.size()];
+    const bool reported = repeated && request.sequence == context.sequence && request.edgeReported;
+    request = {context.sequence, patch.forward, patch.left, patch.buttons, MovementReplayMask(plan),
+               plan.strafe, plan.jumpEdge, reported};
+}
+void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& context) noexcept {
+    const auto plan = replay.plan; // No jump/steering planner state advances.
+    const auto incoming = patch.buttons;
+    const auto mask = MovementReplayMask(plan);
+    patch.jump = plan.jump; patch.strafe = plan.strafe;
+    patch.buttons = MovementReplayButtons(patch.buttons, plan);
+    if (patch.strafe) {
+        patch.forward = plan.forward; patch.left = plan.left;
+        patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
+    }
+    patch.commandPresence |= 1;
+    if (!PrepareSteps(patch, &replay) || !SamePawn(pawn)) {
+        ++rejected; State("rebuild source or subtick layout unavailable"); return;
+    }
+    MarkStage(Stage::Subticks);
+    float historicalForward = 0, historicalLeft = 0;
+    if (!ReadHistory(pawn, patch, historicalForward, historicalLeft)) {
+        ++rejected; State("rebuild historical input unavailable"); return;
+    }
+    MarkStage(Stage::History);
+    const unsigned retained = static_cast<unsigned>(patch.ownedIndices[0] >= 0) +
+                              static_cast<unsigned>(patch.ownedIndices[1] >= 0);
+    if ((patch.strafe && !PutOwnedEvent(patch, 0,
+            MovementAnalogTransition(plan.forward, plan.left, historicalForward, historicalLeft))) ||
+        (plan.jumpEdge && !PutOwnedEvent(patch, 1, MovementJumpTransition(plan.jumpDown)))) {
+        RollbackSteps(patch); ++rejected; State("could not restore owned rebuild transition"); return;
+    }
+    if (!SamePawn(pawn)) { RollbackSteps(patch); ++rejected; State("rebuild pawn changed during preparation"); return; }
+    MarkStage(Stage::Append);
+    if (!CaptureStepOrder(patch) || !FinishStepOrder(patch)) {
+        RollbackSteps(patch); ++rejected; State("rebuild subtick ordering unavailable"); return;
+    }
+    if (!Apply(patch)) {
+        RollbackSteps(patch); ++rejected; enabled.store(false, std::memory_order_release);
+        State("rebuild command write failed; movement stopped"); return;
+    }
+    MarkStage(Stage::Apply);
+    const bool repaired = (((incoming.down ^ patch.buttons.down) |
+        (incoming.changed ^ patch.buttons.changed) | (incoming.third ^ patch.buttons.third)) & mask) != 0;
+    const unsigned restored = static_cast<unsigned>(patch.size - patch.originalSize);
+    ++replayed; replayNativeRepairs += repaired; replayRestoredEvents += restored;
+    RememberReplay(patch, context, plan, true);
+    const auto now = GetTickCount64();
+    if (!lastReplayReport || now - lastReplayReport >= 2000) {
+        lastReplayReport = now;
+        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu; cached plan reused without advancing planner",
+            context.sequence, context.simulationTick, repaired, plan.jumpEdge, plan.jumpDown, retained, restored,
+            patch.originalSize, patch.size, incoming.down, incoming.changed, incoming.third,
+            patch.buttons.down, patch.buttons.changed, patch.buttons.third, historicalForward, historicalLeft,
+            patch.forward, patch.left, replayed, replayNativeRepairs, replayRestoredEvents);
+    }
+}
+
 void Process(void* input, void* commandPointer) noexcept {
     ++callbacks;
+    QueryPerformanceCounter(&stageStart);
     airborneWork = false;
     if (reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client ||
         reinterpret_cast<std::uintptr_t>(input) != client + off::Input) {
@@ -375,16 +529,18 @@ void Process(void* input, void* commandPointer) noexcept {
         enabled.store(false, std::memory_order_release); Reset(); State("movement stopped by End"); return;
     }
     const auto settings = MovementGetSettings();
+    if (haveInputSettings && (inputSettings.bunnyhop != settings.bunnyhop || inputSettings.autostrafe != settings.autostrafe)) {
+        replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
+        strafeControlled = false; haveGround = false;
+    }
+    inputSettings = settings; haveInputSettings = true;
     const bool held = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
     if (!held || (!settings.bunnyhop && !settings.autostrafe)) {
         ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false;
-        strafeControlled = false;
+        strafeControlled = false; replay = {};
         State(held ? "movement disabled in settings" : "ready; hold Space"); return;
     }
-    // Replayed finalized commands do not need another pawn walk/physics solve.
-    int candidateSequence = 0;
-    if (!Read(reinterpret_cast<std::uintptr_t>(commandPointer) + off::command::Sequence, candidateSequence) || candidateSequence <= 0) return;
-    if (candidateSequence == lastSequence) return;
+    MarkStage(Stage::Controls);
     Pawn pawn{};
     if (!ReadPawn(pawn)) { Reset(); State("awaiting live walking pawn"); return; }
     if (pawn.address != sourcePawn || pawn.services != sourceServices || pawn.handle != sourceHandle ||
@@ -394,6 +550,7 @@ void Process(void* input, void* commandPointer) noexcept {
         Log("MOVE_SOURCE pawn=%p services=%p handle=0x%x", reinterpret_cast<void*>(sourcePawn), reinterpret_cast<void*>(sourceServices), sourceHandle);
     }
     airborneWork = (pawn.flags & off::OnGround) == 0;
+    MarkStage(Stage::Pawn);
     Patch patch{}; patch.command = reinterpret_cast<std::uintptr_t>(commandPointer);
     int sequence = 0, tick = 0;
     std::uintptr_t angles = 0;
@@ -412,12 +569,26 @@ void Process(void* input, void* commandPointer) noexcept {
         !Writable(patch.base + off::base::Forward, 2 * sizeof(float))) {
         ++rejected; State("command layout unavailable"); return;
     }
-    if (sequence == lastSequence) return; // Never edit an already finalized/replayed command twice.
     const float desiredForward = patch.forward, desiredLeft = patch.left;
     if (sequence < lastSequence || tick < lastTick) {
-        ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false; strafeControlled = false;
+        replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false; strafeControlled = false;
     }
     const bool grounded = (pawn.flags & off::OnGround) != 0;
+    MarkStage(Stage::Layout);
+    const auto context = ReplayContext(pawn, patch, sequence, tick, settings);
+    if (MovementCanReplay(replay.context, context)) { RepairReplay(pawn, patch, context); return; }
+    const ReplayCache rebuilt = replay;
+    const bool sameRebuiltSource = MovementReplaySameSource(rebuilt.context, context) &&
+        rebuilt.context.sequence == sequence && context.simulationTick >= rebuilt.context.simulationTick;
+    if (replay.context.valid && replay.context.sequence == sequence && !sameRebuiltSource) {
+        // A pooled command/base or a source identity changed under the same
+        // sequence, or prediction rolled back. Do not reuse the old plan.
+        replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
+        haveGround = false; strafeControlled = false;
+    }
+    // Ground/tick progression can require another plan for this sequence, but
+    // must keep the pending/releasing phase and recognize still-owned events.
+    replay = {};
     const float speed = std::hypot(pawn.velocity[0], pawn.velocity[1]);
     if (haveGround && grounded != wasGrounded) {
         Log("MOVE_%s sequence=%d tick=%d speed=%.3f previous_speed=%.3f vz=%.3f", grounded ? "LAND" : "TAKEOFF",
@@ -449,11 +620,13 @@ void Process(void* input, void* commandPointer) noexcept {
         }
     }
     SteeringOutput strafe{};
+    MarkStage(Stage::Jump);
     SteeringState nextSteeringState = steeringState;
     AirPhysics physics{};
     physics.surfaceFriction = pawn.friction;
-    if (settings.autostrafe && !grounded &&
-        AirSpeed(pawn, physics.wishSpeed) &&
+    const bool airSpeedValid = settings.autostrafe && !grounded && AirSpeed(pawn, physics.wishSpeed);
+    MarkStage(Stage::SpeedModifiers);
+    if (airSpeedValid &&
         Read(patch.base + off::base::Angles, angles) && angles && Read(angles + 0x1C, yaw) &&
         Read(client + off::TickIntervalConstant, physics.interval) &&
         Cvar(off::AirCap, physics.wishSpeedCap) && Cvar(off::AirAccelerate, physics.acceleration)) {
@@ -461,8 +634,10 @@ void Process(void* input, void* commandPointer) noexcept {
                                       static_cast<float>((GetAsyncKeyState('S') & 0x8000) != 0);
         const float physicalLeft = static_cast<float>((GetAsyncKeyState('A') & 0x8000) != 0) -
                                    static_cast<float>((GetAsyncKeyState('D') & 0x8000) != 0);
+        MarkStage(Stage::Keys);
         strafe = PlanAirSteering(nextSteeringState, {pawn.velocity[0], pawn.velocity[1], yaw,
                                   physicalForward, physicalLeft, static_cast<std::uint32_t>(sequence)}, physics);
+        MarkStage(Stage::Solver);
         if (strafe.valid) {
             patch.strafe = true; patch.forward = strafe.forward; patch.left = strafe.left;
             patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
@@ -472,31 +647,27 @@ void Process(void* input, void* commandPointer) noexcept {
     }
     if (!patch.jump && !patch.strafe) { State("movement physics unavailable"); return; }
     patch.commandPresence |= 1;
-    if (!PrepareSteps(patch) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
+    if (!PrepareSteps(patch, sameRebuiltSource ? &rebuilt : nullptr) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
+    MarkStage(Stage::Subticks);
     float historicalForward = 0, historicalLeft = 0;
-    MovementButtons historicalButtons{};
-    if (!Read(pawn.services + off::services::Buttons, historicalButtons) ||
-        !Read(pawn.services + off::services::CommandForward, historicalForward) ||
-        !Read(pawn.services + off::services::CommandLeft, historicalLeft) ||
-        !std::isfinite(historicalForward) || !std::isfinite(historicalLeft) ||
-        !Writable(patch.base + off::base::SubtickSize, sizeof(int))) {
+    if (!ReadHistory(pawn, patch, historicalForward, historicalLeft)) {
         ++rejected; State("historical command input unavailable"); return;
     }
-    if (!(historicalButtons.down & (off::Forward | off::Back))) historicalForward = 0;
-    if (!(historicalButtons.down & (off::Left | off::Right))) historicalLeft = 0;
+    MarkStage(Stage::History);
     if (patch.strafe) {
         const auto transition = MovementAnalogTransition(patch.forward, patch.left, historicalForward, historicalLeft);
-        if (!AppendStep(patch, transition)) {
+        if (!PutOwnedEvent(patch, 0, transition)) {
             RollbackSteps(patch); ++rejected; State("could not append owned analog transition"); return;
         }
-    }
+    } else RetireOwnedEvent(patch, 0);
     if (patch.jump && (jump.fresh || jump.released)) {
         const auto transition = MovementJumpTransition(jump.down);
-        if (!AppendStep(patch, transition)) {
+        if (!PutOwnedEvent(patch, 1, transition)) {
             RollbackSteps(patch); ++rejected; State("could not append owned jump transition"); return;
         }
-    }
+    } else RetireOwnedEvent(patch, 1);
     if (!SamePawn(pawn)) { RollbackSteps(patch); ++rejected; State("pawn changed during command preparation"); return; }
+    MarkStage(Stage::Append);
     if (!CaptureStepOrder(patch) || !FinishStepOrder(patch)) {
         RollbackSteps(patch); ++rejected; State("subtick ordering unavailable"); return;
     }
@@ -504,8 +675,11 @@ void Process(void* input, void* commandPointer) noexcept {
         RollbackSteps(patch);
         ++rejected; enabled.store(false, std::memory_order_release); State("command write failed; movement stopped"); return;
     }
+    MarkStage(Stage::Apply);
     lastSequence = sequence; lastTick = tick;
-    requests[static_cast<std::size_t>(sequence) % requests.size()] = {sequence, patch.forward, patch.left, patch.buttons};
+    const MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
+                                  jump.down, patch.forward, patch.left, patch.buttons};
+    RememberReplay(patch, context, plan);
     strafeControlled = patch.strafe;
     previousDirections = patch.buttons.down & off::Directions;
     if (patch.jump) jumpState = nextJumpState;
@@ -540,7 +714,12 @@ void HookFinalize(void* input, void* command) noexcept {
         LARGE_INTEGER begin{}, end{};
         QueryPerformanceCounter(&begin);
         AcquireSRWLockExclusive(&commandLock);
+        LARGE_INTEGER acquired{}; QueryPerformanceCounter(&acquired);
+        const double lockUs = 1000000.0 * (acquired.QuadPart - begin.QuadPart) / timingFrequency.QuadPart;
+        totalLockUs += lockUs; maximumLockUs = std::max(maximumLockUs, lockUs);
+        airborneWork = false;
         if (enabled.load(std::memory_order_acquire)) Process(input, command);
+        if (enabled.load(std::memory_order_acquire)) MarkStage(Stage::Diagnostics);
         QueryPerformanceCounter(&end);
         const double us = 1000000.0 * (end.QuadPart - begin.QuadPart) / timingFrequency.QuadPart;
         ++timedCalls; totalUs += us; maximumUs = std::max(maximumUs, us);
@@ -548,10 +727,18 @@ void HookFinalize(void* input, void* command) noexcept {
         const auto now = GetTickCount64();
         if (!lastTimingReport || now - lastTimingReport >= 2000) {
             lastTimingReport = now;
-            Log("MOVE_PERF callbacks=%llu mean_us=%.3f max_us=%.3f air_callbacks=%llu air_mean_us=%.3f air_max_us=%.3f dropped_logs=%llu; command callback performs no file I/O",
+            Log("MOVE_PERF callbacks=%llu mean_us=%.3f max_us=%.3f air_callbacks=%llu air_mean_us=%.3f air_max_us=%.3f dropped_logs=%llu lock_mean_us=%.3f lock_max_us=%.3f; command callback performs no file I/O",
                 timedCalls, totalUs / timedCalls, maximumUs, timedAirCalls, timedAirCalls ? totalAirUs / timedAirCalls : 0,
-                maximumAirUs, MovementTelemetryDropped());
+                maximumAirUs, MovementTelemetryDropped(), totalLockUs / timedCalls, maximumLockUs);
+            constexpr const char* stageNames[]{"controls", "pawn", "layout", "jump", "engine_speed", "speed_modifiers", "physical_keys", "solver", "subticks", "history", "append", "apply", "diagnostics"};
+            static_assert(std::size(stageNames) == static_cast<unsigned>(Stage::Count));
+            for (unsigned i = 0; i < stageSamples.size(); ++i) {
+                const auto& sample = stageSamples[i];
+                if (sample.count) Log("MOVE_STAGE name=%s calls=%llu mean_us=%.3f max_us=%.3f", stageNames[i], sample.count, sample.total / sample.count, sample.maximum);
+            }
+            stageSamples = {};
             timedCalls = timedAirCalls = 0; totalUs = maximumUs = totalAirUs = maximumAirUs = 0;
+            totalLockUs = maximumLockUs = 0;
         }
         ReleaseSRWLockExclusive(&commandLock);
     }
@@ -560,6 +747,10 @@ void HookFinalize(void* input, void* command) noexcept {
     original(input, command);
 }
 void HookIngest(void* services, void* command) noexcept {
+    MovementButtons incoming{}, before{};
+    const bool observedBefore = enabled.load(std::memory_order_acquire) &&
+        Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Buttons, incoming) &&
+        Read(reinterpret_cast<std::uintptr_t>(services) + off::services::Buttons, before);
     originalIngest(services, command);
     if (!enabled.load(std::memory_order_acquire)) return;
     AcquireSRWLockExclusive(&commandLock);
@@ -571,15 +762,24 @@ void HookIngest(void* services, void* command) noexcept {
         if (Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Sequence, sequence) && sequence > 0 &&
             Read(address + off::services::CommandForward, forward) && Read(address + off::services::CommandLeft, left) &&
             Read(address + off::services::Buttons, buttons)) {
-            const auto& request = requests[static_cast<std::size_t>(sequence) % requests.size()];
+            auto& request = requests[static_cast<std::size_t>(sequence) % requests.size()];
             if (request.sequence == sequence) {
-                const bool mismatch = std::abs(forward - request.forward) > 0.0001f ||
-                    std::abs(left - request.left) > 0.0001f || buttons.down != request.buttons.down;
+                const bool inputMismatch = observedBefore &&
+                    ((((incoming.down ^ request.buttons.down) | (incoming.changed ^ request.buttons.changed) |
+                       (incoming.third ^ request.buttons.third)) & request.mask) != 0);
+                const bool mismatch = inputMismatch || (request.strafe &&
+                    (std::abs(forward - request.forward) > 0.0001f || std::abs(left - request.left) > 0.0001f)) ||
+                    ((buttons.down ^ request.buttons.down) & request.mask) != 0;
+                const bool edge = request.jumpEdge && !request.edgeReported;
                 const auto now = GetTickCount64();
-                if (!lastConsumeReport || now - lastConsumeReport >= 2000) {
+                if (mismatch || edge || !lastConsumeReport || now - lastConsumeReport >= 2000) {
                     lastConsumeReport = now;
-                    Log("MOVE_CONSUMED sequence=%d mismatch=%u requested=%.5f,%.5f consumed=%.5f,%.5f requested_buttons=0x%llx consumed_buttons=0x%llx; ingestion observed, physics integration remains separate",
-                        sequence, mismatch, request.forward, request.left, forward, left, request.buttons.down, buttons.down);
+                    request.edgeReported = request.edgeReported || edge;
+                    Log("MOVE_CONSUMED sequence=%d mismatch=%u input_mismatch=%u jump_edge=%u before_valid=%u requested=%.5f,%.5f consumed=%.5f,%.5f requested_buttons=0x%llx/0x%llx/0x%llx incoming_buttons=0x%llx/0x%llx/0x%llx before_buttons=0x%llx/0x%llx/0x%llx consumed_buttons=0x%llx/0x%llx/0x%llx; ingestion observed, physics integration remains separate",
+                        sequence, mismatch, inputMismatch, edge, observedBefore, request.forward, request.left, forward, left,
+                        request.buttons.down, request.buttons.changed, request.buttons.third,
+                        incoming.down, incoming.changed, incoming.third, before.down, before.changed, before.third,
+                        buttons.down, buttons.changed, buttons.third);
                 }
             }
         }
@@ -625,7 +825,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=3 legacy_wrapper=0x2529200 reads=guarded_copy diagnostics=queued steering=analytic pending_jump=simulation_clock subticks=time_zero");
+    Log("MOVE_IMPLEMENTATION revision=5 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_gain stages=enabled pending_jump=simulation_clock subticks=time_zero");
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

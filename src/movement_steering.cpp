@@ -1,109 +1,52 @@
 #include "movement_steering.h"
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <numbers>
 
 namespace {
-constexpr float pi = std::numbers::pi_v<float>;
-constexpr float radians = pi / 180.0f;
-float Wrap(float angle) noexcept { return std::remainder(angle, 2 * pi); }
-bool Finite(float value) noexcept { return std::isfinite(value); }
+constexpr double pi = std::numbers::pi;
+constexpr double radians = pi / 180.0;
+// Air acceleration above its projection cap requires a lateral component.
+// Bound its transient deviation from the requested travel direction.
+constexpr double headingEnvelope = 15 * radians;
+double Wrap(double angle) noexcept { return std::remainder(angle, 2 * pi); }
 #ifdef CS2_STEERING_BENCHMARK
 thread_local unsigned int candidateEvaluations = 0;
 #endif
+struct Candidate { double angle = 0, amount = 0, step = 0, x = 0, y = 0; };
 
-struct Candidate {
-    float angle = 0, amount = 1, step = 0, x = 0, y = 0, speed = 0, turn = 0;
-};
-Candidate Simulate(const StrafeInput& in, const AirPhysics& p, float angle, float amount,
-                   float velocityYaw, int side) noexcept {
+Candidate Simulate(const StrafeInput& in, const AirPhysics& p,
+                   double angle, double amount) noexcept {
 #ifdef CS2_STEERING_BENCHMARK
     ++candidateEvaluations;
 #endif
     Candidate c{};
-    c.angle = angle; c.amount = std::clamp(amount, 0.0f, 1.0f);
-    const float dx = std::cos(angle), dy = std::sin(angle);
-    const float wish = p.wishSpeed * c.amount;
-    const float cap = std::min(p.wishSpeedCap, wish);
-    const float available = p.acceleration * wish * p.surfaceFriction * p.interval;
-    c.step = std::min(available, std::max(0.0f, cap - in.velocityX * dx - in.velocityY * dy));
-    c.x = in.velocityX + c.step * dx; c.y = in.velocityY + c.step * dy;
-    c.speed = std::hypot(c.x, c.y);
-    c.turn = side * Wrap(std::atan2(c.y, c.x) - velocityYaw);
+    c.angle = angle; c.amount = std::clamp(amount, 0.0, 1.0);
+    const double dx = std::cos(angle), dy = std::sin(angle);
+    const double wish = p.wishSpeed * c.amount;
+    const double available = p.acceleration * wish * p.surfaceFriction * p.interval;
+    c.step = std::min(available, std::max(0.0,
+        std::min<double>(p.wishSpeedCap, wish) - in.velocityX * dx - in.velocityY * dy));
+    c.x = in.velocityX + c.step * dx;
+    c.y = in.velocityY + c.step * dy;
     return c;
 }
 
-// Maximize signed heading change under the engine's projection cap, with a
-// retained-speed floor and no extra speed growth once that floor is reached.
-Candidate Turn(const StrafeInput& in, const AirPhysics& p, float velocityYaw,
-               int side, float retained, float maximumTurn) noexcept {
-    const float speed = std::hypot(in.velocityX, in.velocityY);
-    const float available = p.acceleration * p.wishSpeed * p.surfaceFriction * p.interval;
-    const float floor = retained <= speed + 0.01f ? retained : speed;
-    // Excess entry speed widens the orbit. Spend at most half the available
-    // impulse reducing that excess; preserve the remainder for turning.
-    const float ceiling = speed > retained ? std::max(retained, speed - available * 0.5f) : retained;
-    Candidate best = Simulate(in, p, velocityYaw, 0, velocityYaw, side);
-    if (available <= 0 || speed <= 0 || maximumTurn <= 0) return best;
-    auto consider = [&](float relative, float amount = 1.0f) {
-        Candidate c = Simulate(in, p, velocityYaw + side * relative, amount, velocityYaw, side);
-        if (c.speed + 0.001f < floor || c.speed > ceiling + 0.001f ||
-            c.turn < -0.00001f || c.turn > maximumTurn + 0.000001f) return;
-        if (c.turn > best.turn + 0.0000001f ||
-            (std::abs(c.turn - best.turn) <= 0.0000001f && c.speed > best.speed)) best = c;
-    };
-    // Full-impulse heading extrema, speed boundaries, and the projection-cap
-    // transition are analytical. In the cap-clipped branch heading increases
-    // monotonically over its feasible half-circle, so its speed boundaries
-    // suffice. This bounded set avoids scanning/refining angles per fragment.
-    if (available > 0 && speed > 0) {
-        const float constantTurn = std::min(maximumTurn, 2 * std::asin(std::clamp(
-            std::min(available, 2 * std::min(p.wishSpeedCap, p.wishSpeed)) / (2 * speed), 0.0f, 1.0f)));
-        const float constantImpulse = 2 * speed * std::sin(constantTurn / 2);
-        // Reducing analog amount also reduces wish speed. Keep it high enough
-        // that the engine's wish-speed cap does not clip the intended impulse.
-        consider(pi / 2 + constantTurn / 2, std::max(constantImpulse / available,
-                                                  constantImpulse / (2 * p.wishSpeed)));
-        consider(std::acos(std::clamp(-available / speed, -1.0f, 1.0f)));
-        consider(std::acos(std::clamp((floor * floor - speed * speed - available * available) /
-                                     (2 * speed * available), -1.0f, 1.0f)));
-        consider(std::acos(std::clamp((ceiling * ceiling - speed * speed - available * available) /
-                                     (2 * speed * available), -1.0f, 1.0f)));
-        consider(std::acos(std::clamp((std::min(p.wishSpeedCap, p.wishSpeed) - available) /
-                                     speed, -1.0f, 1.0f)));
-        // With a large impulse the engine projection cap clips acceleration.
-        // projection=-cap gives a capped impulse of 2*cap and no speed loss.
-        consider(std::acos(std::clamp(-std::min(p.wishSpeedCap, p.wishSpeed) / speed, -1.0f, 1.0f)));
-        const double cap = std::min(p.wishSpeedCap, p.wishSpeed);
-        for (float boundary : {floor, ceiling}) {
-            const double squaredProjection = static_cast<double>(speed) * speed + cap * cap -
-                                             static_cast<double>(boundary) * boundary;
-            consider(std::acos(-static_cast<float>(std::sqrt(std::clamp(
-                squaredProjection / (static_cast<double>(speed) * speed), 0.0, 1.0)))));
-        }
-        // While shedding excess speed, the constant-speed candidate above is
-        // outside the ceiling. Include the finite-angle limit on both retained
-        // speed boundaries using a smaller impulse when the cap permits it.
-        if (floor != speed || ceiling != speed) {
-            const float sine = std::sin(maximumTurn), cosine = std::cos(maximumTurn);
-            for (float boundary : {floor, ceiling}) {
-                const float dx = boundary * cosine - speed, dy = boundary * sine;
-                const float length = std::hypot(dx, dy);
-                if (length > 0 && length <= available) {
-                    const float finalProjection = (boundary * boundary - speed * boundary * cosine) / length;
-                    consider(std::atan2(dy, dx), std::max(length / available,
-                                                        finalProjection / p.wishSpeed));
-                }
-            }
-        }
-    }
-    return best;
+Candidate Turn(const StrafeInput& in, const AirPhysics& p, double speed,
+               double velocityYaw, double error, double available, double cap) noexcept {
+    // The difference between two equal-length velocity vectors supplies the
+    // exact impulse for a turn. Its final projection is half its length, so
+    // both the full-impulse and capped branches have an analytical turn bound.
+    const double angle = std::min(std::abs(error), 2 * std::asin(std::clamp(
+        std::min(available, 2 * cap) / (2 * speed), 0.0, 1.0)));
+    const double step = 2 * speed * std::sin(angle / 2);
+    const double amount = std::max(step / available, step / (2 * p.wishSpeed));
+    const int side = error < 0 ? -1 : 1;
+    return Simulate(in, p, velocityYaw + side * (pi / 2 + angle / 2), amount);
 }
 }
 
 #ifdef CS2_STEERING_BENCHMARK
-// Benchmark-only observability; no counter or API is present in normal builds.
 unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept { return candidateEvaluations; }
 #endif
 
@@ -115,71 +58,73 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
     candidateEvaluations = 0;
 #endif
     SteeringOutput out{};
-    if (!Finite(in.velocityX) || !Finite(in.velocityY) || !Finite(in.viewYaw) ||
-        !Finite(in.forward) || !Finite(in.left) || !Finite(p.wishSpeed) ||
-        !Finite(p.wishSpeedCap) || !Finite(p.acceleration) || !Finite(p.surfaceFriction) ||
-        !Finite(p.interval) || p.wishSpeed <= 0 || p.wishSpeedCap <= 0 ||
+    if (!std::isfinite(in.velocityX) || !std::isfinite(in.velocityY) ||
+        !std::isfinite(in.viewYaw) || !std::isfinite(in.forward) || !std::isfinite(in.left) ||
+        !std::isfinite(p.wishSpeed) || !std::isfinite(p.wishSpeedCap) ||
+        !std::isfinite(p.acceleration) || !std::isfinite(p.surfaceFriction) ||
+        !std::isfinite(p.interval) || p.wishSpeed <= 0 || p.wishSpeedCap <= 0 ||
         p.acceleration < 0 || p.surfaceFriction < 0 || p.interval <= 0 || p.interval > 0.1f) {
         ResetAirSteering(state); return out;
     }
-    const float speed = std::hypot(in.velocityX, in.velocityY);
-    const float available = p.acceleration * p.wishSpeed * p.surfaceFriction * p.interval;
-    if (!Finite(speed) || speed > 100000 || !Finite(available)) {
+    const double speed = std::hypot(in.velocityX, in.velocityY);
+    const double available = static_cast<double>(p.acceleration) * p.wishSpeed *
+                             p.surfaceFriction * p.interval;
+    if (!std::isfinite(speed) || speed > 100000 || !std::isfinite(available)) {
         ResetAirSteering(state); return out;
     }
-    const float camera = in.viewYaw * radians;
-    const float desired = Wrap(camera + (in.forward < -0.01f ? pi : 0));
-    const int side = in.left > 0.01f ? 1 : (in.left < -0.01f ? -1 : 0);
-    const float velocityYaw = speed > 0.001f ? std::atan2(in.velocityY, in.velocityX) : desired;
-    const float error = Wrap(desired - velocityYaw);
+    const bool intent = std::abs(in.forward) > 0.01f || std::abs(in.left) > 0.01f;
+    if (!intent) {
+        // No autostop or retained release behavior: do not synthesize movement.
+        ResetAirSteering(state); return out;
+    }
+    const double camera = Wrap(in.viewYaw * radians);
+    const double desired = Wrap(camera + std::atan2(in.left, in.forward));
+    const double velocityYaw = speed > 0.000001 ? std::atan2(in.velocityY, in.velocityX) : desired;
+    const double error = Wrap(desired - velocityYaw);
+    const double cap = std::min(p.wishSpeedCap, p.wishSpeed);
     Candidate chosen{};
-    if (side) {
-        if (state.mode != SteeringMode::Turning || state.turnSide != side)
-            state.retainedSpeed = std::min(p.wishSpeed, std::max(speed, std::min(p.wishSpeedCap, p.wishSpeed)));
-        state.mode = SteeringMode::Turning; state.turnSide = side;
-        state.retainedSpeed = std::min(state.retainedSpeed, p.wishSpeed);
-        if (speed < 0.001f)
-            chosen = Simulate(in, p, camera + side * pi / 2, 1, velocityYaw, side);
-        else
-            chosen = Turn(in, p, velocityYaw, side, state.retainedSpeed, pi * 0.95f);
+    if (available <= 0) {
+        state.mode = SteeringMode::Turning;
+        chosen = Simulate(in, p, desired, 1);
+    } else if (speed > 0.000001 && std::abs(error) > headingEnvelope + 0.000001) {
+        state.mode = SteeringMode::Turning;
+        state.turnSide = error < 0 ? -1 : 1;
+        chosen = Turn(in, p, speed, velocityYaw, error, available, cap);
     } else {
-        if (state.mode == SteeringMode::Turning || state.mode == SteeringMode::Idle)
-            state.retainedSpeed = std::min(speed, p.wishSpeed);
-        state.retainedSpeed = std::min(state.retainedSpeed, std::min(speed, p.wishSpeed));
-        const int recoverySide = error > 0 ? 1 : (error < 0 ? -1 : (state.turnSide ? state.turnSide : 1));
-        state.mode = SteeringMode::Recovering;
-        chosen = Turn(in, p, velocityYaw, recoverySide, state.retainedSpeed, std::abs(error));
-        // A small variable-amplitude correction lands exactly on the desired
-        // heading. Unlike alternating full-strength strafes it cannot keep
-        // oscillating sideways after the user releases A/D.
-        const float target = std::min(speed, std::max(state.retainedSpeed, 0.0f));
-        const float dx = target * std::cos(desired) - in.velocityX;
-        const float dy = target * std::sin(desired) - in.velocityY;
-        const float length = std::hypot(dx, dy);
-        if (available > 0 && length > 0.00001f && length <= available + 0.00001f) {
-            const float finalProjection = (target * std::cos(desired) * dx +
-                                           target * std::sin(desired) * dy) / length;
-            const Candidate exact = Simulate(in, p, std::atan2(dy, dx),
-                                             std::max(length / available, finalProjection / p.wishSpeed),
-                                             velocityYaw, recoverySide);
-            if (std::hypot(exact.x - target * std::cos(desired), exact.y - target * std::sin(desired)) < 0.001f)
-                chosen = exact;
-        }
-        if (speed < 0.001f || std::abs(error) < 0.00001f) {
-            chosen = Simulate(in, p, desired, 1, velocityYaw, recoverySide);
-            state.mode = SteeringMode::Aligned;
-        } else if (chosen.speed > 0.001f &&
-                   std::abs(Wrap(desired - std::atan2(chosen.y, chosen.x))) < 0.00001f) {
-            state.mode = SteeringMode::Aligned;
+        state.mode = SteeringMode::Accelerating;
+        // Maximal speed gain uses projection max(0, cap-available), limited
+        // by the observed speed. Choose its mirror toward physical intent.
+        // This continues building speed above the cap, including after a
+        // collision or weapon-speed change; no entry-speed ceiling is kept.
+        const double projection = std::min(speed, std::max(0.0, cap - available));
+        const double relative = speed > 0.000001 ?
+            std::acos(std::clamp(projection / speed, 0.0, 1.0)) : 0;
+        const int side = std::abs(error) > 0.000001 ? (error < 0 ? -1 : 1) :
+                         (state.turnSide ? state.turnSide : 1);
+        state.turnSide = side;
+        chosen = Simulate(in, p, velocityYaw + side * relative, 1);
+        const double nextError = Wrap(std::atan2(chosen.y, chosen.x) - desired);
+        if (speed > 0.000001 && std::abs(nextError) > headingEnvelope + 0.000001) {
+            // Intersect the impulse ray with the near edge of the permitted
+            // heading envelope. Scaling wish speed changes both acceleration
+            // and the cap; satisfy both instead of scaling acceleration only.
+            const double targetTurn = side * Wrap(desired + side * headingEnvelope - velocityYaw);
+            const double denominator = std::sin(relative - targetTurn);
+            const double step = denominator > 0 ?
+                std::clamp(speed * std::sin(targetTurn) / denominator, 0.0, chosen.step) : 0;
+            chosen = Simulate(in, p, chosen.angle,
+                std::max(step / available, (projection + step) / p.wishSpeed));
         }
     }
-    const float relative = Wrap(chosen.angle - camera);
-    out.forward = chosen.amount * std::cos(relative);
-    out.left = chosen.amount * std::sin(relative);
-    out.wishYaw = Wrap(chosen.angle) / radians; out.accelerationStep = chosen.step;
-    out.predictedVelocityX = chosen.x; out.predictedVelocityY = chosen.y;
-    out.headingError = Wrap(desired - std::atan2(chosen.y, chosen.x)) / radians;
-    out.headingChange = Wrap(std::atan2(chosen.y, chosen.x) - velocityYaw) / radians;
+    const double relative = Wrap(chosen.angle - camera);
+    out.forward = static_cast<float>(chosen.amount * std::cos(relative));
+    out.left = static_cast<float>(chosen.amount * std::sin(relative));
+    out.wishYaw = static_cast<float>(Wrap(chosen.angle) / radians);
+    out.accelerationStep = static_cast<float>(chosen.step);
+    out.predictedVelocityX = static_cast<float>(chosen.x);
+    out.predictedVelocityY = static_cast<float>(chosen.y);
+    out.headingError = static_cast<float>(Wrap(desired - std::atan2(chosen.y, chosen.x)) / radians);
+    out.headingChange = static_cast<float>(Wrap(std::atan2(chosen.y, chosen.x) - velocityYaw) / radians);
     out.mode = state.mode; out.valid = true;
     return out;
 }
