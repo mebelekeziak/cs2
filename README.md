@@ -125,7 +125,37 @@ cmake -S . -B build -G 'Visual Studio 17 2022' -A x64
 cmake --build build --config Release --parallel
 ```
 
-Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, and preserved third-party licenses in `build/Release/licenses/`. Use Release; the manual mapper intentionally supports a restricted payload contract rather than arbitrary Windows DLLs.
+Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, `build/Release/cs2_loader.exe`, and preserved third-party licenses in `build/Release/licenses/`. Use Release; the manual mapper intentionally supports a restricted payload contract rather than arbitrary Windows DLLs.
+
+## One-click loader
+
+Start CS2 and leave it at the disconnected main menu or in offline Practice.
+Double-click **`Load Overlay.cmd`** in the project folder, or double-click
+**`build/Release/cs2_loader.exe`** directly. No PID, DLL path or injection command
+is needed. The launcher immediately loads into the single running `cs2.exe`
+using the existing mapper and adjacent DLL. It reports missing builds, no client,
+multiple clients and mapper failures in its own window. It does not start CS2.
+Environment verification remains the operator's responsibility.
+
+The native launcher has a status window and an **Open logs** button. Each run
+writes `logs/mapper-PID-STARTTIME.log` and `logs/overlay-PID-STARTTIME.log`.
+Initialization success still requires checking the game for visible output.
+Closing the launcher leaves the mapper/overlay running. **Insert** toggles the
+panel; **End** requests cooperative stop. Stopped code remains resident until
+normal game exit; restart CS2 before loading another copy or a rebuilt DLL.
+
+`logs/loader-PID-STARTTIME.state` prevents repeat loads made through this launcher,
+including uncertain/failed mapper runs. Process start time distinguishes reused
+PIDs. Pre-dispatch failures roll back the reservation and allow retry. Do not
+delete a state file to force reloading a running process. Previous manual CLI
+loads are not tracked by the launcher; restart normally before switching from
+manual loading. Keep the launcher, mapper and overlay together in the build
+output directory. No game files, protection settings or server configuration
+are changed.
+
+`loader_checks` verifies Windows argument parsing and reservation rollback,
+concurrent rejection and persistence across launcher processes without loading
+CS2. Run it with the existing CTest command above.
 
 ## Launch and inject
 
