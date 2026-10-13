@@ -1,6 +1,6 @@
-# CS2 player ESP and D3D11 overlay
+# CS2 movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with player ESP and an explicit manual mapper. Installed game files are not modified. Existing workspace work was preserved before ESP in commit `db1d345`.
+x64 client overlay with movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing workspace work was preserved before ESP in commit `db1d345`, and before movement in commit `ec3c181`.
 
 
 ## Player ESP
@@ -20,6 +20,8 @@ the collision hull, not animated model bones. Team colors: CT blue, T amber.
 | F5 | Toggle health bars and HP text |
 | F6 | Include/exclude teammates |
 | F7 | Toggle armor text |
+| F8 | Toggle auto bunnyhop |
+| F9 | Toggle aggressive autostrafe |
 | Insert | Toggle the selected menu; ESP and acquisition keep running |
 | End | Cooperative stop |
 
@@ -27,6 +29,64 @@ Keys are polled while the game window is foreground. They are not consumed, so
 the game can also respond to overlapping bindings. The public menu additionally
 supports left-click controls with the client's available cursor. Settings are
 shared between the menu and hotkeys, and last for the current run.
+
+## Movement assistance
+
+Both features start enabled. Hold **Space** to activate them while playing the
+authorized built-in offline bot match. **Mouse/WASD** select the desired air
+direction; without WASD, steering follows camera yaw. The **Movement** menu tab
+has independent toggles, also available through F8/F9 with the menu hidden.
+
+Bunnyhop submits a fresh jump on a grounded movement command and releases jump
+while airborne. Failed takeoffs release before retrying beyond the game's
+current jump cooldown. It does not spam airborne or fractional jump presses.
+Autostrafe chooses the maximum modeled collision-free air speed gain while steering
+toward the requested direction. It changes normalized forward/left command
+values and their native direction buttons, without rotating the camera.
+Grounded movement remains under ordinary game input control.
+
+Air acceleration, air wish-speed cap, surface friction, effective server/weapon
+speed limit, surface speed factor, stamina, jump cooldown and engine tick quantum come from the current engine
+state. No match presets or fallback cvar values are used; no game cvar is written.
+Missing/invalid physics leave the affected assistance inactive. The exact
+installed-client input callback, C++/protobuf layouts and helper ABI were checked
+against local metadata and machine code. See
+[movement evidence](tools/CS2_MOVEMENT_EVIDENCE.md) and
+[read-only build verifier](tools/inspect_movement.py).
+
+Command mutation runs on the engine input callback before its original
+movement-data finalization. Only assisted command fields change; subtick camera
+deltas, timing, attacks and other buttons are preserved. State is discarded on
+pawn/service/handle changes, command rollback, loss of focus or ownership change.
+Dead/frozen/swimming/waterjump pawns and ladder/noclip/observer modes retain normal
+input. End or an explicit stop disarms movement and waits for mutations to finish;
+hooks/trampolines and stopped code remain resident until normal process exit.
+
+**Verification:** public and diagnostic x64 Release builds and all four CTest
+executables pass. The movement checks cover maximum-gain geometry, directional
+steering, invalid physics, native button transitions and preserving unrelated
+subtick actions. UI checks cover both tabs and independent toggles. No game was
+launched for this implementation. Live jump success, callback cadence, steering,
+and landing speed retention remain unverified until the offline test. Ground
+command timing and a full tick acceleration calculation do not establish perfect
+fractional landing timing. Collisions, prediction/substep timing and the game's
+jump/speed rules can change the resulting speed. Exact per-substep duck, walking
+and firing speed transitions are not mirrored by the air solver.
+
+Restart CS2 normally if an older DLL is still resident. Launch the offline bot
+match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
+while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
+the mouse/WASD. The launcher writes movement telemetry to the existing
+`logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
+
+* `MOVE_BUILD_VERIFIED` checks input identity/layout; `MOVE_OWNER` records an
+  observed command callback. Build verification alone does not prove a jump.
+* `MOVE_CMD` samples inputs, synthesized buttons/analogs, velocity and current
+  physics roughly every two seconds while assistance runs.
+* `MOVE_LAND` / `MOVE_TAKEOFF` record grounded transitions and horizontal speeds;
+  these copied state observations need comparison with actual gameplay.
+* `MOVE_STATE` / `MOVE_SOURCE` / `MOVE_STOPPED_RESIDENT` explain inactivity,
+  lifecycle changes and completed mutation shutdown.
 
 Entity acquisition now runs on **every selected Present**, replacing the first
 20Hz implementation. The view matrix is also copied for every rendered frame.
@@ -130,9 +190,10 @@ Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, `build/Rel
 
 ## Public and diagnostic interfaces
 
-The default build uses a minimal dark public menu: one **Visuals** tab and a
-panel with ESP, boxes, names, health bars and HP text, distance labels,
-teammates, and armor text. Only implemented features appear. ESP has
+The default build uses a minimal dark public menu with **Visuals** and
+**Movement** tabs. Visuals includes ESP, boxes, names, health bars and HP text,
+distance labels, teammates, and armor text; Movement includes the two independent
+movement toggles. Only implemented features appear. ESP has
 unlimited range; there is no range slider or +/- range hotkey. Insert shows or
 hides the menu; End cooperatively stops the overlay. Player graphics render
 behind the menu. The menu can be dragged from its top strip and stays within

@@ -1,5 +1,6 @@
 #include "public_menu.h"
 #include "esp_draw.h"
+#include "movement_settings.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cmath>
@@ -45,6 +46,20 @@ ImVec2 OptionPosition(int row) {
     position.y += static_cast<float>(row) * ImGui::GetFrameHeightWithSpacing();
     return position;
 }
+ImVec2 TabPosition(int index) {
+    const ImVec2 start = Menu()->DC.CursorStartPos;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float contentWidth = Menu()->Size.x - style.WindowPadding.x * 2;
+    const float tabWidth = std::fmin(100.0f, std::fmax(1.0f,
+        (contentWidth - style.ItemSpacing.x) * 0.5f));
+    return { start.x + tabWidth * 0.5f + static_cast<float>(index) * (tabWidth + style.ItemSpacing.x),
+             start.y + 8 + style.ItemSpacing.y + 12.5f };
+}
+ImVec2 MovementPosition(int row) {
+    ImVec2 position = EnablePosition();
+    position.y += static_cast<float>(row) * ImGui::GetFrameHeightWithSpacing();
+    return position;
+}
 }
 
 int main() {
@@ -60,6 +75,7 @@ int main() {
     ConfigurePublicMenuStyle();
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
     EspSetSettings(EspSettings{});
+    MovementSetSettings(MovementSettings{});
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -82,6 +98,43 @@ int main() {
     Click(OptionPosition(4));
     Expect(EspGetSettings().armor && EspGetSettings().health && EspGetSettings().teammates,
            "armor click preserves other visible feature settings");
+
+    const ImVec2 beforeTabs = Menu()->Pos;
+    Click(TabPosition(1));
+    Frame(); // Settle the new child window before using its geometry.
+    Expect(Body() && std::strstr(Body()->Name, "##MovementSettings"),
+           "movement tab switches to functional movement controls");
+    Click(MovementPosition(0));
+    Expect(!MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe,
+           "bunnyhop control changes its shared setting independently");
+    Click(MovementPosition(1));
+    Expect(!MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "autostrafe can be disabled independently while bunnyhop is off");
+    Click(MovementPosition(0));
+    Expect(MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "bunnyhop can be enabled independently while autostrafe is off");
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const char* movementLabels = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    Expect(std::strstr(movementLabels, "Auto bunnyhop (hold Space)") &&
+           std::strstr(movementLabels, "Aggressive autostrafe (hold Space)") &&
+           std::strstr(movementLabels, "Mouse / WASD choose direction") &&
+           std::strstr(movementLabels, "F8") && std::strstr(movementLabels, "F9") &&
+           !std::strstr(movementLabels, "Enable ESP") &&
+           !std::strstr(movementLabels, "Reader") && !std::strstr(movementLabels, "Frames"),
+           "movement controls display activation and direction help without diagnostics");
+    ImGui::LogFinish();
+    ImGui::Render();
+    Click(TabPosition(0));
+    Frame();
+    Expect(Body() && std::strstr(Body()->Name, "##VisualSettings") &&
+           !EspGetSettings().boxes && EspGetSettings().armor,
+           "returning to visuals preserves ESP settings");
+    Expect(Menu()->Pos.x == beforeTabs.x && Menu()->Pos.y == beforeTabs.y,
+           "tab and setting clicks do not drag the menu");
+    Expect(MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "switching tabs preserves movement settings");
 
     const ImVec2 origin = Menu()->Pos;
     Move({ origin.x + 35, origin.y + 14 });
@@ -114,6 +167,7 @@ int main() {
     ImGui::LogFinish(); // 1.91.9b clears the buffer here; inspect it beforehand.
     ImGui::Render();
     EspSetSettings(EspSettings{});
+    MovementSetSettings(MovementSettings{});
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

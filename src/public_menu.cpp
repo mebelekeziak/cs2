@@ -1,5 +1,6 @@
 #include "public_menu.h"
 #include "esp_draw.h"
+#include "movement_settings.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -123,33 +124,60 @@ void DrawPublicMenu() {
             ImGui::SetWindowPos(ClampPosition({ position.x + delta.x, position.y + delta.y }, size, viewport));
         }
 
-        // Only implemented categories appear. This single active tab has no inert siblings.
-        ImGui::PushStyleColor(ImGuiCol_Button, { 0.12f, 0.18f, 0.23f, 1 });
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.14f, 0.22f, 0.29f, 1 });
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, { 0.14f, 0.22f, 0.29f, 1 });
-        ImGui::PushStyleColor(ImGuiCol_Border, { 0.27f, 0.65f, 0.95f, 1 });
-        ImGui::Button("Visuals", { std::min(85.0f, std::max(1.0f, ImGui::GetContentRegionAvail().x)), 25 });
-        ImGui::PopStyleColor(4);
+        // Store the selected category in this window's context-owned state.
+        const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
+        int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
+        const float tabWidth = std::min(100.0f, std::max(1.0f,
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f));
+        const auto tab = [&](const char* label, int index) {
+            const bool selected = selectedTab == index;
+            ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{ 0.12f, 0.18f, 0.23f, 1 }
+                                                           : ImVec4{ 0.11f, 0.12f, 0.13f, 1 });
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.14f, 0.22f, 0.29f, 1 });
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, { 0.14f, 0.22f, 0.29f, 1 });
+            ImGui::PushStyleColor(ImGuiCol_Border, selected ? ImVec4{ 0.27f, 0.65f, 0.95f, 1 }
+                                                           : ImGui::GetStyleColorVec4(ImGuiCol_Border));
+            if (ImGui::Button(label, { tabWidth, 25 })) selectedTab = index;
+            ImGui::PopStyleColor(4);
+        };
+        tab("Visuals", 0);
+        ImGui::SameLine();
+        tab("Movement", 1);
+        ImGui::GetStateStorage()->SetInt(tabId, selectedTab);
         ImGui::Separator();
 
-        EspSettings settings = EspGetSettings();
-        bool changed = false;
         const float footerHeight = ImGui::GetTextLineHeightWithSpacing() + 5;
         const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - footerHeight);
-        if (ImGui::BeginChild("##VisualSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
-            changed |= FeatureCheckbox("Enable ESP", settings.enabled);
-            ImGui::Separator();
-            ImGui::BeginDisabled(!settings.enabled);
-            changed |= FeatureCheckbox("Boxes", settings.boxes);
-            changed |= FeatureCheckbox("Names", settings.names);
-            changed |= FeatureCheckbox("Distance labels", settings.distance);
-            changed |= FeatureCheckbox("Health bars and values", settings.health);
-            changed |= FeatureCheckbox("Armor", settings.armor);
-            changed |= FeatureCheckbox("Show teammates", settings.teammates);
-            ImGui::EndDisabled();
+        if (selectedTab == 0) {
+            EspSettings settings = EspGetSettings();
+            bool changed = false;
+            if (ImGui::BeginChild("##VisualSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                changed |= FeatureCheckbox("Enable ESP", settings.enabled);
+                ImGui::Separator();
+                ImGui::BeginDisabled(!settings.enabled);
+                changed |= FeatureCheckbox("Boxes", settings.boxes);
+                changed |= FeatureCheckbox("Names", settings.names);
+                changed |= FeatureCheckbox("Distance labels", settings.distance);
+                changed |= FeatureCheckbox("Health bars and values", settings.health);
+                changed |= FeatureCheckbox("Armor", settings.armor);
+                changed |= FeatureCheckbox("Show teammates", settings.teammates);
+                ImGui::EndDisabled();
+            }
+            ImGui::EndChild();
+            if (changed) EspSetSettings(settings);
+        } else {
+            MovementSettings settings = MovementGetSettings();
+            bool changed = false;
+            if (ImGui::BeginChild("##MovementSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                changed |= FeatureCheckbox("Auto bunnyhop (hold Space)", settings.bunnyhop);
+                changed |= FeatureCheckbox("Aggressive autostrafe (hold Space)", settings.autostrafe);
+                ImGui::Separator();
+                ImGui::TextDisabled("Mouse / WASD choose direction");
+                ImGui::TextDisabled("F8  Bunnyhop    F9  Autostrafe");
+            }
+            ImGui::EndChild();
+            if (changed) MovementSetSettings(settings);
         }
-        ImGui::EndChild();
-        if (changed) EspSetSettings(settings);
         ImGui::TextDisabled("Insert  Menu    End  Stop");
     }
     ImGui::End();

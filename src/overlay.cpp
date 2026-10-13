@@ -22,6 +22,7 @@
 #include <cfloat>
 #include "esp_draw.h"
 #include "player_reader.h"
+#include "movement.h"
 #if !CS2_DIAGNOSTIC_UI
 #include "public_menu.h"
 #endif
@@ -207,6 +208,7 @@ void ReleaseRendererOnOwner(const char* reason) {
 }
 
 void CleanupOnRenderThread(const char* reason) {
+    MovementStop(reason);
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
     Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
@@ -380,6 +382,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     if (!renderTarget && !CreateRenderTarget(chain)) { stopRequested.store(true); return; }
     const bool foreground = GetForegroundWindow() == selectedWindow;
     EspPollControls(foreground);
+    MovementPollControls(foreground);
     const bool insertNow = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
     const bool endNow = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     if (foreground && insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
@@ -416,6 +419,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Render thread: %lu", renderThread);
         ImGui::Text("Frame: %llu", static_cast<unsigned long long>(frameCount + 1));
         ImGui::Text("Reader: %s", PlayerReaderStatus());
+        ImGui::Text("Movement: %s", MovementStatus());
         ImGui::Text("Players: %zu | drawing: %zu | matrix: %s", players.playerCount,
             espStats.drawn, players.matrixValid ? "valid" : "unavailable");
         const auto& settings = EspGetSettings();
@@ -423,6 +427,8 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("F2 names: %s | F3 boxes: %s", settings.names ? "ON" : "OFF", settings.boxes ? "ON" : "OFF");
         ImGui::Text("F4 distance: %s | F5 health: %s", settings.distance ? "ON" : "OFF", settings.health ? "ON" : "OFF");
         ImGui::Text("F6 teammates: %s | F7 armor: %s", settings.teammates ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
+        const auto movement = MovementGetSettings();
+        ImGui::Text("F8 bunnyhop: %s | F9 autostrafe: %s | hold Space", movement.bunnyhop ? "ON" : "OFF", movement.autostrafe ? "ON" : "OFF");
         if (!players.distanceAvailable) ImGui::TextUnformatted("Distance unavailable: awaiting local live pawn.");
         ImGui::Separator();
         ImGui::TextUnformatted("Insert: panel   End: stop");
@@ -501,6 +507,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
                 }
             }
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
+            MovementStop("stopped before selecting render chain");
             stopped.store(true);
             Log("STOPPED_RESIDENT before selecting a real chain; hooks/DLL retained.");
         }
@@ -560,6 +567,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     Log("UI_MODE %s", CS2_DIAGNOSTIC_UI ? "diagnostic" : "public");
     EspSetLogCallback(&EspLog);
     PlayerReaderSetLogCallback(&EspLog);
+    MovementSetLogCallback(&EspLog);
     callbackTls = TlsAlloc();
     if (callbackTls == TLS_OUT_OF_INDEXES) { Log("Dynamic TLS allocation failed=%lu", GetLastError()); startState.store(-1); return 7; }
     void* present = nullptr;
@@ -571,14 +579,17 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     status = MH_CreateHook(present, reinterpret_cast<LPVOID>(&HookPresent), reinterpret_cast<LPVOID*>(&originalPresent));
     if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
+    const bool movementPrepared = MovementPrepare(&EspLog);
     status = MH_QueueEnableHook(present);
     if (status == MH_OK) status = MH_QueueEnableHook(resize);
     if (status == MH_OK) status = MH_ApplyQueued();
     if (status != MH_OK) {
+        MovementStop("partial hook activation failure");
         stopRequested.store(true);
         Log("Hook activation failed=%s; stop requested; retain all code/trampolines (partial activation possible)", MH_StatusToString(status));
         startState.store(-1); return 6;
     }
+    if (movementPrepared) MovementActivate();
     startState.store(2);
     Log("HOOKS_INSTALLED; waiting for an observed real D3D11 Present. Discovery alone does not confirm game rendering.");
     return 0;
@@ -586,6 +597,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 
 extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
+    MovementStop("explicit overlay stop request");
     Log("STOP_REQUESTED; cleanup needs next Present on original render thread. No thread forced/physical unload.");
     return stopped.load(std::memory_order_acquire) ? 0 : 1;
 }
