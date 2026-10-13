@@ -1,5 +1,7 @@
 #include "movement.h"
 #include "movement_math.h"
+#include "movement_jump.h"
+#include "movement_steering.h"
 #include "movement_command.h"
 #include "movement_offsets.h"
 #include "cs2_offsets.h"
@@ -18,6 +20,7 @@ namespace off = movement_offsets;
 namespace entity = cs2_offsets;
 using FinalizeFn = void (*)(void*, void*);
 FinalizeFn original = nullptr;
+FinalizeFn originalIngest = nullptr;
 std::uintptr_t client = 0;
 MovementLogCallback logger = nullptr;
 std::atomic<bool> enabled{false};
@@ -26,14 +29,21 @@ SRWLOCK commandLock = SRWLOCK_INIT;
 bool stopEverRequested = false; // Protected by commandLock.
 DWORD owner = 0;
 std::uintptr_t sourcePawn = 0, sourceServices = 0;
+std::uintptr_t sourceController = 0;
+std::uint32_t sourceControllerHandle = UINT32_MAX;
 std::uint32_t sourceHandle = UINT32_MAX;
-int lastSequence = -1, lastTick = -1, lastPressTick = -1;
-bool jumpDown = false, wasGrounded = false, haveGround = false;
+int lastSequence = -1, lastTick = -1;
+bool wasGrounded = false, haveGround = false;
+JumpState jumpState{};
+SteeringState steeringState{};
 bool strafeControlled = false;
 std::uint64_t previousDirections = 0;
 float lastSpeed = 0;
 ULONGLONG lastReport = 0;
 std::uint64_t callbacks = 0, modified = 0, presses = 0, strafes = 0, rejected = 0;
+ULONGLONG lastConsumeReport = 0;
+struct Request { int sequence = -1; float forward = 0, left = 0; MovementButtons buttons{}; };
+std::array<Request, 256> requests{};
 
 void Log(const char* format, ...) noexcept {
     if (!logger) return;
@@ -82,21 +92,27 @@ bool EffectiveSpeed(std::uintptr_t pawn, float& speed) noexcept {
     }
 }
 void Reset() noexcept {
-    sourcePawn = sourceServices = 0; sourceHandle = UINT32_MAX;
-    lastSequence = lastTick = lastPressTick = -1;
-    jumpDown = wasGrounded = haveGround = false; lastSpeed = 0;
+    sourcePawn = sourceServices = sourceController = 0; sourceHandle = UINT32_MAX;
+    sourceControllerHandle = UINT32_MAX;
+    lastSequence = lastTick = -1;
+    wasGrounded = haveGround = false; lastSpeed = 0;
+    ResetJump(jumpState); ResetAirSteering(steeringState);
+    for (auto& request : requests) request.sequence = -1;
     strafeControlled = false; previousDirections = 0;
 }
 
 struct Pawn {
     std::uintptr_t address = 0, services = 0, identity = 0, system = 0;
+    std::uintptr_t controller = 0, controllerIdentity = 0;
     std::uint32_t handle = UINT32_MAX, flags = 0;
+    std::uint32_t controllerHandle = UINT32_MAX, simulationTick = 0;
     std::array<float, 3> velocity{};
     float friction = 0, maxSpeed = 0;
 };
 bool SamePawn(const Pawn& pawn) noexcept {
     std::uintptr_t current = 0, back = 0, bucket = 0, resolved = 0, services = 0, system = 0;
-    std::uint32_t handle = UINT32_MAX;
+    std::uint32_t handle = UINT32_MAX, controllerHandle = UINT32_MAX, linkedPawn = UINT32_MAX;
+    std::uintptr_t controller = 0, controllerBack = 0, controllerResolved = 0;
     const auto index = pawn.handle & entity::entity_layout::IndexMask;
     return Read(client + entity::globals::dwLocalPlayerPawn, current) && current == pawn.address &&
         Read(client + entity::globals::dwGameEntitySystem, system) && system == pawn.system &&
@@ -105,7 +121,12 @@ bool SamePawn(const Pawn& pawn) noexcept {
         pawn.identity == bucket + (index & 511) * entity::entity_layout::IdentityStride &&
         Read(pawn.identity, resolved) && resolved == pawn.address &&
         Read(pawn.identity + entity::entity_layout::HandleOffset, handle) && handle == pawn.handle &&
-        Read(pawn.address + off::pawn::MovementServices, services) && services == pawn.services;
+        Read(pawn.address + off::pawn::MovementServices, services) && services == pawn.services &&
+        Read(client + entity::globals::dwLocalPlayerController, controller) && controller == pawn.controller &&
+        Read(controller + entity::CEntityInstance::m_pEntity, controllerBack) && controllerBack == pawn.controllerIdentity &&
+        Read(controllerBack, controllerResolved) && controllerResolved == controller &&
+        Read(controllerBack + entity::entity_layout::HandleOffset, controllerHandle) && controllerHandle == pawn.controllerHandle &&
+        Read(controller + entity::CCSPlayerController::m_hPlayerPawn, linkedPawn) && linkedPawn == pawn.handle;
 }
 bool ReadPawn(Pawn& pawn) noexcept {
     int health = 0;
@@ -123,7 +144,11 @@ bool ReadPawn(Pawn& pawn) noexcept {
         !Read(pawn.address + off::pawn::WaterLevel, water) || !std::isfinite(water) || water < 0 || water >= 0.5f ||
         !Read(pawn.address + off::pawn::Velocity, pawn.velocity) ||
         !Read(pawn.services + off::services::Friction, pawn.friction) ||
-        !Read(pawn.services + off::services::MaxSpeed, pawn.maxSpeed)) return false;
+        !Read(pawn.services + off::services::MaxSpeed, pawn.maxSpeed) ||
+        !Read(client + entity::globals::dwLocalPlayerController, pawn.controller) || !pawn.controller ||
+        !Read(pawn.controller + entity::CEntityInstance::m_pEntity, pawn.controllerIdentity) || !pawn.controllerIdentity ||
+        !Read(pawn.controllerIdentity + entity::entity_layout::HandleOffset, pawn.controllerHandle) || pawn.controllerHandle == UINT32_MAX ||
+        !Read(pawn.controller + off::controller::TickBase, pawn.simulationTick)) return false;
     for (float component : pawn.velocity) if (!std::isfinite(component) || std::abs(component) > 100000) return false;
     return SamePawn(pawn);
 }
@@ -153,8 +178,8 @@ bool AirSpeed(const Pawn& pawn, float& speed) noexcept {
     return std::isfinite(speed) && speed > 0 && speed < 100000;
 }
 
-// Only borrowed messages owned by this command are changed. No protobuf arena,
-// repeated-array ownership, timestamps, camera history or game entity is written.
+// Existing command messages are borrowed; additional time-zero transitions use
+// the verified game arena/container APIs. Original event order is preserved.
 struct Edit {
     std::uintptr_t address = 0;
     MovementSubtick value{};
@@ -167,6 +192,9 @@ struct Patch {
     bool jump = false, strafe = false;
     std::array<Edit, 128> steps{};
     int size = 0;
+    int originalSize = 0;
+    std::array<std::uintptr_t, 128> originalOrder{};
+    bool orderCaptured = false;
 };
 bool Apply(const Patch& patch) noexcept {
     // Keep SEH in a function without C++ unwinding objects. The command callback
@@ -197,8 +225,11 @@ bool PrepareSteps(Patch& patch) noexcept {
         !Read(patch.base + off::base::SubtickCapacity, capacity) ||
         !Read(patch.base + off::base::SubtickRep, rep) || patch.size < 0 ||
         patch.size > static_cast<int>(patch.steps.size()) || capacity < patch.size || capacity > 4096) return false;
+    patch.originalSize = patch.size;
+    if (!Writable(patch.base + 0x18, 0x18)) return false;
+    if (rep && (!Read(rep, allocated) || allocated < patch.size || allocated > capacity)) return false;
+    if (!rep && (patch.size || capacity)) return false;
     if (!patch.size) return true;
-    if (!rep || !Read(rep, allocated) || allocated < patch.size || allocated > capacity) return false;
     for (int i = 0; i < patch.size; ++i) {
         auto& step = patch.steps[static_cast<std::size_t>(i)];
         if (!Read(rep + 8 + static_cast<std::uintptr_t>(i) * 8, step.address) || !step.address ||
@@ -207,6 +238,85 @@ bool PrepareSteps(Patch& patch) noexcept {
             return false;
         MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
     }
+    return true;
+}
+std::uintptr_t BorrowSubtick(std::uintptr_t base) noexcept {
+    // Mirrors the producer's B65677..B656AC append path, including reuse of
+    // inactive allocated messages. Allocation belongs to the engine's arena.
+    __try {
+        auto* repeated = reinterpret_cast<std::byte*>(base + 0x18);
+        auto& size = *reinterpret_cast<int*>(repeated + 8);
+        auto* rep = *reinterpret_cast<std::byte**>(repeated + 0x10);
+        if (rep && size < *reinterpret_cast<int*>(rep)) {
+            auto* step = *reinterpret_cast<void**>(rep + 8 + static_cast<std::size_t>(size) * 8);
+            ++size;
+            return reinterpret_cast<std::uintptr_t>(step);
+        }
+        void* arena = *reinterpret_cast<void**>(repeated);
+        void* step = reinterpret_cast<void* (*)(void*)>(client + off::AllocateSubtick)(arena);
+        if (!step) return 0;
+        reinterpret_cast<void* (*)(void*, void*)>(client + off::AddAllocatedSubtick)(repeated, step);
+        return reinterpret_cast<std::uintptr_t>(step);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+bool AppendStep(Patch& patch, const MovementSubtick& value) noexcept {
+    if (patch.size >= static_cast<int>(patch.steps.size())) return false;
+    auto& edit = patch.steps[static_cast<std::size_t>(patch.size)];
+    edit.address = BorrowSubtick(patch.base);
+    if (!edit.address || !Read(edit.address, edit.value) ||
+        !Writable(edit.address + 0x10, sizeof(MovementSubtick) - 0x10)) return false;
+    const auto vtable = edit.value.vtable, arena = edit.value.arena;
+    const auto cachedSize = edit.value.cachedSize;
+    edit.value = value;
+    edit.value.vtable = vtable; edit.value.arena = arena; edit.value.cachedSize = cachedSize;
+    ++patch.size;
+    return true;
+}
+bool FinishStepOrder(const Patch& patch) noexcept {
+    if (patch.size == patch.originalSize) return true;
+    std::uintptr_t rep = 0;
+    std::array<std::uintptr_t, 128> pointers{}, ordered{};
+    if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
+        !Copy(rep + 8, pointers.data(), static_cast<std::size_t>(patch.size) * 8) ||
+        !Writable(rep + 8, static_cast<std::size_t>(patch.size) * 8)) return false;
+    // Place generated time-zero events first; preserve the original event order
+    // and keep every owned pointer in the container exactly once.
+    int written = 0;
+    for (int i = patch.originalSize; i < patch.size; ++i) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
+    for (int i = 0; i < patch.originalSize; ++i) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
+    __try {
+        std::memcpy(reinterpret_cast<void*>(rep + 8), ordered.data(), static_cast<std::size_t>(patch.size) * 8);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void RollbackSteps(const Patch& patch) noexcept {
+    // Reused entries rely on cleared payloads. Restore pointer ordering and
+    // clear generated events before making them inactive in the owned pool.
+    __try {
+        for (int i = patch.originalSize; i < patch.size; ++i) {
+            const auto address = patch.steps[static_cast<std::size_t>(i)].address;
+            if (address) {
+                *reinterpret_cast<std::uint32_t*>(address + 0x10) = 0;
+                std::memset(reinterpret_cast<void*>(address + 0x18), 0, sizeof(MovementSubtick) - 0x18);
+            }
+        }
+        if (patch.orderCaptured) {
+            const auto rep = *reinterpret_cast<std::uintptr_t*>(patch.base + off::base::SubtickRep);
+            std::memcpy(reinterpret_cast<void*>(rep + 8), patch.originalOrder.data(), static_cast<std::size_t>(patch.size) * 8);
+        }
+        *reinterpret_cast<int*>(patch.base + off::base::SubtickSize) = patch.originalSize;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+bool CaptureStepOrder(Patch& patch) noexcept {
+    if (patch.size == patch.originalSize) return true;
+    std::uintptr_t rep = 0;
+    if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
+        !Copy(rep + 8, patch.originalOrder.data(), static_cast<std::size_t>(patch.size) * 8) ||
+        !Writable(rep + 8, static_cast<std::size_t>(patch.size) * 8)) return false;
+    patch.orderCaptured = true;
     return true;
 }
 
@@ -234,14 +344,16 @@ void Process(void* input, void* commandPointer) noexcept {
     }
     Pawn pawn{};
     if (!ReadPawn(pawn)) { Reset(); State("awaiting live walking pawn"); return; }
-    if (pawn.address != sourcePawn || pawn.services != sourceServices || pawn.handle != sourceHandle) {
-        Reset(); sourcePawn = pawn.address; sourceServices = pawn.services; sourceHandle = pawn.handle;
+    if (pawn.address != sourcePawn || pawn.services != sourceServices || pawn.handle != sourceHandle ||
+        pawn.controller != sourceController || pawn.controllerHandle != sourceControllerHandle) {
+        Reset(); sourcePawn = pawn.address; sourceServices = pawn.services; sourceHandle = pawn.handle; sourceController = pawn.controller;
+        sourceControllerHandle = pawn.controllerHandle;
         Log("MOVE_SOURCE pawn=%p services=%p handle=0x%x", reinterpret_cast<void*>(sourcePawn), reinterpret_cast<void*>(sourceServices), sourceHandle);
     }
     const auto settings = MovementGetSettings();
     const bool held = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
     if (!held || (!settings.bunnyhop && !settings.autostrafe)) {
-        jumpDown = false; haveGround = false; lastPressTick = -1;
+        ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false;
         strafeControlled = false;
         State(held ? "movement disabled in settings" : "ready; hold Space"); return;
     }
@@ -265,7 +377,9 @@ void Process(void* input, void* commandPointer) noexcept {
     }
     if (sequence == lastSequence) return; // Never edit an already finalized/replayed command twice.
     const float desiredForward = patch.forward, desiredLeft = patch.left;
-    if (sequence < lastSequence || tick < lastTick) { jumpDown = haveGround = false; lastPressTick = -1; strafeControlled = false; }
+    if (sequence < lastSequence || tick < lastTick) {
+        ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false; strafeControlled = false;
+    }
     const bool grounded = (pawn.flags & off::OnGround) != 0;
     const float speed = std::hypot(pawn.velocity[0], pawn.velocity[1]);
     if (haveGround && grounded != wasGrounded) {
@@ -274,20 +388,32 @@ void Process(void* input, void* commandPointer) noexcept {
     }
     haveGround = true; wasGrounded = grounded; lastSpeed = speed;
     float interval = 0, penalty = 0;
-    bool nextJump = false, newPress = false;
+    JumpState nextJumpState = jumpState;
+    JumpOutput jump{};
+    JumpInput jumpInput{};
+    std::uint8_t autoBhop = 0, legacy = 0;
+    MovementButtons engineButtons{};
     if (settings.bunnyhop && Read(client + off::TickIntervalConstant, interval) &&
         std::isfinite(interval) && interval > 0 && interval < 0.1f &&
-        Cvar(off::JumpPenalty, penalty) && std::isfinite(penalty) && penalty >= 0 && penalty < 10) {
-        // A press on the first grounded command, followed by airborne release.
-        // If a press failed to produce takeoff, release before retrying and wait
-        // beyond the engine's current cooldown. Airborne commands never spam.
-        nextJump = grounded && !jumpDown && (lastPressTick < 0 ||
-            static_cast<double>(tick - lastPressTick) * interval > penalty);
-        newPress = nextJump;
-        patch.jump = true;
-        MovementEncodeJump(patch.buttons, nextJump, jumpDown);
+        Cvar(off::JumpPenalty, penalty) && std::isfinite(penalty) && penalty >= 0 && penalty < 10 &&
+        Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::LegacyJump, legacy) &&
+        Cvar(off::BhopWindow, jumpInput.bufferWindow) &&
+        Read(pawn.services + off::services::Buttons, engineButtons) &&
+        Read(pawn.services + off::services::ModernActual, jumpInput.actual) &&
+        Read(pawn.services + off::services::ModernUsable, jumpInput.usable) &&
+        Read(pawn.services + off::services::ModernLanded, jumpInput.landed)) {
+        jumpInput.grounded = grounded; jumpInput.engineDown = (engineButtons.down & off::Jump) != 0;
+        jumpInput.modern = legacy == 0; jumpInput.autoBunnyhop = autoBhop != 0;
+        jumpInput.commandTick = tick; jumpInput.interval = interval; jumpInput.penalty = penalty;
+        jumpInput.simulationTick = pawn.simulationTick;
+        jump = PlanJump(nextJumpState, jumpInput);
+        if (jump.valid) {
+            patch.jump = true;
+            MovementEncodeJump(patch.buttons, jump.down, jumpState.down);
+        }
     }
-    StrafeOutput strafe{};
+    SteeringOutput strafe{};
+    SteeringState nextSteeringState = steeringState;
     AirPhysics physics{};
     physics.surfaceFriction = pawn.friction;
     if (settings.autostrafe && !grounded &&
@@ -295,8 +421,12 @@ void Process(void* input, void* commandPointer) noexcept {
         Read(patch.base + off::base::Angles, angles) && angles && Read(angles + 0x1C, yaw) &&
         Read(client + off::TickIntervalConstant, physics.interval) &&
         Cvar(off::AirCap, physics.wishSpeedCap) && Cvar(off::AirAccelerate, physics.acceleration)) {
-        strafe = OptimizeAirStrafe({pawn.velocity[0], pawn.velocity[1], yaw, patch.forward, patch.left,
-                                  static_cast<std::uint32_t>(sequence)}, physics);
+        const float physicalForward = static_cast<float>((GetAsyncKeyState('W') & 0x8000) != 0) -
+                                      static_cast<float>((GetAsyncKeyState('S') & 0x8000) != 0);
+        const float physicalLeft = static_cast<float>((GetAsyncKeyState('A') & 0x8000) != 0) -
+                                   static_cast<float>((GetAsyncKeyState('D') & 0x8000) != 0);
+        strafe = PlanAirSteering(nextSteeringState, {pawn.velocity[0], pawn.velocity[1], yaw,
+                                  physicalForward, physicalLeft, static_cast<std::uint32_t>(sequence)}, physics);
         if (strafe.valid) {
             patch.strafe = true; patch.forward = strafe.forward; patch.left = strafe.left;
             patch.basePresence |= off::base::ForwardPresent | off::base::LeftPresent;
@@ -307,28 +437,66 @@ void Process(void* input, void* commandPointer) noexcept {
     if (!patch.jump && !patch.strafe) { State("movement physics unavailable"); return; }
     patch.commandPresence |= 1;
     if (!PrepareSteps(patch) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
+    float historicalForward = 0, historicalLeft = 0;
+    MovementButtons historicalButtons{};
+    if (!Read(pawn.services + off::services::Buttons, historicalButtons) ||
+        !Read(pawn.services + off::services::CommandForward, historicalForward) ||
+        !Read(pawn.services + off::services::CommandLeft, historicalLeft) ||
+        !std::isfinite(historicalForward) || !std::isfinite(historicalLeft) ||
+        !Writable(patch.base + off::base::SubtickSize, sizeof(int))) {
+        ++rejected; State("historical command input unavailable"); return;
+    }
+    if (!(historicalButtons.down & (off::Forward | off::Back))) historicalForward = 0;
+    if (!(historicalButtons.down & (off::Left | off::Right))) historicalLeft = 0;
+    if (patch.strafe) {
+        const auto transition = MovementAnalogTransition(patch.forward, patch.left, historicalForward, historicalLeft);
+        if (!AppendStep(patch, transition)) {
+            RollbackSteps(patch); ++rejected; State("could not append owned analog transition"); return;
+        }
+    }
+    if (patch.jump && (jump.fresh || jump.released)) {
+        const auto transition = MovementJumpTransition(jump.down);
+        if (!AppendStep(patch, transition)) {
+            RollbackSteps(patch); ++rejected; State("could not append owned jump transition"); return;
+        }
+    }
+    if (!SamePawn(pawn)) { RollbackSteps(patch); ++rejected; State("pawn changed during command preparation"); return; }
+    if (!CaptureStepOrder(patch) || !FinishStepOrder(patch)) {
+        RollbackSteps(patch); ++rejected; State("subtick ordering unavailable"); return;
+    }
     if (!Apply(patch)) {
+        RollbackSteps(patch);
         ++rejected; enabled.store(false, std::memory_order_release); State("command write failed; movement stopped"); return;
     }
     lastSequence = sequence; lastTick = tick;
+    requests[static_cast<std::size_t>(sequence) % requests.size()] = {sequence, patch.forward, patch.left, patch.buttons};
     strafeControlled = patch.strafe;
     previousDirections = patch.buttons.down & off::Directions;
-    if (patch.jump) jumpDown = nextJump;
-    else { jumpDown = false; lastPressTick = -1; }
-    if (newPress) { lastPressTick = tick; ++presses; }
+    if (patch.jump) jumpState = nextJumpState;
+    else ResetJump(jumpState);
+    if (patch.strafe) steeringState = nextSteeringState;
+    else ResetAirSteering(steeringState);
+    if (jump.fresh) ++presses;
+    if (jump.fresh || jump.released) {
+        Log("MOVE_JUMP sequence=%d tick=%d simtick=%u ground=%u down=%u fresh=%u release=%u ack=%u phase=%u actual=%d/%.6f usable=%d/%.6f landed=%d/%.6f engine_down=%u penalty=%.6f window=%.6f legacy=%u auto=%u",
+            sequence, tick, pawn.simulationTick, grounded, jump.down, jump.fresh, jump.released, jump.acknowledged, static_cast<unsigned>(jump.phase),
+            jumpInput.actual.tick, jumpInput.actual.fraction, jumpInput.usable.tick, jumpInput.usable.fraction,
+            jumpInput.landed.tick, jumpInput.landed.fraction, jumpInput.engineDown, penalty, jumpInput.bufferWindow, legacy, autoBhop);
+    }
     ++modified; strafes += patch.strafe;
     State(patch.strafe ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
     const auto now = GetTickCount64();
     if (!lastReport || now - lastReport >= 2000) {
         lastReport = now;
-        std::uint8_t autoBhop = 0, precision = 0;
+        std::uint8_t precision = 0;
         const bool rules = Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::JumpPrecision, precision);
-        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u",
-            sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], nextJump, newPress,
+        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f",
+            sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], jump.down, jump.fresh,
             patch.strafe, patch.forward, patch.left, desiredForward, desiredLeft, yaw, strafe.wishYaw, strafe.accelerationStep,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, patch.size, callbacks, modified, presses, strafes, rejected,
             physics.wishSpeedCap, physics.acceleration, physics.wishSpeed, physics.surfaceFriction, physics.interval,
-            penalty, autoBhop, precision, rules);
+            penalty, autoBhop, precision, rules, historicalForward, historicalLeft, static_cast<unsigned>(strafe.mode),
+            strafe.headingError, strafe.headingChange);
     }
 }
 void HookFinalize(void* input, void* command) noexcept {
@@ -341,6 +509,33 @@ void HookFinalize(void* input, void* command) noexcept {
     // command production copies those buttons to the network protobuf itself.
     original(input, command);
 }
+void HookIngest(void* services, void* command) noexcept {
+    originalIngest(services, command);
+    if (!enabled.load(std::memory_order_acquire)) return;
+    AcquireSRWLockExclusive(&commandLock);
+    const auto address = reinterpret_cast<std::uintptr_t>(services);
+    if (enabled.load(std::memory_order_acquire) && address == sourceServices) {
+        int sequence = 0;
+        float forward = 0, left = 0;
+        MovementButtons buttons{};
+        if (Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Sequence, sequence) && sequence > 0 &&
+            Read(address + off::services::CommandForward, forward) && Read(address + off::services::CommandLeft, left) &&
+            Read(address + off::services::Buttons, buttons)) {
+            const auto& request = requests[static_cast<std::size_t>(sequence) % requests.size()];
+            if (request.sequence == sequence) {
+                const bool mismatch = std::abs(forward - request.forward) > 0.0001f ||
+                    std::abs(left - request.left) > 0.0001f || buttons.down != request.buttons.down;
+                const auto now = GetTickCount64();
+                if (!lastConsumeReport || now - lastConsumeReport >= 2000) {
+                    lastConsumeReport = now;
+                    Log("MOVE_CONSUMED sequence=%d mismatch=%u requested=%.5f,%.5f consumed=%.5f,%.5f requested_buttons=0x%llx consumed_buttons=0x%llx; ingestion observed, physics integration remains separate",
+                        sequence, mismatch, request.forward, request.left, forward, left, request.buttons.down, buttons.down);
+                }
+            }
+        }
+    }
+    ReleaseSRWLockExclusive(&commandLock);
+}
 }
 
 bool MovementPrepare(MovementLogCallback callback) noexcept {
@@ -349,6 +544,9 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
     std::array<unsigned char, sizeof(off::FinalizeBytes)> bytes{};
     std::array<unsigned char, sizeof(off::MaxSpeedBytes)> maxSpeedBytes{};
+    std::array<unsigned char, sizeof(off::IngestBytes)> ingestBytes{};
+    std::array<unsigned char, sizeof(off::AllocateBytes)> allocateBytes{};
+    std::array<unsigned char, sizeof(off::AddAllocatedBytes)> appendBytes{};
     std::uintptr_t vtable = 0, method = 0;
     if (!client || !Read(client, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 ||
         dos.e_lfanew > 0x100000 || !Read(client + dos.e_lfanew, nt) || nt.Signature != IMAGE_NT_SIGNATURE ||
@@ -357,17 +555,25 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
         !Copy(client + off::Finalize, bytes.data(), bytes.size()) || memcmp(bytes.data(), off::FinalizeBytes, bytes.size()) ||
         !Copy(client + off::EffectiveMaxSpeed, maxSpeedBytes.data(), maxSpeedBytes.size()) ||
         memcmp(maxSpeedBytes.data(), off::MaxSpeedBytes, maxSpeedBytes.size()) ||
+        !Copy(client + off::Ingest, ingestBytes.data(), ingestBytes.size()) || memcmp(ingestBytes.data(), off::IngestBytes, ingestBytes.size()) ||
+        !Copy(client + off::AllocateSubtick, allocateBytes.data(), allocateBytes.size()) || memcmp(allocateBytes.data(), off::AllocateBytes, allocateBytes.size()) ||
+        !Copy(client + off::AddAllocatedSubtick, appendBytes.data(), appendBytes.size()) || memcmp(appendBytes.data(), off::AddAllocatedBytes, appendBytes.size()) ||
         !Read(client + off::Input, vtable) || vtable != client + off::InputVtable ||
         !Read(vtable + 6 * sizeof(std::uintptr_t), method) || method != client + off::Finalize) {
         State("installed input build verification failed"); return false;
     }
     const auto result = MH_CreateHook(reinterpret_cast<void*>(method), reinterpret_cast<void*>(&HookFinalize), reinterpret_cast<void**>(&original));
     if (result != MH_OK) { Log("MOVE_HOOK_FAILED create=%s", MH_StatusToString(result)); State("command hook creation failed"); return false; }
+    const auto ingestion = MH_CreateHook(reinterpret_cast<void*>(client + off::Ingest), reinterpret_cast<void*>(&HookIngest), reinterpret_cast<void**>(&originalIngest));
+    if (ingestion != MH_OK) { Log("MOVE_HOOK_FAILED ingestion=%s", MH_StatusToString(ingestion)); State("ingestion hook creation failed"); return false; }
+    const auto ingestQueue = MH_QueueEnableHook(reinterpret_cast<void*>(client + off::Ingest));
+    if (ingestQueue != MH_OK) { State("ingestion hook queue failed"); return false; }
     const auto queue = MH_QueueEnableHook(reinterpret_cast<void*>(method));
     if (queue != MH_OK) { Log("MOVE_HOOK_FAILED queue=%s", MH_StatusToString(queue)); State("command hook queue failed"); return false; }
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
+    Log("MOVE_IMPLEMENTATION revision=2 pending_jump=simulation_clock subticks=time_zero steering=continuous_turn_and_recovery ingestion_telemetry=enabled");
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

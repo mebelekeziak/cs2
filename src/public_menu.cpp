@@ -172,7 +172,8 @@ void DrawPublicMenu() {
                 changed |= FeatureCheckbox("Auto bunnyhop (hold Space)", settings.bunnyhop);
                 changed |= FeatureCheckbox("Aggressive autostrafe (hold Space)", settings.autostrafe);
                 ImGui::Separator();
-                ImGui::TextDisabled("Mouse / WASD choose direction");
+                ImGui::TextDisabled("A / D  Turn sharply");
+                ImGui::TextDisabled("Release  Recover view direction");
                 ImGui::TextDisabled("F8  Bunnyhop    F9  Autostrafe");
             }
             ImGui::EndChild();

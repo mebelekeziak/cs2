@@ -29,7 +29,8 @@ native buttons, serializes it, and writes the resulting bytes to `move_crc`.
 Mutations precede the original so it rebuilds those bytes consistently. Slot 25
 `0xD01610` follows and manages input/attack history. Normal production later
 copies native buttons to the actual network protobuf at `0xB65E79/0xB65E9A/0xB65EB9`.
-The hook neither changes attack history nor allocates protobuf objects.
+Attack history is preserved. The revision appends transitions using the verified
+game arena/container helpers below.
 
 A subsequent input-related predicate at `0xB65AE0` can clear analog movement
 when object `0x21F7FD0`+0x10 has a positive count. Its precise semantics are not
@@ -55,7 +56,10 @@ provide background field names; runtime layouts were taken from the installed bi
 
 Repeated representation stores allocated count at +0 and pointers at +8.
 Constructor `0x4F7EE0`, copy `0x4F7FA3` and reserve `0x122D2B0` verify this.
-Allocation/count/capacity/pointer ordering are preserved.
+Arena ownership and original relative ordering are preserved. Additional
+time-zero events are prepended to the active list through the verified engine
+append path. Failure rollback restores pointer order and clears generated
+payloads before returning them to the inactive pool.
 
 Subtick size is 0x38. Presence+0x10, button uint64+0x18(bit1), pressed bool+0x20(bit2),
 when float+0x24(bit4), forward delta+0x28(bit8), left delta+0x2C(bit0x10),
@@ -113,13 +117,56 @@ effective limit. Accelerator `0x8BEB70` computes
 when the second term is positive. Its half-step split is recombined at `0x8E0A80`.
 For collision-free final velocity under the supplied current-speed model, the maximum-gain projection is
 `max(0, cap - availableAcceleration)`. The two symmetric directions allow
-steering toward camera/WASD intent without changing camera angles.
+steering toward camera/WASD intent without changing camera angles. The revised
+planner uses the same model to maximize heading change with a retained-speed
+target. Continuous A/D turning is velocity relative; release uses heading
+recovery with fractional-amplitude correction instead of alternating lateral
+speed-gain commands.
 
 Modern jump helper `0x8C2630` updates actual press time even when the current
-`sv_jump_spam_penalty_time` rejects that press. The implementation releases in
-air and spaces retries beyond the read cooldown. Legacy `0x8C24C0` similarly
+`sv_jump_spam_penalty_time` rejects that press. Revised requests remain pending
+across creation callbacks until takeoff or a bounded failed attempt; release
+and retry follow actual simulation progress. Legacy `0x8C24C0` similarly
 retains old press state until its cooldown expires. Ground command presses do
 not prove perfect fractional landing time; that requires live observation.
+
+## October 13 movement revision
+
+Modern state at services+0x6C8 stores actual press, usable press and landing
+tick/fraction pairs at +0x10/+0x18/+0x20. Runtime legacy selector wrapper is
+`0x2529208`; `sv_bhop_time_window` wrapper is `0x2529040`. Modern jump compares
+the usable press to landing within half that window. A retained usable stamp
+does not prove takeoff and can survive an obstructed attempt.
+
+Controller TickBase+0x6B8 is uint32 (getter `0x9433E0`, setter `0x965020`). Runner
+`0xA719A0` increments it at `0xA71AB9`, then uses it to establish the simulation
+clock before movement execution at `0xA71C0A`. Pending/release timeout uses
+relative copied differences, resetting on controller identity or rollback.
+It never subtracts modern world-group-converted timestamps from creation ticks.
+
+Producer `0xB65677..0xB656AC` reuses a pooled subtick if size<allocated count;
+otherwise allocator `void*(arena*)` at `0x4F7120` constructs size0x38 and generic
+`void*(repeated*, step*)` at `0x122D140` appends it with matching arena ownership.
+The revision follows that path, preflights headers/pointer pages, and clears
+rolled-back payloads. It never substitutes a DLL-owned heap message.
+
+Event decoding `0xA73E33` selects digital button processing when raw button!=0;
+otherwise it copies analog deltas. Therefore jump and analog are separate
+messages. At when0, `0xA64D8D` skips an empty integration slice but processes
+the event. `0xA65096/0xA6509D` add analog deltas to historical effective axes;
+the sentinel slice then writes those axes at `0xA64DAB/0xA64DB1` before normalized
+scaling and air movement. Delta is desired minus historical axes, not desired
+minus current base fields. No synthetic direction steps are added because
+those would digitally add another +/-1. The final base/native values are ingested
+after integration, establishing the next command's initial state.
+
+Forwarding ingestion callback `void(services*, command*)` at `0xA764D0` is called
+through derived slot+0xF0 thunk `0x8E8650` from `0xA7030A`, with RCX/RDX and
+ignored return. It copies native states to services+0x58/0x60/0x68 and analogs to
+services+0x1A0/0x1A4. `MOVE_CONSUMED` observes those values after original
+ingestion; it does not claim to observe the final collision response or server
+receipt. Full revision captures live under `logs/jump-revision/` and
+`logs/command-revision/`.
 
 Full local disassembly and read-only investigation scripts are retained under
 `logs/input-investigation/` and `logs/physics-investigation/`. These diagnostic

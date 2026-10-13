@@ -119,7 +119,8 @@ int main() {
     const char* movementLabels = ImGui::GetCurrentContext()->LogBuffer.c_str();
     Expect(std::strstr(movementLabels, "Auto bunnyhop (hold Space)") &&
            std::strstr(movementLabels, "Aggressive autostrafe (hold Space)") &&
-           std::strstr(movementLabels, "Mouse / WASD choose direction") &&
+           std::strstr(movementLabels, "A / D  Turn sharply") &&
+           std::strstr(movementLabels, "Release  Recover view direction") &&
            std::strstr(movementLabels, "F8") && std::strstr(movementLabels, "F9") &&
            !std::strstr(movementLabels, "Enable ESP") &&
            !std::strstr(movementLabels, "Reader") && !std::strstr(movementLabels, "Frames"),

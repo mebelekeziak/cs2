@@ -16,6 +16,10 @@ CHECKS = {
     "effective_maxspeed": (0x8CD030, "48895c24084889742420574883ec30488bf9"),
     "float_cvar_getter": (0x1607A0, "488b4108f30f104058c3"),
     "surface_speed_row": (0x9E26A0, "48634110488b0d5527b60148c1e00548034128c3"),
+    "command_ingestion": (0xA764D0, "48895424105355565741544155415641574883ec68"),
+    "subtick_allocator": (0x4F7120, "48895c2410574883ec20"),
+    "subtick_append": (0x122D140, "48895c2408574883ec20"),
+    "controller_simulation_tick": (0x9433E0, "8b81b8060000c3"),
 }
 
 def main():

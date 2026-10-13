@@ -22,3 +22,6 @@ static_assert(offsetof(MovementSubtick, yawDelta) == 0x34);
 void MovementEncodeJump(MovementButtons& buttons, bool down, bool previousDown) noexcept;
 void MovementEncodeStrafe(MovementButtons& buttons, float forward, float left, std::uint64_t previousDown) noexcept;
 void MovementSanitizeSubtick(MovementSubtick& step, bool jump, bool strafe) noexcept;
+MovementSubtick MovementAnalogTransition(float desiredForward, float desiredLeft,
+                                        float historicalForward, float historicalLeft) noexcept;
+MovementSubtick MovementJumpTransition(bool down) noexcept;

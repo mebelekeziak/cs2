@@ -107,5 +107,20 @@ int main() {
     Expect(step.presence == before.presence && step.button == before.button &&
            step.forwardDelta == before.forwardDelta && step.leftDelta == before.leftDelta,
            "disabled movement leaves subtick semantics intact");
+    const auto transition = MovementAnalogTransition(0.3f, -0.8f, 1, 0.4f);
+    // Independently reproduce the event consumer: nonzero buttons select the
+    // digital path; zero buttons add deltas to the historical accumulator.
+    float historicalForward = 1, historicalLeft = 0.4f;
+    if (!transition.button) {
+        historicalForward += transition.forwardDelta;
+        historicalLeft += transition.leftDelta;
+    }
+    Expect(transition.presence == 0x1c && transition.when == 0 && !transition.button &&
+           std::abs(historicalForward - 0.3f) < 0.00001f && std::abs(historicalLeft + 0.8f) < 0.00001f,
+           "time-zero analog transition reaches desired axes before first integration");
+    const auto jumpEvent = MovementJumpTransition(true);
+    Expect(jumpEvent.presence == 7 && jumpEvent.button == 2 && jumpEvent.pressed && jumpEvent.when == 0 &&
+           !jumpEvent.forwardDelta && !jumpEvent.leftDelta,
+           "jump event is separate so button decoder cannot discard analog movement");
     return failures ? 1 : 0;
 }

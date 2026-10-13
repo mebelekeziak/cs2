@@ -22,6 +22,16 @@ inline constexpr std::ptrdiff_t AirAccelerate = 0x255BB40;
 inline constexpr std::ptrdiff_t AutoBunnyhop = 0x25292E8;
 inline constexpr std::ptrdiff_t JumpPenalty = 0x2529130;
 inline constexpr std::ptrdiff_t JumpPrecision = 0x25291D0;
+inline constexpr std::ptrdiff_t LegacyJump = 0x2529208;
+inline constexpr std::ptrdiff_t BhopWindow = 0x2529040;
+inline constexpr std::ptrdiff_t Ingest = 0xA764D0;
+inline constexpr std::ptrdiff_t AllocateSubtick = 0x4F7120;
+inline constexpr std::ptrdiff_t AddAllocatedSubtick = 0x122D140;
+inline constexpr unsigned char AllocateBytes[]{0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83,0xec,0x20};
+inline constexpr unsigned char AddAllocatedBytes[]{0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20};
+inline constexpr unsigned char IngestBytes[]{
+    0x48,0x89,0x54,0x24,0x10,0x53,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x68
+};
 inline constexpr std::ptrdiff_t TickIntervalConstant = 0x1AC0064;
 inline constexpr std::ptrdiff_t StaminaScaleConstant = 0x1AC0098;
 inline constexpr std::ptrdiff_t SurfaceManager = 0x2544E00;
@@ -34,11 +44,20 @@ inline constexpr std::ptrdiff_t ActualMoveType = 0x526;
 inline constexpr std::ptrdiff_t WaterLevel = 0x528;
 inline constexpr std::ptrdiff_t MovementServices = 0x1330;
 }
+namespace controller {
+inline constexpr std::ptrdiff_t TickBase = 0x6B8;
+}
 namespace services {
 inline constexpr std::ptrdiff_t MaxSpeed = 0x1AC;
 inline constexpr std::ptrdiff_t Friction = 0x26C;
 inline constexpr std::ptrdiff_t SurfaceData = 0x278;
 inline constexpr std::ptrdiff_t Stamina = 0x694;
+inline constexpr std::ptrdiff_t Buttons = 0x58;
+inline constexpr std::ptrdiff_t CommandForward = 0x1A0;
+inline constexpr std::ptrdiff_t CommandLeft = 0x1A4;
+inline constexpr std::ptrdiff_t ModernActual = 0x6D8;
+inline constexpr std::ptrdiff_t ModernUsable = 0x6E0;
+inline constexpr std::ptrdiff_t ModernLanded = 0x6E8;
 }
 inline constexpr std::uint32_t OnGround = 1, WaterJump = 4, Frozen = 32;
 inline constexpr std::uint8_t Walk = 2;

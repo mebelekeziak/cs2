@@ -34,3 +34,16 @@ void MovementSanitizeSubtick(MovementSubtick& step, bool jump, bool strafe) noex
         step.presence &= ~0x18u;
     }
 }
+MovementSubtick MovementAnalogTransition(float desiredForward, float desiredLeft,
+                                        float historicalForward, float historicalLeft) noexcept {
+    MovementSubtick step{};
+    step.presence = 0x1c;
+    step.forwardDelta = desiredForward - historicalForward;
+    step.leftDelta = desiredLeft - historicalLeft;
+    return step;
+}
+MovementSubtick MovementJumpTransition(bool down) noexcept {
+    MovementSubtick step{};
+    step.presence = 7; step.button = movement_offsets::Jump; step.pressed = down;
+    return step;
+}

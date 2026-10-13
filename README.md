@@ -33,16 +33,22 @@ shared between the menu and hotkeys, and last for the current run.
 ## Movement assistance
 
 Both features start enabled. Hold **Space** to activate them while playing the
-authorized built-in offline bot match. **Mouse/WASD** select the desired air
-direction; without WASD, steering follows camera yaw. The **Movement** menu tab
+authorized built-in offline bot match. Hold **A/D** for continuous sharp turns;
+release A/D to recover travel toward your camera heading (backward with S).
+The steering reads physical W/A/S/D before synthesized input, so generated
+side movement cannot latch the turn after release. The **Movement** menu tab
 has independent toggles, also available through F8/F9 with the menu hidden.
 
-Bunnyhop submits a fresh jump on a grounded movement command and releases jump
-while airborne. Failed takeoffs release before retrying beyond the game's
-current jump cooldown. It does not spam airborne or fractional jump presses.
-Autostrafe chooses the maximum modeled collision-free air speed gain while steering
-toward the requested direction. It changes normalized forward/left command
-values and their native direction buttons, without rotating the camera.
+Bunnyhop retains a pending press across command callbacks instead of releasing
+it on the next command. Engine input/press feedback, takeoff and the controller's
+simulation tick counter drive bounded retries and release acknowledgement.
+When the server's automatic bunnyhop mode is already enabled, held jump remains
+down throughout flight. The code reads that setting without changing it.
+Autostrafe maximizes heading change under a retained-speed target instead of
+chasing a fixed sideways heading and unlimited speed gain. It brakes excess
+entry speed above the current wish-speed limit to tighten turns; release uses
+small analog corrections to remove remaining lateral velocity. It changes
+normalized movement and direction buttons without rotating the camera.
 Grounded movement remains under ordinary game input control.
 
 Air acceleration, air wish-speed cap, surface friction, effective server/weapon
@@ -55,19 +61,30 @@ against local metadata and machine code. See
 [read-only build verifier](tools/inspect_movement.py).
 
 Command mutation runs on the engine input callback before its original
-movement-data finalization. Only assisted command fields change; subtick camera
-deltas, timing, attacks and other buttons are preserved. State is discarded on
+movement-data finalization. It adds explicit time-zero analog and separate jump
+transitions through verified game-owned protobuf allocation/reuse. Analog deltas
+start from historical effective input, matching the engine's integration order;
+final base values alone are ingested after that integration. Existing camera
+deltas/times, attacks and other actions retain relative order. State is discarded on
 pawn/service/handle changes, command rollback, loss of focus or ownership change.
 Dead/frozen/swimming/waterjump pawns and ladder/noclip/observer modes retain normal
 input. End or an explicit stop disarms movement and waits for mutations to finish;
 hooks/trampolines and stopped code remain resident until normal process exit.
 
-**Verification:** public and diagnostic x64 Release builds and all four CTest
-executables pass. The movement checks cover maximum-gain geometry, directional
-steering, invalid physics, native button transitions and preserving unrelated
-subtick actions. UI checks cover both tabs and independent toggles. No game was
-launched for this implementation. Live jump success, callback cadence, steering,
-and landing speed retention remain unverified until the offline test. Ground
+**Previous live result:** the user's offline run of `e4c98b2`, captured in
+`logs/overlay-34356-134363765387104894.log`, showed observed missed-hop pauses,
+including a 393ms grounded interval, and confirmed fixed sideways steering.
+This prompted the pending-jump/continuous-turn revision and explicit subtick
+integration transitions.
+
+**Revision verification:** public and diagnostic x64 Release builds and all six
+CTest executables pass. Tests include repeated same-tick callbacks, consumed and
+expired jump requests, prediction-clock rollback, separate transition decoding,
+and closed-loop steering trajectories with repeated circles and release recovery
+across varying speed, friction and fractional durations. UI checks cover both
+tabs and independent toggles. The revision has not been loaded into CS2; actual
+jump success, historical-input agreement and landing speed retention still need
+observation. Ground
 command timing and a full tick acceleration calculation do not establish perfect
 fractional landing timing. Collisions, prediction/substep timing and the game's
 jump/speed rules can change the resulting speed. Exact per-substep duck, walking
@@ -76,7 +93,7 @@ and firing speed transitions are not mirrored by the air solver.
 Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
-the mouse/WASD. The launcher writes movement telemetry to the existing
+the mouse/A/D, then release A/D to test recovery. The launcher writes movement telemetry to the existing
 `logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
 
 * `MOVE_BUILD_VERIFIED` checks input identity/layout; `MOVE_OWNER` records an
@@ -85,6 +102,12 @@ the mouse/WASD. The launcher writes movement telemetry to the existing
   physics roughly every two seconds while assistance runs.
 * `MOVE_LAND` / `MOVE_TAKEOFF` record grounded transitions and horizontal speeds;
   these copied state observations need comparison with actual gameplay.
+* `MOVE_JUMP` records emitted press/release, pending phase, simulation progress,
+  observed engine input and actual/usable/landing stamps. Clock domains are not
+  assumed identical.
+* `MOVE_CONSUMED` compares requested values with movement-service values after
+  the engine ingests the command. Observed ingestion is still separate from
+  physics/output confirmation.
 * `MOVE_STATE` / `MOVE_SOURCE` / `MOVE_STOPPED_RESIDENT` explain inactivity,
   lifecycle changes and completed mutation shutdown.
 
