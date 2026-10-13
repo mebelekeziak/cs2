@@ -1,4 +1,5 @@
 /build/
+/build-*/
 /logs/
 __pycache__/
 *.pyc

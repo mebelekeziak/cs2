@@ -19,8 +19,12 @@
 #include <cstdarg>
 #include <cwchar>
 #include <algorithm>
+#include <cfloat>
 #include "esp_draw.h"
 #include "player_reader.h"
+#if !CS2_DIAGNOSTIC_UI
+#include "public_menu.h"
+#endif
 
 #ifndef CS2_WORKSPACE_ROOT
 #define CS2_WORKSPACE_ROOT L"C:\\Users\\dawid\\Documents\\ChatGPT\\cs2"
@@ -52,6 +56,10 @@ bool deviceObjectsDirty = false;
 bool visible = true;
 bool insertDown = false;
 bool endDown = false;
+#if !CS2_DIAGNOSTIC_UI
+bool menuMouseActive = false;
+bool menuMouseArmed = false;
+#endif
 bool threadChangeLogged = false;
 bool firstPresentReported = false;
 IDXGISwapChain* lastRejectedChain = nullptr;
@@ -179,6 +187,10 @@ struct ScopedImGuiContext {
 
 void ReleaseRendererOnOwner(const char* reason) {
     PlayerReaderInvalidate(reason);
+#if !CS2_DIAGNOSTIC_UI
+    menuMouseActive = false;
+    menuMouseArmed = false;
+#endif
     if (imguiContext) {
         ImGuiContext* previous = ImGui::GetCurrentContext();
         ImGui::SetCurrentContext(imguiContext);
@@ -236,8 +248,13 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
     ImGui::SetCurrentContext(imguiContext);
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; io.LogFilename = nullptr;
-    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NoKeyboard;
+#if CS2_DIAGNOSTIC_UI
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
     ImGui::StyleColorsDark();
+#else
+    ConfigurePublicMenuStyle();
+#endif
     backendInitialized = ImGui_ImplDX11_Init(device.Get(), context.Get());
     bool objects = backendInitialized && ImGui_ImplDX11_CreateDeviceObjects();
     ImGui::SetCurrentContext(previous);
@@ -327,6 +344,30 @@ struct SupplementalState {
     }
 };
 
+#if !CS2_DIAGNOSTIC_UI
+void PollMenuMouse(bool foreground) {
+    ImGuiIO& io = ImGui::GetIO();
+    POINT position{};
+    RECT client{};
+    const bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    const bool active = foreground && visible && GetCursorPos(&position) &&
+        ScreenToClient(selectedWindow, &position) && GetClientRect(selectedWindow, &client) &&
+        client.right > 0 && client.bottom > 0;
+    // Reopening or refocusing cannot turn an already-held game click into a menu click.
+    if (!active || !menuMouseActive) menuMouseArmed = false;
+    if (active && !down) menuMouseArmed = true;
+    io.AddFocusEvent(active);
+    if (active) {
+        io.AddMousePosEvent(static_cast<float>(position.x) * io.DisplaySize.x / static_cast<float>(client.right),
+            static_cast<float>(position.y) * io.DisplaySize.y / static_cast<float>(client.bottom));
+    } else {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    }
+    io.AddMouseButtonEvent(0, active && menuMouseArmed && down);
+    menuMouseActive = active;
+}
+#endif
+
 void DrawFrame(IDXGISwapChain* chain) {
     ScopedImGuiContext scopedContext;
     if (deviceObjectsDirty) {
@@ -339,10 +380,10 @@ void DrawFrame(IDXGISwapChain* chain) {
     if (!renderTarget && !CreateRenderTarget(chain)) { stopRequested.store(true); return; }
     const bool foreground = GetForegroundWindow() == selectedWindow;
     EspPollControls(foreground);
-    const bool insertNow = foreground && (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-    const bool endNow = foreground && (GetAsyncKeyState(VK_END) & 0x8000) != 0;
-    if (insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
-    if (endNow && !endDown) { stopRequested.store(true); Log("End requested cooperative shutdown"); }
+    const bool insertNow = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    const bool endNow = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
+    if (foreground && insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
+    if (foreground && endNow && !endDown) { stopRequested.store(true); Log("End requested cooperative shutdown"); }
     insertDown = insertNow; endDown = endNow;
     if (stopRequested.load()) return;
     LARGE_INTEGER now{};
@@ -352,12 +393,19 @@ void DrawFrame(IDXGISwapChain* chain) {
     io.DeltaTime = std::clamp(static_cast<float>(now.QuadPart - previousCounter.QuadPart) /
         static_cast<float>(counterFrequency.QuadPart), 0.001f, 0.25f);
     previousCounter = now;
+#if !CS2_DIAGNOSTIC_UI
+    PollMenuMouse(foreground);
+#endif
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
+#if !CS2_DIAGNOSTIC_UI
+    if (visible) DrawPublicMenu();
+#endif
     const auto players = PlayerReaderCapture();
-    ImDrawList* espList = ImGui::GetForegroundDrawList();
+    ImDrawList* espList = ImGui::GetBackgroundDrawList();
     const int beforeEsp = espList->VtxBuffer.Size;
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
+#if CS2_DIAGNOSTIC_UI
     if (visible) {
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.90f);
@@ -371,7 +419,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Players: %zu | drawing: %zu | matrix: %s", players.playerCount,
             espStats.drawn, players.matrixValid ? "valid" : "unavailable");
         const auto& settings = EspGetSettings();
-        ImGui::Text("F1 ESP: %s | max: %.0fm (-/+)", settings.enabled ? "ON" : "OFF", settings.maxDistanceMeters);
+        ImGui::Text("F1 ESP: %s | range: unlimited", settings.enabled ? "ON" : "OFF");
         ImGui::Text("F2 names: %s | F3 boxes: %s", settings.names ? "ON" : "OFF", settings.boxes ? "ON" : "OFF");
         ImGui::Text("F4 distance: %s | F5 health: %s", settings.distance ? "ON" : "OFF", settings.health ? "ON" : "OFF");
         ImGui::Text("F6 teammates: %s | F7 armor: %s", settings.teammates ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
@@ -381,6 +429,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::TextUnformatted("Stopped code remains resident until game exit.");
         ImGui::End();
     }
+#endif
     ImGui::Render();
     PlayerReaderReportDraw(espStats, espVertices, ImGui::GetDrawData()->TotalVtxCount, io.DisplaySize.x, io.DisplaySize.y);
     if (ImGui::GetDrawData()->TotalVtxCount > 0) {
@@ -508,6 +557,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (!OpenLog(absoluteLogPath)) { startState.store(-1); return 2; }
     Log("OverlayStart pid=%lu x64=%s ImGui=%s MinHook=1.3.4; no initialization in DllMain",
         GetCurrentProcessId(), sizeof(void*) == 8 ? "yes" : "no", IMGUI_VERSION);
+    Log("UI_MODE %s", CS2_DIAGNOSTIC_UI ? "diagnostic" : "public");
     EspSetLogCallback(&EspLog);
     PlayerReaderSetLogCallback(&EspLog);
     callbackTls = TlsAlloc();

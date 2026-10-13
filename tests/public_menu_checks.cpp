@@ -1,0 +1,119 @@
+#include "public_menu.h"
+#include "esp_draw.h"
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+namespace {
+int failures = 0;
+void Expect(bool condition, const char* label) {
+    std::printf("%s %s\n", condition ? "PASS" : "FAIL", label);
+    failures += !condition;
+}
+void Frame() {
+    ImGui::NewFrame();
+    DrawPublicMenu();
+    ImGui::Render();
+}
+void Move(ImVec2 position) {
+    ImGui::GetIO().AddMousePosEvent(position.x, position.y);
+    Frame();
+}
+void Click(ImVec2 position) {
+    Move(position);
+    ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    Frame();
+    ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    Frame();
+}
+ImGuiWindow* Menu() { return ImGui::FindWindowByName("##PublicMenu"); }
+ImGuiWindow* Body() {
+    ImGuiWindow* menu = Menu();
+    return menu && !menu->DC.ChildWindows.empty() ? menu->DC.ChildWindows[0] : nullptr;
+}
+ImVec2 EnablePosition() {
+    const ImVec2 start = Body()->DC.CursorStartPos;
+    return { start.x + 8, start.y + ImGui::GetFrameHeight() * 0.5f };
+}
+ImVec2 OptionPosition(int row) {
+    // Rows follow the master control and a one-pixel separator. Use the actual
+    // child origin and style metrics so movement/viewport changes remain covered.
+    ImVec2 position = EnablePosition();
+    position.y += ImGui::GetFrameHeightWithSpacing() + 1 + ImGui::GetStyle().ItemSpacing.y;
+    position.y += static_cast<float>(row) * ImGui::GetFrameHeightWithSpacing();
+    return position;
+}
+}
+
+int main() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = io.LogFilename = nullptr;
+    io.DisplaySize = { 800, 600 };
+    io.DeltaTime = 1.0f / 60.0f;
+    io.ConfigInputTrickleEventQueue = false;
+    unsigned char* pixels = nullptr;
+    int width = 0, height = 0;
+    ConfigurePublicMenuStyle();
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    EspSetSettings(EspSettings{});
+    Frame();
+    Frame(); // Establish normal item hover state after initial window creation.
+    Expect(Menu() && Body(), "public menu and visuals panel created");
+    if (!Menu() || !Body()) {
+        ImGui::DestroyContext();
+        return 1;
+    }
+    Expect(Menu()->Pos.x == 24 && Menu()->Pos.y == 24, "initial menu position");
+    Expect(ImGui::GetDrawData()->TotalVtxCount > 0, "public menu submits rendering primitives");
+
+    Click(EnablePosition());
+    Expect(!EspGetSettings().enabled, "mouse click disables shared ESP setting");
+    Click(OptionPosition(0));
+    Expect(EspGetSettings().boxes, "disabled master prevents option interaction");
+    Click(EnablePosition());
+    Expect(EspGetSettings().enabled, "mouse click re-enables shared ESP setting");
+    Click(OptionPosition(0));
+    Expect(!EspGetSettings().boxes && EspGetSettings().names && EspGetSettings().distance,
+           "boxes click changes only its shared setting");
+    Click(OptionPosition(4));
+    Expect(EspGetSettings().armor && EspGetSettings().health && EspGetSettings().teammates,
+           "armor click preserves other visible feature settings");
+
+    const ImVec2 origin = Menu()->Pos;
+    Move({ origin.x + 35, origin.y + 14 });
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    Frame();
+    Move({ origin.x + 115, origin.y + 84 });
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    Frame();
+    Expect(Menu()->Pos.x > origin.x && Menu()->Pos.y > origin.y,
+           "drag strip moves the menu through real mouse events");
+
+    io.DisplaySize = { 180, 150 };
+    Frame();
+    Expect(Menu()->Pos.x >= 0 && Menu()->Pos.y >= 0 &&
+           Menu()->Pos.x + Menu()->Size.x <= 180 && Menu()->Pos.y + Menu()->Size.y <= 150,
+           "menu clamps position and size after viewport shrink");
+
+    io.DisplaySize = { 800, 600 };
+    Frame(); // Settle the child geometry after restoring a larger viewport.
+    Frame();
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const char* labels = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    Expect(std::strstr(labels, "Visuals") && std::strstr(labels, "Distance labels") &&
+           !std::strstr(labels, "Aimbot") && !std::strstr(labels, "Misc") &&
+           !std::strstr(labels, "Skeleton") && !std::strstr(labels, "Reader") &&
+           !std::strstr(labels, "Frames") && !std::strstr(labels, "range"),
+           "only supported visuals controls appear without diagnostics or range control");
+    ImGui::LogFinish(); // 1.91.9b clears the buffer here; inspect it beforehand.
+    ImGui::Render();
+    EspSetSettings(EspSettings{});
+    ImGui::DestroyContext();
+    return failures ? 1 : 0;
+}

@@ -5,9 +5,9 @@ x64 client overlay with player ESP and an explicit manual mapper. Installed game
 
 ## Player ESP
 
-Names, outlined player boxes, distance labels, a maximum distance filter, health
-bars/text, optional armor and team colors are implemented. Defaults show both
-teams within 150m; armor text is off. Boxes project the eight corners of the
+Names, outlined player boxes, distance labels, health bars/text, optional armor
+and team colors are implemented. ESP has unlimited range; defaults show both
+teams and armor text is off. Boxes project the eight corners of the
 current collision bounds using copied scene position/angles/scale. They enclose
 the collision hull, not animated model bones. Team colors: CT blue, T amber.
 
@@ -16,17 +16,17 @@ the collision hull, not animated model bones. Team colors: CT blue, T amber.
 | F1 | Toggle ESP |
 | F2 | Toggle usernames |
 | F3 | Toggle boxes |
-| F4 | Toggle distance labels (range filtering remains active) |
+| F4 | Toggle distance labels |
 | F5 | Toggle health bars and HP text |
 | F6 | Include/exclude teammates |
 | F7 | Toggle armor text |
-| - / + | Change maximum distance by 25m, clamped to 10–1000m; keypad works too |
-| Insert | Toggle the diagnostics panel; ESP and acquisition keep running |
+| Insert | Toggle the selected menu; ESP and acquisition keep running |
 | End | Cooperative stop |
 
 Keys are polled while the game window is foreground. They are not consumed, so
-the game can also respond to any overlapping bindings. There is no mouse menu,
-window-procedure replacement or game input interception. Settings are per run.
+the game can also respond to overlapping bindings. The public menu additionally
+supports left-click controls with the client's available cursor. Settings are
+shared between the menu and hotkeys, and last for the current run.
 
 Entity acquisition now runs on **every selected Present**, replacing the first
 20Hz implementation. The view matrix is also copied for every rendered frame.
@@ -52,8 +52,9 @@ counter and diagnostic record. No cached raw entity pointer is used for drawing.
 
 Distance uses the conventional Source unit-to-meter factor 0.0254 and the local
 live pawn's position. If a live local pawn is unavailable (for example while dead
-or spectating), distance labels and range filtering are temporarily unavailable;
-other valid player geometry can still render. Dormant, dead, invalid and local
+or spectating), distance labels are temporarily unavailable; valid player
+geometry still renders without a range limit. An invalid distance suppresses
+only that player's distance label. Dormant, dead, invalid and local
 players are excluded. Near-camera edges are clipped and offscreen rectangles
 are rejected. No visibility trace or skeleton rendering is implemented. Exact
 Source2 world-aligned collision flag semantics have not been verified; applying
@@ -127,6 +128,69 @@ cmake --build build --config Release --parallel
 
 Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, `build/Release/cs2_loader.exe`, and preserved third-party licenses in `build/Release/licenses/`. Use Release; the manual mapper intentionally supports a restricted payload contract rather than arbitrary Windows DLLs.
 
+## Public and diagnostic interfaces
+
+The default build uses a minimal dark public menu: one **Visuals** tab and a
+panel with ESP, boxes, names, health bars and HP text, distance labels,
+teammates, and armor text. Only implemented features appear. ESP has
+unlimited range; there is no range slider or +/- range hotkey. Insert shows or
+hides the menu; End cooperatively stops the overlay. Player graphics render
+behind the menu. The menu can be dragged from its top strip and stays within
+the viewport after a resize.
+
+The public menu reads the installed Windows Segoe UI font for its typography,
+with an ImGui default-font fallback. No system font file is copied or bundled.
+
+The public menu polls the Windows cursor and left mouse button on the render
+thread and scales client coordinates to the back buffer. Use the cursor at the
+disconnected main menu or in an offline pause menu. Gameplay may lock/recenter
+the cursor. Mouse clicks also reach the game, so choose a clear area of the
+underlying menu; no engine input API or window-procedure interception is added.
+Held clicks when showing/refocusing the menu are ignored until released.
+Hotkeys remain available while the menu is hidden. Telemetry still writes to
+workspace logs but does not appear in the public menu.
+
+`CS2_DIAGNOSTIC_UI` selects the interface independently of compiler optimization.
+Keep both builds in separate directories. The original crude panel retains its
+technical counters and hotkey summary in the diagnostic build (with unlimited
+range). Its mouse input remains disabled.
+
+```powershell
+# Public interface (also used by Load Overlay.cmd).
+cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 -DCS2_DIAGNOSTIC_UI=OFF
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+
+# Original diagnostic interface, with Release optimization.
+cmake -S . -B build-diagnostic -G 'Visual Studio 17 2022' -A x64 -DCS2_DIAGNOSTIC_UI=ON
+cmake --build build-diagnostic --config Release --parallel
+ctest --test-dir build-diagnostic -C Release --output-on-failure
+```
+
+Launch `build/Release/cs2_loader.exe` for the public menu or
+`build-diagnostic/Release/cs2_loader.exe` for diagnostics. Each launcher uses its
+adjacent mapper and DLL. Restart CS2 normally before changing between builds;
+stopped code remains resident until process exit. The UI change is verified
+using standalone rendering/interaction checks without loading CS2; client
+mouse behavior and cursor locking still require observation in an authorized
+session.
+
+Optional standalone visual preview, rendered by the same menu code through
+software D3D11 without starting or loading CS2:
+
+```powershell
+cmake -S . -B build -DCS2_BUILD_UI_PREVIEW=ON
+cmake --build build --config Release --target public_menu_preview --parallel
+New-Item -ItemType Directory -Path logs -Force | Out-Null
+.\build\Release\public_menu_preview.exe .\logs\public-menu-preview.bmp
+```
+
+October 13, 2026: public and diagnostic x64 Release builds succeeded. All three
+CTest executables passed in each build, covering projection/unlimited range,
+loader reservations, menu clicks/shared settings, disabled controls, dragging,
+and viewport resizing. The public menu was visually inspected from its actual
+offscreen D3D11 render. This does not establish live client input behavior.
+
 ## One-click loader
 
 Start CS2 and leave it at the disconnected main menu or in offline Practice.
@@ -181,7 +245,7 @@ The mapper does not use LoadLibrary injection or call any LoadLibrary variant. I
 
 ## Overlay and shutdown
 
-The overlay displays player ESP and diagnostics. Insert toggles the panel; End requests cooperative stop when the game window is foreground. No game-window procedure is replaced. Rendering and ImGui lifecycle work occur on the verified Present thread; resource ownership is synchronized with ResizeBuffers. The DLL supplements the ImGui DX11 backend's state backup, releases its back-buffer references before resizing and invalidates device-dependent state when necessary.
+The overlay displays player ESP and the selected public or diagnostic menu. Insert toggles the menu; End requests cooperative stop when the game window is foreground. No game-window procedure is replaced. Rendering and ImGui lifecycle work occur on the verified Present thread; resource ownership is synchronized with ResizeBuffers. The DLL supplements the ImGui DX11 backend's state backup, releases its back-buffer references before resizing and invalidates device-dependent state when necessary.
 
 The exact stop command uses the base printed by the successful mapping operation:
 

@@ -287,8 +287,8 @@ void PlayerReaderReportDraw(const EspDrawStats& draw, int espVertices, int total
         generation, status, frame.valid, frame.matrixValid, frame.distanceAvailable, counts.highest, counts.slots,
         counts.occupied, counts.controllers, frame.playerCount, counts.missingPawn, counts.wrongPawnClass, counts.dead, counts.dormant,
         counts.stale, counts.badBounds, counts.failures, counts.truncated, counts.sampleMs, lastCapture ? now-lastCapture : 0);
-    Log("ESP_DRAW enabled=%d considered=%zu local=%zu dead=%zu teammates=%zu range=%zu bad_distance=%zu bad_projection=%zu behind=%zu offscreen=%zu degenerate=%zu projected=%zu drawn=%zu esp_vertices=%d total_vertices=%d",
-        draw.enabled, draw.considered, draw.local, draw.dead, draw.teammates, draw.distanceFiltered,
+    Log("ESP_DRAW enabled=%d considered=%zu local=%zu dead=%zu teammates=%zu bad_distance=%zu bad_projection=%zu behind=%zu offscreen=%zu degenerate=%zu projected=%zu drawn=%zu esp_vertices=%d total_vertices=%d",
+        draw.enabled, draw.considered, draw.local, draw.dead, draw.teammates,
         draw.invalidDistance, draw.invalidProjection, draw.behindCamera, draw.offscreen, draw.degenerate,
         draw.projected, draw.drawn, espVertices, totalVertices);
     for (std::size_t i = 0; i < rejectedCount; ++i)

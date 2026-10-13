@@ -1,0 +1,156 @@
+#include "public_menu.h"
+#include "esp_draw.h"
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <imgui.h>
+#include <algorithm>
+#include <cstring>
+#include <cwchar>
+
+namespace {
+ImFont* LoadSystemFont(ImFontAtlas& atlas) {
+    wchar_t directory[MAX_PATH]{};
+    const UINT length = GetWindowsDirectoryW(directory, MAX_PATH);
+    constexpr UINT fontSuffixLength = 18; // "\\Fonts\\segoeui.ttf"
+    if (!length || length + fontSuffixLength >= MAX_PATH) return nullptr;
+    wchar_t path[MAX_PATH]{};
+    if (swprintf_s(path, L"%ls\\Fonts\\segoeui.ttf", directory) <= 0) return nullptr;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return nullptr;
+    LARGE_INTEGER size{};
+    constexpr LONGLONG maxFontBytes = 16 * 1024 * 1024;
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 100 || size.QuadPart > maxFontBytes) {
+        CloseHandle(file);
+        return nullptr;
+    }
+    void* bytes = ImGui::MemAlloc(static_cast<size_t>(size.QuadPart));
+    DWORD read = 0;
+    const bool complete = bytes && ReadFile(file, bytes, static_cast<DWORD>(size.QuadPart), &read, nullptr) &&
+                          read == static_cast<DWORD>(size.QuadPart);
+    CloseHandle(file);
+    if (!complete) {
+        ImGui::MemFree(bytes);
+        return nullptr;
+    }
+    ImFontConfig config{};
+    strcpy_s(config.Name, "Segoe UI, 14px");
+    // The atlas owns the ImGui-allocated buffer until context destruction.
+    // Load the installed font read-only; never copy or distribute its file.
+    config.FontDataOwnedByAtlas = true;
+    return atlas.AddFontFromMemoryTTF(bytes, static_cast<int>(size.QuadPart), 14, &config);
+}
+bool FeatureCheckbox(const char* label, bool& value) {
+    // Keep the reference's blue square/white check, including disabled states.
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, { 0.96f, 0.98f, 1, 1 });
+    const int extraColors = value ? 3 : 0;
+    if (value) {
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, { 0.27f, 0.65f, 0.95f, 1 });
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, { 0.35f, 0.72f, 1, 1 });
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, { 0.22f, 0.58f, 0.87f, 1 });
+    }
+    const bool changed = ImGui::Checkbox(label, &value);
+    ImGui::PopStyleColor(1 + extraColors);
+    return changed;
+}
+ImVec2 ClampPosition(ImVec2 position, ImVec2 size, const ImGuiViewport& viewport) {
+    return {
+        std::clamp(position.x, viewport.WorkPos.x,
+                   viewport.WorkPos.x + std::max(0.0f, viewport.WorkSize.x - size.x)),
+        std::clamp(position.y, viewport.WorkPos.y,
+                   viewport.WorkPos.y + std::max(0.0f, viewport.WorkSize.y - size.y))
+    };
+}
+}
+
+void ConfigurePublicMenuStyle() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Fonts.empty()) {
+        io.FontDefault = LoadSystemFont(*io.Fonts);
+        if (!io.FontDefault) io.FontDefault = io.Fonts->AddFontDefault();
+    }
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowPadding = { 12, 10 };
+    style.FramePadding = { 3, 2 };
+    style.ItemSpacing = { 8, 7 };
+    style.WindowMinSize = { 1, 1 };
+    style.WindowRounding = style.ChildRounding = style.FrameRounding = 0;
+    style.TabRounding = style.ScrollbarRounding = style.GrabRounding = 0;
+    style.WindowBorderSize = style.ChildBorderSize = style.FrameBorderSize = 1;
+    style.ScrollbarSize = 10;
+    style.Alpha = 1;
+    style.DisabledAlpha = 0.45f;
+    style.Colors[ImGuiCol_Text] = { 0.82f, 0.83f, 0.85f, 1 };
+    style.Colors[ImGuiCol_TextDisabled] = { 0.44f, 0.46f, 0.49f, 1 };
+    style.Colors[ImGuiCol_WindowBg] = { 0.075f, 0.077f, 0.083f, 0.98f };
+    style.Colors[ImGuiCol_ChildBg] = { 0.09f, 0.093f, 0.10f, 1 };
+    style.Colors[ImGuiCol_Border] = { 0.22f, 0.24f, 0.27f, 1 };
+    style.Colors[ImGuiCol_Separator] = style.Colors[ImGuiCol_Border];
+    style.Colors[ImGuiCol_FrameBg] = { 0.11f, 0.12f, 0.13f, 1 };
+    style.Colors[ImGuiCol_FrameBgHovered] = { 0.16f, 0.20f, 0.24f, 1 };
+    style.Colors[ImGuiCol_FrameBgActive] = { 0.18f, 0.27f, 0.34f, 1 };
+    style.Colors[ImGuiCol_CheckMark] = { 0.27f, 0.65f, 0.95f, 1 };
+    style.Colors[ImGuiCol_ScrollbarBg] = { 0.075f, 0.077f, 0.083f, 1 };
+    style.Colors[ImGuiCol_ScrollbarGrab] = { 0.25f, 0.28f, 0.32f, 1 };
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = { 0.34f, 0.40f, 0.46f, 1 };
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = { 0.27f, 0.65f, 0.95f, 1 };
+}
+
+void DrawPublicMenu() {
+    const ImGuiViewport& viewport = *ImGui::GetMainViewport();
+    if (viewport.WorkSize.x <= 0 || viewport.WorkSize.y <= 0) return;
+    const ImVec2 size { std::min(370.0f, viewport.WorkSize.x),
+                        std::min(310.0f, viewport.WorkSize.y) };
+    ImGui::SetNextWindowPos({ 24, 24 }, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(size);
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##PublicMenu", nullptr, flags)) {
+        ImGui::SetWindowPos(ClampPosition(ImGui::GetWindowPos(), size, viewport));
+
+        // A dedicated slim strip keeps settings clicks from moving the panel.
+        ImGui::InvisibleButton("##DragMenu", { std::max(1.0f, ImGui::GetContentRegionAvail().x), 8 });
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            const ImVec2 position = ImGui::GetWindowPos();
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            ImGui::SetWindowPos(ClampPosition({ position.x + delta.x, position.y + delta.y }, size, viewport));
+        }
+
+        // Only implemented categories appear. This single active tab has no inert siblings.
+        ImGui::PushStyleColor(ImGuiCol_Button, { 0.12f, 0.18f, 0.23f, 1 });
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.14f, 0.22f, 0.29f, 1 });
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, { 0.14f, 0.22f, 0.29f, 1 });
+        ImGui::PushStyleColor(ImGuiCol_Border, { 0.27f, 0.65f, 0.95f, 1 });
+        ImGui::Button("Visuals", { std::min(85.0f, std::max(1.0f, ImGui::GetContentRegionAvail().x)), 25 });
+        ImGui::PopStyleColor(4);
+        ImGui::Separator();
+
+        EspSettings settings = EspGetSettings();
+        bool changed = false;
+        const float footerHeight = ImGui::GetTextLineHeightWithSpacing() + 5;
+        const float bodyHeight = std::max(1.0f, ImGui::GetContentRegionAvail().y - footerHeight);
+        if (ImGui::BeginChild("##VisualSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+            changed |= FeatureCheckbox("Enable ESP", settings.enabled);
+            ImGui::Separator();
+            ImGui::BeginDisabled(!settings.enabled);
+            changed |= FeatureCheckbox("Boxes", settings.boxes);
+            changed |= FeatureCheckbox("Names", settings.names);
+            changed |= FeatureCheckbox("Distance labels", settings.distance);
+            changed |= FeatureCheckbox("Health bars and values", settings.health);
+            changed |= FeatureCheckbox("Armor", settings.armor);
+            changed |= FeatureCheckbox("Show teammates", settings.teammates);
+            ImGui::EndDisabled();
+        }
+        ImGui::EndChild();
+        if (changed) EspSetSettings(settings);
+        ImGui::TextDisabled("Insert  Menu    End  Stop");
+    }
+    ImGui::End();
+}

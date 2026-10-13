@@ -82,15 +82,15 @@ int main() {
     }
     players[0].localPlayer = true;
     players[1].health = 0;
-    players[2].distanceMeters = 151;
+    players[2].distanceMeters = 10000;
     players[3].distanceMeters = std::numeric_limits<float>::infinity();
     SetBounds(players[4].worldCorners, 4);
     EspFrameSnapshot frame { matrix, players, 6, 3, true, true, true };
     const EspDrawStats stats = EspDraw(frame, 100, 100);
     Expect(stats.considered == 6 && stats.local == 1 && stats.dead == 1 &&
-           stats.distanceFiltered == 1 && stats.invalidDistance == 1 && stats.offscreen == 1 &&
-           stats.projected == 1 && stats.drawn == 1,
-           "filter accounting and default teammate display");
+           stats.invalidDistance == 1 && stats.offscreen == 1 &&
+           stats.projected == 3 && stats.drawn == 3,
+           "unlimited range; invalid distance does not hide valid player geometry");
 
     ImGui::Render();
     Expect(ImGui::GetDrawData()->TotalVtxCount > 0, "ImGui primitives submitted");

@@ -39,7 +39,6 @@ struct EspSettings {
     bool health = true;
     bool teammates = true;
     bool armor = false;
-    float maxDistanceMeters = 150;
 };
 
 enum class EspProjectionResult {
@@ -51,7 +50,6 @@ struct EspDrawStats {
     std::size_t local = 0;
     std::size_t dead = 0;
     std::size_t teammates = 0;
-    std::size_t distanceFiltered = 0;
     std::size_t invalidDistance = 0;
     std::size_t invalidProjection = 0;
     std::size_t behindCamera = 0;
@@ -75,6 +73,7 @@ EspProjectionResult EspProjectBox(const EspVec3 (&corners)[8], const EspMatrix4x
 // Call on the render owner thread only, outside DllMain/loader lock.
 void EspSetLogCallback(EspLogCallback callback) noexcept;
 const EspSettings& EspGetSettings() noexcept;
+void EspSetSettings(const EspSettings& value) noexcept;
 void EspPollControls(bool foreground) noexcept;
 // Call between ImGui::NewFrame and ImGui::Render, regardless of menu visibility.
 EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height);

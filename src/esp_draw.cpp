@@ -10,9 +10,9 @@
 namespace {
 EspSettings settings;
 EspLogCallback logger = nullptr;
-bool keysDown[9]{};
+bool keysDown[7]{};
 constexpr float nearW = 0.01f;
-constexpr int keys[9] = { VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_OEM_MINUS, VK_OEM_PLUS };
+constexpr int keys[7] = { VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7 };
 
 struct ClipPoint { float x, y, w; };
 
@@ -24,9 +24,9 @@ void LogSettings() noexcept {
     if (!logger) return;
     char message[384]{};
     std::snprintf(message, sizeof(message),
-        "ESP_SETTINGS enabled=%d names=%d boxes=%d distance=%d health=%d teammates=%d armor=%d max_distance_m=%.0f",
+        "ESP_SETTINGS enabled=%d names=%d boxes=%d distance=%d health=%d teammates=%d armor=%d range=unlimited",
         settings.enabled, settings.names, settings.boxes, settings.distance, settings.health,
-        settings.teammates, settings.armor, settings.maxDistanceMeters);
+        settings.teammates, settings.armor);
     logger(message);
 }
 
@@ -126,12 +126,19 @@ void EspSetLogCallback(EspLogCallback callback) noexcept {
 
 const EspSettings& EspGetSettings() noexcept { return settings; }
 
+void EspSetSettings(const EspSettings& value) noexcept {
+    if (settings.enabled == value.enabled && settings.names == value.names &&
+        settings.boxes == value.boxes && settings.distance == value.distance &&
+        settings.health == value.health && settings.teammates == value.teammates &&
+        settings.armor == value.armor) return;
+    settings = value;
+    LogSettings();
+}
+
 void EspPollControls(bool foreground) noexcept {
     bool changed = false;
-    for (int i = 0; i < 9; ++i) {
-        const bool down = (GetAsyncKeyState(keys[i]) & 0x8000) != 0 ||
-            (i == 7 && (GetAsyncKeyState(VK_SUBTRACT) & 0x8000) != 0) ||
-            (i == 8 && (GetAsyncKeyState(VK_ADD) & 0x8000) != 0);
+    for (int i = 0; i < 7; ++i) {
+        const bool down = (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
         // Record held keys even in the background so focus changes do not toggle settings.
         const bool pressed = foreground && down && !keysDown[i];
         keysDown[i] = down;
@@ -145,8 +152,6 @@ void EspPollControls(bool foreground) noexcept {
         case 4: settings.health = !settings.health; break;
         case 5: settings.teammates = !settings.teammates; break;
         case 6: settings.armor = !settings.armor; break;
-        case 7: settings.maxDistanceMeters = std::max(10.0f, settings.maxDistanceMeters - 25.0f); break;
-        case 8: settings.maxDistanceMeters = std::min(1000.0f, settings.maxDistanceMeters + 25.0f); break;
         default: break;
         }
     }
@@ -161,7 +166,8 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
     stats.enabled = settings.enabled;
     if (!frame.valid || !frame.matrixValid || !settings.enabled ||
         (!frame.players && frame.playerCount) || !ImGui::GetCurrentContext()) return stats;
-    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    // Keep player primitives behind either menu so the controls remain readable.
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const float fontHeight = ImGui::GetFontSize();
     for (std::size_t i = 0; i < frame.playerCount; ++i) {
         const EspPlayerSnapshot& player = frame.players[i];
@@ -171,12 +177,9 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
         if (!settings.teammates && frame.localTeam > 0 && player.team == frame.localTeam) {
             ++stats.teammates; continue;
         }
-        if (frame.distanceAvailable) {
-            if (!std::isfinite(player.distanceMeters) || player.distanceMeters < 0) {
-                ++stats.invalidDistance; continue;
-            }
-            if (player.distanceMeters > settings.maxDistanceMeters) { ++stats.distanceFiltered; continue; }
-        }
+        const bool validDistance = frame.distanceAvailable &&
+            std::isfinite(player.distanceMeters) && player.distanceMeters >= 0;
+        if (frame.distanceAvailable && !validDistance) ++stats.invalidDistance;
         EspScreenRect box{};
         switch (EspProjectBox(player.worldCorners, frame.worldToClip, width, height, box)) {
         case EspProjectionResult::InvalidInput: ++stats.invalidProjection; continue;
@@ -209,7 +212,7 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
         }
         char details[96]{};
         std::size_t used = 0;
-        if (settings.distance && frame.distanceAvailable)
+        if (settings.distance && validDistance)
             used = static_cast<std::size_t>(std::snprintf(details, sizeof(details), "%.0fm", player.distanceMeters));
         if (settings.health)
             used += static_cast<std::size_t>(std::snprintf(details + used, sizeof(details) - used,
