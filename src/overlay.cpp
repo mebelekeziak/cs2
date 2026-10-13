@@ -92,7 +92,14 @@ void Log(const char* format, ...) {
     AcquireSRWLockExclusive(&logLock);
     DWORD written = 0;
     WriteFile(logFile, buffer, static_cast<DWORD>(length), &written, nullptr);
-    FlushFileBuffers(logFile);
+    // Appended records remain readable immediately through the OS file cache.
+    // Forcing storage durability per line can stall input/render callbacks.
+    ReleaseSRWLockExclusive(&logLock);
+}
+
+void FlushLog() {
+    AcquireSRWLockExclusive(&logLock);
+    if (logFile != INVALID_HANDLE_VALUE) FlushFileBuffers(logFile);
     ReleaseSRWLockExclusive(&logLock);
 }
 
@@ -213,6 +220,7 @@ void CleanupOnRenderThread(const char* reason) {
     stopped.store(true, std::memory_order_release);
     Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
         reason, static_cast<unsigned long long>(frameCount));
+    FlushLog();
 }
 
 bool CreateRenderTarget(IDXGISwapChain* chain) {
@@ -371,6 +379,7 @@ void PollMenuMouse(bool foreground) {
 #endif
 
 void DrawFrame(IDXGISwapChain* chain) {
+    MovementFlushTelemetry();
     ScopedImGuiContext scopedContext;
     if (deviceObjectsDirty) {
         ImGui_ImplDX11_InvalidateDeviceObjects();
@@ -510,6 +519,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             MovementStop("stopped before selecting render chain");
             stopped.store(true);
             Log("STOPPED_RESIDENT before selecting a real chain; hooks/DLL retained.");
+            FlushLog();
         }
     }
     HRESULT result = originalPresent(chain, syncInterval, flags);

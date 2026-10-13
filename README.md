@@ -77,13 +77,32 @@ including a 393ms grounded interval, and confirmed fixed sideways steering.
 This prompted the pending-jump/continuous-turn revision and explicit subtick
 integration transitions.
 
-**Revision verification:** public and diagnostic x64 Release builds and all six
-CTest executables pass. Tests include repeated same-tick callbacks, consumed and
-expired jump requests, prediction-clock rollback, separate transition decoding,
-and closed-loop steering trajectories with repeated circles and release recovery
-across varying speed, friction and fractional durations. UI checks cover both
-tabs and independent toggles. The revision has not been loaded into CS2; actual
-jump success, historical-input agreement and landing speed retention still need
+**Latest live failure:** revision 2 (`90a6db4`) in
+`logs/overlay-39840-134363788528589904.log` generated zero assisted jump presses.
+The legacy-jump reader was given the value-pointer slot instead of the Cvar
+wrapper start, so jump-rule reads failed. Revision 3 corrects that address and
+reports the individual failed read through `MOVE_JUMP_RULES`. The user also
+reported large airborne FPS drops; that log did not measure callback cost.
+
+**Revision 3 verification:** public and diagnostic x64 Release builds and all nine
+CTest executables pass. Tests cover pending/retried jumps, clock rollback,
+transition decoding, circling/release trajectories, extreme caps and durations,
+guarded memory copies, the Cvar pointer-slot mistake and bounded deferred logging.
+The read-only verifier independently resolves Cvar registration operands and
+rejects a source header containing the previous erroneous address.
+
+The air solver now evaluates at most 13 candidates instead of scanning/refining
+angles; its standalone median dropped from 11.29 to 0.99 microseconds per
+command on the same input corpus. Command reads use guarded in-process copies
+instead of a kernel read per scalar. Movement callbacks enqueue bounded records;
+Present drains at most eight records, with overflow counted. Log writes use the
+OS file cache; forced storage flushing occurs at cooperative stop instead of
+every line. File writes still run on the render thread. `MOVE_PERF` measures
+assistance callback work, including command-lock acquisition, separately for
+airborne commands; it excludes the original engine finalizer and rendering.
+
+Revision 3 has not been loaded into CS2. Those local measurements do not prove
+live FPS improvement or jump success; landing speed retention still needs
 observation. Ground
 command timing and a full tick acceleration calculation do not establish perfect
 fractional landing timing. Collisions, prediction/substep timing and the game's
@@ -100,6 +119,12 @@ the mouse/A/D, then release A/D to test recovery. The launcher writes movement t
   observed command callback. Build verification alone does not prove a jump.
 * `MOVE_CMD` samples inputs, synthesized buttons/analogs, velocity and current
   physics roughly every two seconds while assistance runs.
+* `MOVE_JUMP_RULES` reports successful reads or the specific unavailable jump
+  field. `MOVE_CMD` separately records jump-rule and jump-plan validity.
+* `MOVE_PERF` reports mean/max assistance callback microseconds, airborne
+  mean/max microseconds and dropped log records, roughly every two seconds.
+  Queued records retain their producing thread and creation uptime; the outer
+  UTC timestamp identifies the later drain.
 * `MOVE_LAND` / `MOVE_TAKEOFF` record grounded transitions and horizontal speeds;
   these copied state observations need comparison with actual gameplay.
 * `MOVE_JUMP` records emitted press/release, pending phase, simulation progress,

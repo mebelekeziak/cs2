@@ -6,7 +6,8 @@ Inspected October 13, 2026. Client AMD64, PE timestamp `0x6AC7FFFA`, image size
 Installation/version are documented in README. No installed files were changed.
 `python tools/inspect_movement.py` verifies the binary hash, relevant function
 bytes, callback caller, vtable entry and engine tick constant without launching
-or opening CS2. A changed build needs renewed investigation.
+or opening CS2. It also compares source Cvar constants with independently decoded
+registration and getter operands. A changed build needs renewed investigation.
 
 ## Command lifecycle
 
@@ -134,7 +135,8 @@ not prove perfect fractional landing time; that requires live observation.
 
 Modern state at services+0x6C8 stores actual press, usable press and landing
 tick/fraction pairs at +0x10/+0x18/+0x20. Runtime legacy selector wrapper is
-`0x2529208`; `sv_bhop_time_window` wrapper is `0x2529040`. Modern jump compares
+`0x2529200`; its storage-pointer slot is `0x2529208`.
+`sv_bhop_time_window` wrapper is `0x2529040`. Modern jump compares
 the usable press to landing within half that window. A retained usable stamp
 does not prove takeoff and can survive an obstructed attempt.
 
@@ -167,6 +169,45 @@ services+0x1A0/0x1A4. `MOVE_CONSUMED` observes those values after original
 ingestion; it does not claim to observe the final collision response or server
 receipt. Full revision captures live under `logs/jump-revision/` and
 `logs/command-revision/`.
+
+## Revision 3: disabled jumps and callback cost
+
+The revision 2 live log `logs/overlay-39840-134363788528589904.log` showed
+`presses=0` and grounded `movement physics unavailable` while held Space.
+The reader already added wrapper+8, but its LegacyJump argument was the pointer
+slot `0x2529208`, causing it to read the next wrapper's registry handle. Cvar
+constructor `0x19A6C60` places that handle at wrapper+0 and storage at wrapper+8.
+Registration LEA RCX at `0xB2377` resolves to wrapper start `0x2529200`;
+LEA RDX at `0xB2370` resolves to the name `sv_legacy_jump`. Independent selectors
+MOV RAX at `0x8DE86D` and `0x8BF476` resolve to pointer slot `0x2529208`, then
+compare byte[storage+0x58]. The corrected source now agrees with both paths.
+
+The verifier derives wrapper starts and names for LegacyJump, BhopWindow,
+AutoBunnyhop and JumpPenalty, then checks the source getter offsets against
+`0x1607A0`. Passing `--header` with a copy containing LegacyJump=`0x2529208`
+fails even though the installed client hash is unchanged. The memory test also
+exercises the production Cvar accessor with a valid wrapper and mistaken slot.
+Evidence is retained in `logs/jump-disabled/`.
+
+The user reported airborne FPS drops, but the preceding live log has no
+movement callback timing. Revision 3 removes the steering scan/refinement,
+replaces per-field ReadProcessMemory with guarded local copies, and queues
+movement diagnostics for bounded render-thread draining. Each queued record
+retains its origin thread and creation uptime. Forced per-line file durability
+flushing was removed; cooperative stop flushes the log. This removes file I/O
+from the command callback, while render-thread writes remain. `MOVE_PERF`
+measures assistance work including lock acquisition, excluding the original
+engine finalizer and rendering, so live cost can be distinguished from solver
+microbenchmarks.
+
+MSVC x64 Release comparison on an identical seven-case corpus measured solver
+median 11.286969 microseconds before and 0.988894 after. Revised work has a
+deterministic bound of 13 candidate evaluations; 12 were observed in that
+corpus. The benchmark counter is compiled only into its test executable, not
+the DLL. Twenty-one steering checks include independently integrated circular
+and release trajectories plus large-impulse/tiny-cap cases. All nine CTest
+executables pass for both menu builds. These are standalone checks, not live
+jump/FPS validation. Comparison evidence is in `logs/steering-perf/`.
 
 Full local disassembly and read-only investigation scripts are retained under
 `logs/input-investigation/` and `logs/physics-investigation/`. These diagnostic

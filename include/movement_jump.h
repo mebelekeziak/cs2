@@ -1,10 +1,12 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
 
 struct JumpStamp {
     int tick = -1024;
     float fraction = 0;
 };
+static_assert(sizeof(JumpStamp) == 8 && offsetof(JumpStamp, fraction) == 4);
 enum class JumpPhase : unsigned char { Ready, Pending, Releasing };
 struct JumpState {
     JumpPhase phase = JumpPhase::Ready;

@@ -9,12 +9,18 @@ constexpr float pi = std::numbers::pi_v<float>;
 constexpr float radians = pi / 180.0f;
 float Wrap(float angle) noexcept { return std::remainder(angle, 2 * pi); }
 bool Finite(float value) noexcept { return std::isfinite(value); }
+#ifdef CS2_STEERING_BENCHMARK
+thread_local unsigned int candidateEvaluations = 0;
+#endif
 
 struct Candidate {
     float angle = 0, amount = 1, step = 0, x = 0, y = 0, speed = 0, turn = 0;
 };
 Candidate Simulate(const StrafeInput& in, const AirPhysics& p, float angle, float amount,
                    float velocityYaw, int side) noexcept {
+#ifdef CS2_STEERING_BENCHMARK
+    ++candidateEvaluations;
+#endif
     Candidate c{};
     c.angle = angle; c.amount = std::clamp(amount, 0.0f, 1.0f);
     const float dx = std::cos(angle), dy = std::sin(angle);
@@ -39,6 +45,7 @@ Candidate Turn(const StrafeInput& in, const AirPhysics& p, float velocityYaw,
     // impulse reducing that excess; preserve the remainder for turning.
     const float ceiling = speed > retained ? std::max(retained, speed - available * 0.5f) : retained;
     Candidate best = Simulate(in, p, velocityYaw, 0, velocityYaw, side);
+    if (available <= 0 || speed <= 0 || maximumTurn <= 0) return best;
     auto consider = [&](float relative, float amount = 1.0f) {
         Candidate c = Simulate(in, p, velocityYaw + side * relative, amount, velocityYaw, side);
         if (c.speed + 0.001f < floor || c.speed > ceiling + 0.001f ||
@@ -46,13 +53,18 @@ Candidate Turn(const StrafeInput& in, const AirPhysics& p, float velocityYaw,
         if (c.turn > best.turn + 0.0000001f ||
             (std::abs(c.turn - best.turn) <= 0.0000001f && c.speed > best.speed)) best = c;
     };
-    // Analytic candidates cover the full-acceleration optimum and exact retained
-    // speed boundary. The small numerical pass also covers cap-clipped cases.
+    // Full-impulse heading extrema, speed boundaries, and the projection-cap
+    // transition are analytical. In the cap-clipped branch heading increases
+    // monotonically over its feasible half-circle, so its speed boundaries
+    // suffice. This bounded set avoids scanning/refining angles per fragment.
     if (available > 0 && speed > 0) {
         const float constantTurn = std::min(maximumTurn, 2 * std::asin(std::clamp(
             std::min(available, 2 * std::min(p.wishSpeedCap, p.wishSpeed)) / (2 * speed), 0.0f, 1.0f)));
         const float constantImpulse = 2 * speed * std::sin(constantTurn / 2);
-        consider(pi / 2 + constantTurn / 2, constantImpulse / available);
+        // Reducing analog amount also reduces wish speed. Keep it high enough
+        // that the engine's wish-speed cap does not clip the intended impulse.
+        consider(pi / 2 + constantTurn / 2, std::max(constantImpulse / available,
+                                                  constantImpulse / (2 * p.wishSpeed)));
         consider(std::acos(std::clamp(-available / speed, -1.0f, 1.0f)));
         consider(std::acos(std::clamp((floor * floor - speed * speed - available * available) /
                                      (2 * speed * available), -1.0f, 1.0f)));
@@ -70,21 +82,38 @@ Candidate Turn(const StrafeInput& in, const AirPhysics& p, float velocityYaw,
             consider(std::acos(-static_cast<float>(std::sqrt(std::clamp(
                 squaredProjection / (static_cast<double>(speed) * speed), 0.0, 1.0)))));
         }
-    }
-    for (int i = 0; i <= 90; ++i) consider(i * pi / 90);
-    float center = side * Wrap(best.angle - velocityYaw), radius = pi / 90;
-    for (int iteration = 0; iteration < 5; ++iteration) {
-        for (int i = -4; i <= 4; ++i) consider(std::clamp(center + i * radius / 4, 0.0f, pi));
-        center = side * Wrap(best.angle - velocityYaw); radius *= 0.25f;
+        // While shedding excess speed, the constant-speed candidate above is
+        // outside the ceiling. Include the finite-angle limit on both retained
+        // speed boundaries using a smaller impulse when the cap permits it.
+        if (floor != speed || ceiling != speed) {
+            const float sine = std::sin(maximumTurn), cosine = std::cos(maximumTurn);
+            for (float boundary : {floor, ceiling}) {
+                const float dx = boundary * cosine - speed, dy = boundary * sine;
+                const float length = std::hypot(dx, dy);
+                if (length > 0 && length <= available) {
+                    const float finalProjection = (boundary * boundary - speed * boundary * cosine) / length;
+                    consider(std::atan2(dy, dx), std::max(length / available,
+                                                        finalProjection / p.wishSpeed));
+                }
+            }
+        }
     }
     return best;
 }
 }
 
+#ifdef CS2_STEERING_BENCHMARK
+// Benchmark-only observability; no counter or API is present in normal builds.
+unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept { return candidateEvaluations; }
+#endif
+
 void ResetAirSteering(SteeringState& state) noexcept { state = {}; }
 
 SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
                               const AirPhysics& p) noexcept {
+#ifdef CS2_STEERING_BENCHMARK
+    candidateEvaluations = 0;
+#endif
     SteeringOutput out{};
     if (!Finite(in.velocityX) || !Finite(in.velocityY) || !Finite(in.viewYaw) ||
         !Finite(in.forward) || !Finite(in.left) || !Finite(p.wishSpeed) ||
@@ -128,7 +157,10 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
         const float dy = target * std::sin(desired) - in.velocityY;
         const float length = std::hypot(dx, dy);
         if (available > 0 && length > 0.00001f && length <= available + 0.00001f) {
-            const Candidate exact = Simulate(in, p, std::atan2(dy, dx), length / available,
+            const float finalProjection = (target * std::cos(desired) * dx +
+                                           target * std::sin(desired) * dy) / length;
+            const Candidate exact = Simulate(in, p, std::atan2(dy, dx),
+                                             std::max(length / available, finalProjection / p.wishSpeed),
                                              velocityYaw, recoverySide);
             if (std::hypot(exact.x - target * std::cos(desired), exact.y - target * std::sin(desired)) < 0.001f)
                 chosen = exact;

@@ -98,6 +98,40 @@ int main() {
     Expect(matrixRecovery, "release converges with low/high speed, friction and 128 FPS durations");
     Expect(matrixValid, "all varied trajectories remain finite and match independent acceleration");
 
+    bool boundaryValid = true, boundarySpeed = true, boundaryRecovery = true, boundaryTurns = true;
+    for (const AirPhysics p : {AirPhysics{250, 3, 100, 1, 0.1f},
+                              AirPhysics{250, 30, 100, 1, 0.1f},
+                              AirPhysics{250, 250, 100, 1, 0.1f},
+                              AirPhysics{250, 30, 12, 1, 0.0001f}}) {
+        for (float speed : {30.0f, 250.0f, 800.0f}) {
+            Trajectory path{}; path.vx = speed;
+            for (int step = 0; step < 64; ++step) {
+                const float previous = std::hypot(path.vx, path.vy);
+                const auto out = path.Step(-1, p);
+                const float current = std::hypot(path.vx, path.vy);
+                const float retained = std::min(p.wishSpeed, std::max(speed, std::min(p.wishSpeedCap, p.wishSpeed)));
+                const bool speedValid = current >= std::min(speed, retained) - 0.01f &&
+                                        current <= std::max(previous, retained) + 0.01f;
+                if (!speedValid) std::printf("boundary detail speed=%g cap=%g dt=%g step=%d previous=%g current=%g\n",
+                    speed, p.wishSpeedCap, p.interval, step, previous, current);
+                boundarySpeed &= speedValid;
+                boundaryValid &= path.valid && path.predictionMatches &&
+                                 out.headingChange <= 0.001f && out.headingChange >= -171.001f;
+            }
+            // A fractional command may only make a very small correction. It
+            // must still point toward the camera without exceeding that error.
+            const float camera = std::atan2(path.vy, path.vx) / radians + 0.02f;
+            boundaryTurns &= path.turn < -0.001f;
+            const auto out = path.Step(0, p, camera);
+            boundaryRecovery &= out.headingChange >= -0.001f && out.headingChange <= 0.021f;
+            boundaryValid &= path.valid && path.predictionMatches;
+        }
+    }
+    Expect(boundaryValid, "cap-clipped impulses and tiny fragments remain finite and match independent acceleration");
+    Expect(boundarySpeed, "large impulses and tiny caps preserve the speed floor and stop growth at the retained target");
+    Expect(boundaryRecovery, "small recovery errors are respected under extreme caps and command durations");
+    Expect(boundaryTurns, "large available impulses still turn when reduced analog input changes the wish-speed cap");
+
     Trajectory back{}; back.Step(-1, normal);
     for (int step = 0; step < 128; ++step) back.Step(0, normal, 90, -1);
     Expect(std::abs(back.vx) < 0.01f && back.vy < -249,
