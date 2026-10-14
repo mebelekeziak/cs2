@@ -10,9 +10,11 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_dx11.h>
 #include "public_menu.h"
 #include <cstdio>
+#include <cwchar>
 
 using Microsoft::WRL::ComPtr;
 
@@ -25,8 +27,19 @@ bool Check(HRESULT result, const char* action) {
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp>\n");
+    if (argc < 2 || argc > 4) {
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World] [scroll pixels]\n");
+        return 1;
+    }
+    wchar_t* end = nullptr;
+    const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
+    if (selectedTab < 0 || selectedTab > 2 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be 0, 1 or 2.\n");
+        return 1;
+    }
+    const long scroll = argc == 4 ? std::wcstol(argv[3], &end, 10) : 0;
+    if (scroll < 0 || scroll > 100000 || (argc == 4 && (end == argv[3] || *end))) {
+        std::fprintf(stderr, "Scroll must be between 0 and 100000 pixels.\n");
         return 1;
     }
     constexpr UINT width = 418, height = 388;
@@ -66,12 +79,22 @@ int wmain(int argc, wchar_t** argv) {
     ID3D11RenderTargetView* view = target.Get();
     context->OMSetRenderTargets(1, &view, nullptr);
     context->ClearRenderTargetView(target.Get(), clear);
-    // Two frames settle the initial child/window geometry, as in the live menu.
-    for (int frame = 0; frame < 2; ++frame) {
+    // Establish the real window first, then select its context-owned category.
+    // Two further frames settle the selected child geometry.
+    for (int frame = 0; frame < 4; ++frame) {
         ImGui_ImplDX11_NewFrame();
         ImGui::NewFrame();
         DrawPublicMenu();
         ImGui::Render();
+        if (frame == 0) {
+            ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
+            if (menu) menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), static_cast<int>(selectedTab));
+        }
+        if (frame == 1 && scroll) {
+            ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
+            if (menu && !menu->DC.ChildWindows.empty())
+                ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll));
+        }
     }
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     context->CopyResource(staging.Get(), texture.Get());

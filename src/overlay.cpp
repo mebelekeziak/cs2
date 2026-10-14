@@ -23,6 +23,10 @@
 #include "esp_draw.h"
 #include "player_reader.h"
 #include "movement.h"
+#include "world_settings.h"
+#include "world_postprocess.h"
+#include "world_sky.h"
+#include "world_materials.h"
 #if !CS2_DIAGNOSTIC_UI
 #include "public_menu.h"
 #endif
@@ -103,7 +107,7 @@ void FlushLog() {
     ReleaseSRWLockExclusive(&logLock);
 }
 
-void EspLog(const char* message) { Log("%s", message); }
+void EspLog(const char* message) noexcept { Log("%s", message); }
 
 bool OpenLog(const wchar_t* suppliedPath) {
     // The remote caller owns the allocation until OverlayStart's thread exits.
@@ -195,6 +199,7 @@ struct ScopedImGuiContext {
 
 void ReleaseRendererOnOwner(const char* reason) {
     PlayerReaderInvalidate(reason);
+    WorldPostprocessRelease();
 #if !CS2_DIAGNOSTIC_UI
     menuMouseActive = false;
     menuMouseArmed = false;
@@ -216,6 +221,8 @@ void ReleaseRendererOnOwner(const char* reason) {
 
 void CleanupOnRenderThread(const char* reason) {
     MovementStop(reason);
+    WorldSkyStop(reason);
+    WorldMaterialsStop(reason);
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
     Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
@@ -380,6 +387,8 @@ void PollMenuMouse(bool foreground) {
 
 void DrawFrame(IDXGISwapChain* chain) {
     MovementFlushTelemetry();
+    WorldSkyFlushTelemetry();
+    WorldMaterialsFlushTelemetry();
     ScopedImGuiContext scopedContext;
     if (deviceObjectsDirty) {
         ImGui_ImplDX11_InvalidateDeviceObjects();
@@ -429,6 +438,9 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Frame: %llu", static_cast<unsigned long long>(frameCount + 1));
         ImGui::Text("Reader: %s", PlayerReaderStatus());
         ImGui::Text("Movement: %s", MovementStatus());
+        ImGui::Text("Sky: %s", WorldSkyStatus());
+        ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
+        ImGui::Text("Screen color: %s", WorldPostprocessStatus());
         ImGui::Text("Players: %zu | drawing: %zu | matrix: %s", players.playerCount,
             espStats.drawn, players.matrixValid ? "valid" : "unavailable");
         const auto& settings = EspGetSettings();
@@ -447,6 +459,13 @@ void DrawFrame(IDXGISwapChain* chain) {
 #endif
     ImGui::Render();
     PlayerReaderReportDraw(espStats, espVertices, ImGui::GetDrawData()->TotalVtxCount, io.DisplaySize.x, io.DisplaySize.y);
+    // The game image (including its HUD) is graded before our ESP/menu draw.
+    const auto world = WorldGetSettings();
+    if (WorldPostprocessIsActive(world)) {
+        ComPtr<ID3D11Texture2D> backbuffer;
+        if (SUCCEEDED(chain->GetBuffer(0, IID_PPV_ARGS(&backbuffer))))
+            WorldPostprocessRender(device.Get(), context.Get(), backbuffer.Get(), renderTarget.Get(), world);
+    } else WorldPostprocessRender(device.Get(), context.Get(), nullptr, renderTarget.Get(), world);
     if (ImGui::GetDrawData()->TotalVtxCount > 0) {
         SupplementalState state(context.Get(), device->GetFeatureLevel());
         ID3D11RenderTargetView* target = renderTarget.Get();
@@ -517,6 +536,8 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             }
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
             MovementStop("stopped before selecting render chain");
+            WorldSkyStop("stopped before selecting render chain");
+            WorldMaterialsStop("stopped before selecting render chain");
             stopped.store(true);
             Log("STOPPED_RESIDENT before selecting a real chain; hooks/DLL retained.");
             FlushLog();
@@ -554,6 +575,7 @@ HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* chain, UINT count, UINT wid
         if (chain == selectedChain) {
             // COM resource Release is thread-safe. ImGui/context work is deferred to the owning Present thread.
             renderTarget.Reset();
+            WorldPostprocessRelease();
             deviceObjectsDirty = true;
             Log("ResizeBuffers begin requested=%ux%u buffers=%u format=%u render_tid=%lu", width, height, count, format, renderThread);
         }
@@ -578,6 +600,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     EspSetLogCallback(&EspLog);
     PlayerReaderSetLogCallback(&EspLog);
     MovementSetLogCallback(&EspLog);
+    WorldPostprocessSetLogCallback(&EspLog);
     callbackTls = TlsAlloc();
     if (callbackTls == TLS_OUT_OF_INDEXES) { Log("Dynamic TLS allocation failed=%lu", GetLastError()); startState.store(-1); return 7; }
     void* present = nullptr;
@@ -590,16 +613,22 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
+    const bool skyPrepared = WorldSkyPrepare(&EspLog);
+    const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     status = MH_QueueEnableHook(present);
     if (status == MH_OK) status = MH_QueueEnableHook(resize);
     if (status == MH_OK) status = MH_ApplyQueued();
     if (status != MH_OK) {
         MovementStop("partial hook activation failure");
+        WorldSkyStop("partial hook activation failure");
+        WorldMaterialsStop("partial hook activation failure");
         stopRequested.store(true);
         Log("Hook activation failed=%s; stop requested; retain all code/trampolines (partial activation possible)", MH_StatusToString(status));
         startState.store(-1); return 6;
     }
     if (movementPrepared) MovementActivate();
+    if (skyPrepared) WorldSkyActivate();
+    if (materialsPrepared) WorldMaterialsActivate();
     startState.store(2);
     Log("HOOKS_INSTALLED; waiting for an observed real D3D11 Present. Discovery alone does not confirm game rendering.");
     return 0;
@@ -608,6 +637,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
     MovementStop("explicit overlay stop request");
+    WorldSkyStop("explicit overlay stop request");
+    WorldMaterialsStop("explicit overlay stop request");
     Log("STOP_REQUESTED; cleanup needs next Present on original render thread. No thread forced/physical unload.");
     return stopped.load(std::memory_order_acquire) ? 0 : 1;
 }

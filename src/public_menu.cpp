@@ -1,6 +1,7 @@
 #include "public_menu.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
+#include "world_settings.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -128,7 +129,7 @@ void DrawPublicMenu() {
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
         int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
         const float tabWidth = std::min(100.0f, std::max(1.0f,
-            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f));
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3));
         const auto tab = [&](const char* label, int index) {
             const bool selected = selectedTab == index;
             ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{ 0.12f, 0.18f, 0.23f, 1 }
@@ -143,6 +144,8 @@ void DrawPublicMenu() {
         tab("Visuals", 0);
         ImGui::SameLine();
         tab("Movement", 1);
+        ImGui::SameLine();
+        tab("World", 2);
         ImGui::GetStateStorage()->SetInt(tabId, selectedTab);
         ImGui::Separator();
 
@@ -165,7 +168,7 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (changed) EspSetSettings(settings);
-        } else {
+        } else if (selectedTab == 1) {
             MovementSettings settings = MovementGetSettings();
             bool changed = false;
             if (ImGui::BeginChild("##MovementSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
@@ -178,6 +181,65 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (changed) MovementSetSettings(settings);
+        } else {
+            WorldSettings settings = WorldGetSettings();
+            bool changed = false;
+            bool reset = false;
+            if (ImGui::BeginChild("##WorldSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                ImGui::TextUnformatted("Sky");
+                changed |= FeatureCheckbox("Override sky", settings.skyEnabled);
+                ImGui::BeginDisabled(!settings.skyEnabled);
+                ImGui::TextUnformatted("Sky tint");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##SkyTint", settings.skyTint, ImGuiColorEditFlags_NoInputs);
+                ImGui::TextUnformatted("Sky lighting tint");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##SkyLightingTint", settings.skyLightingTint, ImGuiColorEditFlags_NoInputs);
+                ImGui::TextUnformatted("Sky brightness");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderFloat("##SkyBrightness", &settings.skyBrightness, 0, 4, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::TextUnformatted("World surfaces");
+                changed |= FeatureCheckbox("World material override", settings.worldMaterialEnabled);
+                ImGui::BeginDisabled(!settings.worldMaterialEnabled);
+                ImGui::TextUnformatted("Surface tint");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##SurfaceTint", settings.worldTint, ImGuiColorEditFlags_NoInputs);
+                changed |= FeatureCheckbox("Flat world textures", settings.flatTextures);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("Replaces surface textures with a built-in flat material.");
+                ImGui::PopStyleColor();
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::TextUnformatted("Screen color");
+                changed |= FeatureCheckbox("Enable color grading", settings.enabled);
+                ImGui::TextDisabled("Also affects the game HUD.");
+                ImGui::BeginDisabled(!settings.enabled);
+                const auto slider = [&](const char* label, float& value, float minimum, float maximum, const char* format = "%.2f") {
+                    ImGui::TextUnformatted(label);
+                    ImGui::PushID(label);
+                    ImGui::SetNextItemWidth(-1);
+                    const bool edited = ImGui::SliderFloat("##Value", &value, minimum, maximum, format);
+                    ImGui::PopID();
+                    return edited;
+                };
+                changed |= slider("Exposure", settings.exposureEv, -3, 3, "%.2f EV");
+                changed |= slider("Contrast", settings.contrast, 0.5f, 1.5f);
+                changed |= slider("Saturation", settings.saturation, 0, 2);
+                changed |= slider("Gamma", settings.gamma, 0.5f, 2);
+                ImGui::TextUnformatted("Color tint");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##ColorTint", settings.tint, ImGuiColorEditFlags_NoInputs);
+                changed |= slider("Vignette", settings.vignette, 0, 1);
+                changed |= slider("Sharpening", settings.sharpening, 0, 1);
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                reset = ImGui::Button("Reset world visuals", { -1, 0 });
+            }
+            ImGui::EndChild();
+            if (reset) WorldResetSettings();
+            else if (changed) WorldSetSettings(settings);
         }
         ImGui::TextDisabled("Insert  Menu    End  Stop");
     }
