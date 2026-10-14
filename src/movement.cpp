@@ -56,10 +56,11 @@ struct Request {
     bool strafe = false, jumpEdge = false, edgeReported = false;
 };
 std::array<Request, 256> requests{};
+constexpr std::size_t ownedEventCount = MovementReplayEventCount;
 struct ReplayCache {
     MovementReplayContext context{};
     MovementReplayPlan plan{};
-    std::array<MovementReplayStep, 2> events{}; // Analog then jump.
+    std::array<MovementReplayStep, ownedEventCount> events{}; // Timed analog slices, then jump.
     // Steering refresh uses the command's original inputs, never the velocity
     // already changed by predicting its previous output.
     MovementReplaySteeringStart steeringStart{};
@@ -240,7 +241,7 @@ bool ReadJumpRules(const Pawn& pawn, JumpInput& input, float& interval, float& p
     return true;
 }
 
-// Existing command messages are borrowed; additional time-zero transitions use
+// Existing command messages are borrowed; additional timed transitions use
 // the verified game arena/container APIs. Original event order is preserved.
 struct Edit {
     std::uintptr_t address = 0;
@@ -257,7 +258,9 @@ struct Patch {
     int originalSize = 0;
     std::array<std::uintptr_t, 128> originalOrder{};
     bool orderCaptured = false;
-    std::array<int, 2> ownedIndices{-1, -1};
+    std::array<int, ownedEventCount> ownedIndices = [] {
+        std::array<int, ownedEventCount> indices{}; indices.fill(-1); return indices;
+    }();
 };
 bool Apply(const Patch& patch) noexcept {
     // Keep SEH in a function without C++ unwinding objects. The command callback
@@ -293,6 +296,7 @@ bool PrepareSteps(Patch& patch, const ReplayCache* saved = nullptr) noexcept {
     if (rep && (!Read(rep, allocated) || allocated < patch.size || allocated > capacity)) return false;
     if (!rep && (patch.size || capacity)) return false;
     if (!patch.size) return true;
+    float previousOriginalWhen = -1;
     for (int i = 0; i < patch.size; ++i) {
         auto& step = patch.steps[static_cast<std::size_t>(i)];
         if (!Read(rep + 8 + static_cast<std::uintptr_t>(i) * 8, step.address) || !step.address ||
@@ -307,7 +311,13 @@ bool PrepareSteps(Patch& patch, const ReplayCache* saved = nullptr) noexcept {
                 }
             }
         }
-        if (!owned) MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
+        if (!owned) {
+            // Reject malformed physical timing before any arena append or
+            // pointer-order mutation; do not reorder the user's actions.
+            if (step.value.when < previousOriginalWhen) return false;
+            previousOriginalWhen = step.value.when;
+            MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
+        }
     }
     return true;
 }
@@ -336,32 +346,37 @@ bool AppendStep(Patch& patch, const MovementSubtick& value) noexcept {
     if (patch.size >= static_cast<int>(patch.steps.size())) return false;
     auto& edit = patch.steps[static_cast<std::size_t>(patch.size)];
     edit.address = BorrowSubtick(patch.base);
-    if (!edit.address || !Read(edit.address, edit.value) ||
+    if (!edit.address) return false;
+    // Track the borrowed slot even when a later preflight fails, so rollback
+    // clears its payload before returning it to the inactive arena pool.
+    ++patch.size;
+    if (!Read(edit.address, edit.value) ||
         !Writable(edit.address + 0x10, sizeof(MovementSubtick) - 0x10)) return false;
     const auto vtable = edit.value.vtable, arena = edit.value.arena;
     const auto cachedSize = edit.value.cachedSize;
     edit.value = value;
     edit.value.vtable = vtable; edit.value.arena = arena; edit.value.cachedSize = cachedSize;
-    ++patch.size;
     return true;
 }
+bool HasOwnedEvents(const Patch& patch) noexcept {
+    return std::any_of(patch.ownedIndices.begin(), patch.ownedIndices.end(), [](int index) { return index >= 0; });
+}
 bool FinishStepOrder(const Patch& patch) noexcept {
-    if (patch.size == patch.originalSize && patch.ownedIndices[0] < 0 && patch.ownedIndices[1] < 0) return true;
+    if (patch.size == patch.originalSize && !HasOwnedEvents(patch)) return true;
     std::uintptr_t rep = 0;
     std::array<std::uintptr_t, 128> pointers{}, ordered{};
     if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
         !Copy(rep + 8, pointers.data(), static_cast<std::size_t>(patch.size) * 8) ||
         !Writable(rep + 8, static_cast<std::size_t>(patch.size) * 8)) return false;
-    // Place generated time-zero events first; preserve the original event order
-    // and keep every owned pointer in the container exactly once.
-    int written = 0;
-    for (int index : patch.ownedIndices) {
-        if (index >= 0) ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(index)];
-    }
+    std::array<MovementSubtickOrderEntry, 128> entries{};
     for (int i = 0; i < patch.size; ++i) {
-        if (i != patch.ownedIndices[0] && i != patch.ownedIndices[1])
-            ordered[static_cast<std::size_t>(written++)] = pointers[static_cast<std::size_t>(i)];
+        const auto index = static_cast<std::size_t>(i);
+        if (pointers[index] != patch.steps[index].address) return false;
+        const bool owned = std::find(patch.ownedIndices.begin(), patch.ownedIndices.end(), i) != patch.ownedIndices.end();
+        entries[index] = {pointers[index], patch.steps[index].value.when, owned};
     }
+    if (!MovementOrderSubticks(std::span(entries.data(), static_cast<std::size_t>(patch.size)),
+            std::span(ordered.data(), static_cast<std::size_t>(patch.size)))) return false;
     __try {
         std::memcpy(reinterpret_cast<void*>(rep + 8), ordered.data(), static_cast<std::size_t>(patch.size) * 8);
         return true;
@@ -387,7 +402,7 @@ void RollbackSteps(const Patch& patch) noexcept {
     __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 bool CaptureStepOrder(Patch& patch) noexcept {
-    if (patch.size == patch.originalSize && patch.ownedIndices[0] < 0 && patch.ownedIndices[1] < 0) return true;
+    if (patch.size == patch.originalSize && !HasOwnedEvents(patch)) return true;
     std::uintptr_t rep = 0;
     if (!Read(patch.base + off::base::SubtickRep, rep) || !rep ||
         !Copy(rep + 8, patch.originalOrder.data(), static_cast<std::size_t>(patch.size) * 8) ||
@@ -427,11 +442,19 @@ bool PutOwnedEvent(Patch& patch, unsigned event, const MovementSubtick& value) n
     }
     return true;
 }
-void RetireOwnedEvent(Patch& patch, unsigned event) noexcept {
-    if (patch.ownedIndices[event] >= 0) {
-        MovementSubtick neutral{}; neutral.presence = 4; // Retain only time zero.
-        PutOwnedEvent(patch, event, neutral);
+bool PutOwnedTransitions(Patch& patch, const MovementReplayPlan& plan,
+                         float historicalForward, float historicalLeft) noexcept {
+    std::array<MovementSubtick, ownedEventCount> events{};
+    std::array<bool, ownedEventCount> active{};
+    unsigned missing = 0;
+    for (std::size_t index = 0; index < events.size(); ++index) {
+        if (!MovementReplayTransition(plan, index, historicalForward, historicalLeft, events[index], active[index])) return false;
+        missing += active[index] && patch.ownedIndices[index] < 0;
     }
+    if (static_cast<std::size_t>(patch.size) + missing > patch.steps.size()) return false;
+    for (unsigned index = 0; index < events.size(); ++index)
+        if ((active[index] || patch.ownedIndices[index] >= 0) && !PutOwnedEvent(patch, index, events[index])) return false;
+    return true;
 }
 bool ReadHistory(const Pawn& pawn, const Patch& patch, float& forward, float& left) noexcept {
     MovementButtons buttons{};
@@ -482,11 +505,9 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
         ++rejected; State("rebuild historical input unavailable"); return;
     }
     MarkStage(Stage::History);
-    const unsigned retained = static_cast<unsigned>(patch.ownedIndices[0] >= 0) +
-                              static_cast<unsigned>(patch.ownedIndices[1] >= 0);
-    if ((patch.strafe && !PutOwnedEvent(patch, 0,
-            MovementAnalogTransition(plan.forward, plan.left, historicalForward, historicalLeft))) ||
-        (plan.jumpEdge && !PutOwnedEvent(patch, 1, MovementJumpTransition(plan.jumpDown)))) {
+    const unsigned retained = static_cast<unsigned>(std::count_if(patch.ownedIndices.begin(), patch.ownedIndices.end(),
+        [](int index) { return index >= 0; }));
+    if (!PutOwnedTransitions(patch, plan, historicalForward, historicalLeft)) {
         RollbackSteps(patch); ++rejected; State("could not restore owned rebuild transition"); return;
     }
     if (!SamePawn(pawn)) { RollbackSteps(patch); ++rejected; State("rebuild pawn changed during preparation"); return; }
@@ -512,7 +533,7 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
     const auto now = GetTickCount64();
     if (!lastReplayReport || now - lastReplayReport >= 2000) {
         lastReplayReport = now;
-        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu steering_refresh=%u steering_refreshes=%llu physical=%.1f,%.1f held=0x%x yaw=%.3f predicted_valid=%u predicted_speed=%.3f; jump retained, changed steering uses frozen command-start state",
+        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu steering_refresh=%u steering_refreshes=%llu physical=%.1f,%.1f held=0x%x yaw=%.3f predicted_valid=%u predicted_speed=%.3f slices=%zu; jump retained, changed steering uses frozen command-start state",
             context.sequence, context.simulationTick, repaired, plan.jumpEdge, plan.jumpDown, retained, restored,
             patch.originalSize, patch.size, incoming.down, incoming.changed, incoming.third,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, historicalForward, historicalLeft,
@@ -520,7 +541,7 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
             refresh.refreshed, replaySteeringRefreshes, context.intent.forward, context.intent.left,
             static_cast<unsigned>(context.intent.heldMask), context.intent.viewYaw,
             refresh.refreshed && refresh.steering.valid,
-            std::hypot(refresh.steering.predictedVelocityX, refresh.steering.predictedVelocityY));
+            std::hypot(refresh.steering.predictedVelocityX, refresh.steering.predictedVelocityY), MovementReplayAnalogCount(plan));
     }
 }
 
@@ -660,6 +681,7 @@ void Process(void* input, void* commandPointer) noexcept {
         }
     }
     SteeringOutput strafe{};
+    SteeringCommand strafeCommand{};
     MarkStage(Stage::Jump);
     SteeringState nextSteeringState = steeringState;
     const SteeringState initialSteeringState = steeringState;
@@ -678,8 +700,8 @@ void Process(void* input, void* commandPointer) noexcept {
     const StrafeInput initialSteeringInput{pawn.velocity[0], pawn.velocity[1], yaw,
         intent.forward, intent.left, static_cast<std::uint32_t>(sequence)};
     if (airSteeringAvailable) {
-        strafe = PlanAirSteering(nextSteeringState, {pawn.velocity[0], pawn.velocity[1], yaw,
-                                  intent.forward, intent.left, static_cast<std::uint32_t>(sequence)}, physics);
+        strafeCommand = PlanAirSteeringCommand(nextSteeringState, initialSteeringInput, physics);
+        strafe = strafeCommand.summary;
         MarkStage(Stage::Solver);
         if (strafe.valid) {
             patch.strafe = true; patch.forward = strafe.forward; patch.left = strafe.left;
@@ -704,6 +726,13 @@ void Process(void* input, void* commandPointer) noexcept {
         MovementEncodeStrafe(patch.buttons, patch.forward, patch.left, previousDirections);
     }
     if (!patch.jump && !patch.strafe) { State("movement physics unavailable"); return; }
+    MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
+                           jump.down, patch.forward, patch.left, patch.buttons};
+    if (patch.strafe) {
+        plan = strafeCommand.valid ? MovementRefreshReplaySteeringCommand(plan, strafeCommand, initialDirections) :
+            MovementRefreshReplaySteering(plan, patch.forward, patch.left, initialDirections);
+        patch.buttons = plan.buttons;
+    }
     patch.commandPresence |= 1;
     if (!PrepareSteps(patch, sameRebuiltSource ? &rebuilt : nullptr) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
     MarkStage(Stage::Subticks);
@@ -712,18 +741,9 @@ void Process(void* input, void* commandPointer) noexcept {
         ++rejected; State("historical command input unavailable"); return;
     }
     MarkStage(Stage::History);
-    if (patch.strafe) {
-        const auto transition = MovementAnalogTransition(patch.forward, patch.left, historicalForward, historicalLeft);
-        if (!PutOwnedEvent(patch, 0, transition)) {
-            RollbackSteps(patch); ++rejected; State("could not append owned analog transition"); return;
-        }
-    } else RetireOwnedEvent(patch, 0);
-    if (patch.jump && (jump.fresh || jump.released)) {
-        const auto transition = MovementJumpTransition(jump.down);
-        if (!PutOwnedEvent(patch, 1, transition)) {
-            RollbackSteps(patch); ++rejected; State("could not append owned jump transition"); return;
-        }
-    } else RetireOwnedEvent(patch, 1);
+    if (!PutOwnedTransitions(patch, plan, historicalForward, historicalLeft)) {
+        RollbackSteps(patch); ++rejected; State("could not prepare owned timed transitions"); return;
+    }
     if (!SamePawn(pawn)) { RollbackSteps(patch); ++rejected; State("pawn changed during command preparation"); return; }
     MarkStage(Stage::Append);
     if (!CaptureStepOrder(patch) || !FinishStepOrder(patch)) {
@@ -735,8 +755,6 @@ void Process(void* input, void* commandPointer) noexcept {
     }
     MarkStage(Stage::Apply);
     lastSequence = sequence; lastTick = tick;
-    const MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
-                                  jump.down, patch.forward, patch.left, patch.buttons};
     RememberReplay(patch, context, plan);
     replay.steeringStart = {airSteeringAvailable, initialSteeringInput, initialSteeringState, physics, initialDirections};
     strafeControlled = strafe.valid;
@@ -761,7 +779,7 @@ void Process(void* input, void* commandPointer) noexcept {
         lastReport = now;
         std::uint8_t precision = 0;
         const bool rules = Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::JumpPrecision, precision);
-        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u target_heading=%.3f predicted_valid=%u predicted_speed=%.3f air_handoff=%u",
+        Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u target_heading=%.3f predicted_valid=%u predicted_speed=%.3f air_handoff=%u slices=%zu",
             sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], jump.down, jump.fresh,
             patch.strafe, patch.forward, patch.left, intent.forward, intent.left, yaw, strafe.wishYaw, strafe.accelerationStep,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, patch.size, callbacks, modified, presses, strafes, rejected,
@@ -769,7 +787,7 @@ void Process(void* input, void* commandPointer) noexcept {
             penalty, autoBhop, precision, rules, historicalForward, historicalLeft, static_cast<unsigned>(strafe.mode),
             strafe.headingError, strafe.headingChange, jumpRulesValid, jump.valid,
             std::remainder(yaw + std::atan2(intent.left, intent.forward) * 57.295779513f, 360.0f),
-            strafe.valid, std::hypot(strafe.predictedVelocityX, strafe.predictedVelocityY), airHandoff);
+            strafe.valid, std::hypot(strafe.predictedVelocityX, strafe.predictedVelocityY), airHandoff, MovementReplayAnalogCount(plan));
     }
 }
 void HookFinalize(void* input, void* command) noexcept {
@@ -890,7 +908,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=7 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=time_zero");
+    Log("MOVE_IMPLEMENTATION revision=8 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=timed8");
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

@@ -362,3 +362,86 @@ Preserving gain cannot provide arbitrary turn rate at arbitrary speed. These
 results are model comparisons, not client/server observations. Fractional
 prediction, collisions, ground rules and exact substep modifiers remain the
 limitations described above; the user must verify revision 7 in offline play.
+
+## Revision 8: unrestricted capture and actual timed direction changes
+
+Revision 7 is preserved in commit `4f0a1aa`. The user's subsequent offline test
+in `logs/overlay-18352-134363851916287038.log` reports better control but timid
+low-speed movement, weak acceleration and slow reversals. The log confirms
+cap 30, acceleration 12, dt 1/64, mostly friction 1, and effective speed 240/250.
+All 19 active sampled plans request unit analog magnitude and predict positive
+gain; several copied flight observations nevertheless lose speed. These snapshots
+do not distinguish collisions, fractional modifiers and prediction correction.
+All 11 recorded ingestion mismatches occur at/after Space release, so they do not
+establish an active-assistance command ingestion failure. Air callback means
+remain in the tens of microseconds, rather than earlier millisecond stalls.
+
+The old half-gain policy deliberately excluded the fastest capture impulse.
+For speed `S` and available impulse `0<A<S`, the tangent projection `q=-A`
+maximizes one-fragment heading change: `asin(A/S)`, with retained speed
+`sqrt(S*S-A*A)`. This can sacrifice substantial speed near low `S`. Revision 8
+uses that direction for large forward-half-plane corrections, with bounded
+projection bisection for reachable intermediate angles. Behind-velocity intent
+instead spends the full permitted impulse toward the desired axis, canceling
+old momentum rather than following a wide reversal orbit. At zero speed, normal
+desired-direction acceleration resumes. Exact opposite requests do not depend
+on the unstable sign of wrapped +/-180-degree error.
+
+Static air-acceleration evidence (`logs/physics-investigation/air-accelerate.txt`)
+shows the half-step split applies part of one capped impulse and defers its
+remaining part to the accumulator at move-data+0x114. The recombination therefore
+still produces `min(A,max(0,C-q))` for one held wish direction; subdividing time
+without changing direction does not increase gain. The new command planner
+recalculates direction eight times against its predicted intermediate velocity.
+Each fragment uses `dt/8`, and its actual added speed is bounded by that fragment's
+available acceleration. No fragment is given a full tick's budget.
+
+Runtime emits eight analog events at normalized `when=0,1/8,...,7/8`; the final
+sentinel completes the last slice. The already verified event decoder and runner
+use `when` to integrate before consuming the next event. The first delta is from
+fresh historical axes; subsequent deltas are from the preceding generated axes.
+Only the last axes are written to final base/native fields. A separate jump event
+retains its existing time-zero behavior. No new engine hook, layout, signature,
+cvar write or camera/model-angle mutation is introduced.
+
+Exact pointer/payload ownership expands to eight analog slots plus jump. All
+transitions and capacity are checked before appending; owned payloads are reused
+on rebuild. Changed intent replans from the frozen original velocity/physics/state
+for that command, while stable intent reuses the complete plan and both preserve
+the selected jump edge. Ground/release handoff writes one physical-axis event and
+neutralizes the remaining owned events. Original camera/action events retain
+their relative order, including equal-time actions. A bounded stable merge places
+generated times into that stream; nonmonotone original times are rejected before
+new arena allocations. Failure restores pointer order and clears borrowed slots.
+
+The comparison harness under `logs/revision8-comparison/` compiles the actual
+`4f0a1aa` solver beside revision 8 and independently integrates emitted analogs
+over their real modeled durations. Under synthetic wish speed 250, cap 30,
+acceleration 12, friction 1 and dt 1/64:
+
+| Scenario | Revision 7 | Revision 8 |
+| --- | --- | --- |
+| Speed-250 W-to-S capture within 5 degrees | 17 commands / 266ms | 6 commands / 94ms |
+| Speed-30 W-to-S capture within 5 degrees | 32 commands | 1 command |
+| Held W from speed 250, 128 commands | 421.543 speed | 593.662 speed |
+| Diagonal circle at 90 degrees/sec, final speed / max lag | 421.113 / 5.569 degrees | 572.958 / 1.261 degrees |
+| Diagonal circle at 500 degrees/sec, final speed / max lag | 377.992 / 20.074 degrees | 318.075 / 1.172 degrees |
+
+The fast-circle speed reduction is an intentional direction-capture tradeoff.
+The table is model output; the engine can subdivide our fragments further at
+original camera/action times. Exact per-substep camera, duck/walk/fire modifiers,
+collision response and prediction correction are not mirrored. The revision
+requires a fresh offline test to establish actual gain and user-perceived control.
+
+Both public and diagnostic x64 Release builds pass all ten CTest suites (29
+steering checks and 49 replay checks). The timed independent integrator confirms
+that eight fragments share one command's acceleration budget. At initial speed
+250, the first command's squared-speed gain is 2268.238 versus 900 for one held
+wish direction, within the unconstrained eight-fragment ceiling of 2537.842.
+Tests also cover dense maximum-turn comparison, low-speed capture/recovery,
+direct reversal, exact zero-velocity stop/restart, timestamp merge preservation,
+lost/reused pool entries and 10,000 same-command rebuilds without growing beyond
+eight analog messages plus the jump edge. The exact-stop regression exposed
+float-overload `atan2` roundoff at pi; desired/velocity angle calculations now
+use double inputs and zero velocity does not advertise an attained heading.
+The installed-binary verifier passes with the existing layouts and bytes.

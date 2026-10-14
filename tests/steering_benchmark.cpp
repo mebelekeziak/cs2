@@ -1,13 +1,15 @@
 #include "movement_steering.h"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
 #ifdef CS2_STEERING_BENCHMARK
 unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept;
+unsigned int SteeringCommandEvaluationsForBenchmark() noexcept;
 #endif
 
-// Deterministic input corpus: ordinary commands, fractional fragments, weak
-// acceleration, and projection-clipped impulses. No live game timing claim.
+// One shared deterministic corpus covers single-fragment and complete timed
+// command costs. Elapsed time is reported without hardware-dependent thresholds.
 int main() {
     constexpr std::array<AirPhysics, 8> physics{{
         {250, 30, 12, 1, 1.0f / 64}, {250, 30, 12, 0.2f, 0.004f},
@@ -15,37 +17,56 @@ int main() {
         {250, 250, 0.01f, 1, 0.0001f}, {250, 30, 0, 1, 1.0f / 64},
         {250, 250, 100, 1, 0.1f}, {250, 30, 12, 2, 1.0f / 64}
     }};
-    constexpr int commands = 300000;
-    unsigned int maximumEvaluations = 0;
-    for (int trial = 0; trial < 5; ++trial) {
-        SteeringState state{};
-        double checksum = 0;
-        const auto start = std::chrono::steady_clock::now();
-        for (int i = 0; i < commands; ++i) {
-            const float speed = (i % 3 == 0) ? 30.0f : (i % 3 == 1 ? 250.0f : 800.0f);
-            const auto out = PlanAirSteering(state,
-                {speed, static_cast<float>(i % 7 - 3), static_cast<float>(i % 360 - 180),
-                 i % 3 == 0 ? 1.0f : (i % 3 == 1 ? -1.0f : 0.0f),
-                 i % 4 == 0 ? 0.0f : (i % 4 == 1 ? 1.0f : -1.0f),
-                 static_cast<std::uint32_t>(i + 1)}, physics[i % physics.size()]);
-            checksum += out.predictedVelocityX + out.predictedVelocityY + out.forward + out.left;
+    constexpr int commands = 100000;
+    unsigned int maximumFragmentEvaluations = 0, maximumCommandEvaluations = 0;
+    bool validCounts = true;
+    for (bool whole : {false, true}) {
+        for (int trial = 0; trial < 5; ++trial) {
+            SteeringState state{};
+            double checksum = 0;
+            const auto start = std::chrono::steady_clock::now();
+            for (int i = 0; i < commands; ++i) {
+                const float speed = i % 5 == 0 ? 10.0f : (i % 5 == 1 ? 30.0f : (i % 5 == 2 ? 80.0f : (i % 5 == 3 ? 250.0f : 800.0f)));
+                const StrafeInput input{
+                    speed, static_cast<float>(i % 7 - 3), static_cast<float>(i % 360 - 180),
+                    i % 3 == 0 ? 1.0f : (i % 3 == 1 ? -1.0f : 0.0f),
+                    i % 4 == 0 ? 0.0f : (i % 4 == 1 ? 1.0f : -1.0f),
+                    static_cast<std::uint32_t>(i + 1)};
+                const bool hasIntent = input.forward != 0 || input.left != 0;
+                SteeringOutput output{};
+                if (whole) {
+                    const auto command = PlanAirSteeringCommand(state, input, physics[i % physics.size()]);
+                    validCounts &= hasIntent ? command.valid && command.count == AirSteeringSliceCount : !command.valid && !command.count;
+                    output = command.summary;
 #ifdef CS2_STEERING_BENCHMARK
-            const unsigned int count = SteeringCandidateEvaluationsForBenchmark();
-            if (count > maximumEvaluations) maximumEvaluations = count;
+                    const unsigned int count = SteeringCommandEvaluationsForBenchmark();
+                    maximumCommandEvaluations = std::max(maximumCommandEvaluations, count);
+                    validCounts &= hasIntent ? count == AirSteeringSliceCount : count == 0;
 #endif
+                } else {
+                    output = PlanAirSteering(state, input, physics[i % physics.size()]);
+#ifdef CS2_STEERING_BENCHMARK
+                    const unsigned int count = SteeringCandidateEvaluationsForBenchmark();
+                    maximumFragmentEvaluations = std::max(maximumFragmentEvaluations, count);
+                    validCounts &= hasIntent ? count == 1 : count == 0;
+#endif
+                }
+                checksum += output.predictedVelocityX + output.predictedVelocityY + output.forward + output.left;
+            }
+            const double microseconds = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+            std::printf("path=%s trial=%d commands=%d us_per_command=%.6f checksum=%.9f\n",
+                        whole ? "timed_eight_fragment_command" : "single_fragment", trial + 1,
+                        commands, microseconds / commands, checksum);
         }
-        const double microseconds = std::chrono::duration<double, std::micro>(
-            std::chrono::steady_clock::now() - start).count();
-        std::printf("trial=%d commands=%d us_per_command=%.6f checksum=%.9f\n",
-            trial + 1, commands, microseconds / commands, checksum);
     }
 #ifdef CS2_STEERING_BENCHMARK
-    // The cost bound is deterministic; elapsed time is reported without flaky
-    // hardware/load-dependent pass thresholds. Projection refinement has a
-    // separate fixed scalar bound; full candidate simulation remains <=2.
-    std::printf("maximum_candidate_evaluations=%u bound=2\n", maximumEvaluations);
-    return maximumEvaluations > 2 ? 1 : 0;
+    // The whole-command accessor aggregates all fragment simulations. The
+    // singular accessor resets per fragment and cannot establish this bound.
+    std::printf("maximum_fragment_candidate_evaluations=%u bound=1 maximum_command_candidate_evaluations=%u bound=%zu exact_counts=%s\n",
+                maximumFragmentEvaluations, maximumCommandEvaluations, AirSteeringSliceCount, validCounts ? "pass" : "fail");
+    return !validCounts || maximumFragmentEvaluations > 1 || maximumCommandEvaluations > AirSteeringSliceCount ? 1 : 0;
 #else
-    (void)maximumEvaluations;
+    (void)maximumFragmentEvaluations; (void)maximumCommandEvaluations;
+    return validCounts ? 0 : 1;
 #endif
 }

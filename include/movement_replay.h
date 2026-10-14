@@ -82,14 +82,59 @@ struct MovementReplayPlan {
     bool jump = false, strafe = false, jumpEdge = false, jumpDown = false;
     float forward = 0, left = 0;
     MovementButtons buttons{};
+    struct Analog { float forward = 0, left = 0, when = 0; };
+    std::size_t analogCount = 0;
+    std::array<Analog, AirSteeringSliceCount> analogs{};
 };
 inline MovementReplayPlan MovementRefreshReplaySteering(MovementReplayPlan plan,
     float forward, float left, std::uint64_t previousDirections) noexcept {
     // Zero axes are also owned: a release must replace historical assisted
     // axes before integration, rather than only changing the final base value.
     plan.strafe = true; plan.forward = forward; plan.left = left;
+    plan.analogCount = 1; plan.analogs = {}; plan.analogs[0] = {forward, left, 0};
     MovementEncodeStrafe(plan.buttons, forward, left, previousDirections);
     return plan;
+}
+inline MovementReplayPlan MovementRefreshReplaySteeringCommand(MovementReplayPlan plan,
+    const SteeringCommand& command, std::uint64_t previousDirections) noexcept {
+    plan = MovementRefreshReplaySteering(plan, command.summary.forward, command.summary.left, previousDirections);
+    plan.analogCount = command.count;
+    for (std::size_t slice = 0; slice < command.count && slice < plan.analogs.size(); ++slice)
+        plan.analogs[slice] = {command.slices[slice].forward, command.slices[slice].left,
+            static_cast<float>(slice) / static_cast<float>(command.count)};
+    return plan;
+}
+inline std::size_t MovementReplayAnalogCount(const MovementReplayPlan& plan) noexcept {
+    return plan.strafe ? (plan.analogCount ? plan.analogCount : 1) : 0;
+}
+inline bool MovementReplayAnalogTransition(const MovementReplayPlan& plan, std::size_t slice,
+    float historicalForward, float historicalLeft, MovementSubtick& event) noexcept {
+    const auto count = MovementReplayAnalogCount(plan);
+    if (count > plan.analogs.size() || slice >= count ||
+        !std::isfinite(historicalForward) || !std::isfinite(historicalLeft)) return false;
+    const auto analog = plan.analogCount ? plan.analogs[slice] : MovementReplayPlan::Analog{plan.forward, plan.left, 0};
+    if (!std::isfinite(analog.forward) || !std::isfinite(analog.left) || !std::isfinite(analog.when) ||
+        analog.when < 0 || analog.when >= 1 || (!slice && analog.when != 0) ||
+        (slice && analog.when <= plan.analogs[slice - 1].when)) return false;
+    const auto previous = slice ? plan.analogs[slice - 1] : MovementReplayPlan::Analog{historicalForward, historicalLeft, 0};
+    if (!std::isfinite(previous.forward) || !std::isfinite(previous.left)) return false;
+    event = MovementAnalogTransition(analog.forward, analog.left, previous.forward, previous.left, analog.when);
+    return true;
+}
+inline constexpr std::size_t MovementReplayJumpEventIndex = AirSteeringSliceCount;
+inline constexpr std::size_t MovementReplayEventCount = AirSteeringSliceCount + 1;
+inline bool MovementReplayTransition(const MovementReplayPlan& plan, std::size_t eventIndex,
+    float historicalForward, float historicalLeft, MovementSubtick& event, bool& active) noexcept {
+    if (eventIndex >= MovementReplayEventCount || MovementReplayAnalogCount(plan) > AirSteeringSliceCount) return false;
+    active = false; event = {}; event.presence = 4; // Neutralize retired owned events at time zero.
+    if (eventIndex < MovementReplayAnalogCount(plan)) {
+        active = true;
+        return MovementReplayAnalogTransition(plan, eventIndex, historicalForward, historicalLeft, event);
+    }
+    if (eventIndex == MovementReplayJumpEventIndex && plan.jumpEdge) {
+        active = true; event = MovementJumpTransition(plan.jumpDown);
+    }
+    return true;
 }
 struct MovementReplaySteeringStart {
     bool available = false;
@@ -103,6 +148,7 @@ struct MovementReplaySteeringResult {
     MovementReplayPlan plan{};
     SteeringState state{};
     SteeringOutput steering{};
+    SteeringCommand command{};
 };
 inline MovementReplaySteeringResult MovementPlanReplaySteering(const MovementReplaySteeringStart& start,
     const MovementReplayIntent& cachedIntent, const MovementReplayIntent& currentIntent,
@@ -112,9 +158,13 @@ inline MovementReplaySteeringResult MovementPlanReplaySteering(const MovementRep
     result.refreshed = true; result.state = start.state;
     auto input = start.input;
     input.forward = currentIntent.forward; input.left = currentIntent.left; input.viewYaw = currentIntent.viewYaw;
-    if (currentIntent.viewValid) result.steering = PlanAirSteering(result.state, input, start.physics);
+    if (currentIntent.viewValid) {
+        result.command = PlanAirSteeringCommand(result.state, input, start.physics);
+        result.steering = result.command.summary;
+    }
     else ResetAirSteering(result.state);
-    result.plan = MovementRefreshReplaySteering(plan,
+    result.plan = result.command.valid ? MovementRefreshReplaySteeringCommand(plan, result.command, start.directions) :
+        MovementRefreshReplaySteering(plan,
         result.steering.valid ? result.steering.forward : currentIntent.forward,
         result.steering.valid ? result.steering.left : currentIntent.left, start.directions);
     return result;

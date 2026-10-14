@@ -6,13 +6,10 @@
 namespace {
 constexpr double pi = std::numbers::pi;
 constexpr double radians = pi / 180.0;
-// Keep useful acceleration even while following a continuously changing
-// heading. This is a speed-squared gain fraction, not an engine cvar or a
-// guessed strafe angle. Large turns retain half the best gain for this slice.
-constexpr double turnGainFraction = 0.5;
 double Wrap(double angle) noexcept { return std::remainder(angle, 2 * pi); }
 #ifdef CS2_STEERING_BENCHMARK
 thread_local unsigned int candidateEvaluations = 0;
+thread_local unsigned int commandEvaluations = 0;
 #endif
 struct Candidate { double angle = 0, amount = 0, step = 0, x = 0, y = 0; };
 
@@ -43,6 +40,7 @@ double HeadingChange(double projection, double speed, double available, double c
 
 #ifdef CS2_STEERING_BENCHMARK
 unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept { return candidateEvaluations; }
+unsigned int SteeringCommandEvaluationsForBenchmark() noexcept { return commandEvaluations; }
 #endif
 
 void ResetAirSteering(SteeringState& state) noexcept { state = {}; }
@@ -61,7 +59,7 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
         p.acceleration < 0 || p.surfaceFriction < 0 || p.interval <= 0 || p.interval > 0.1f) {
         ResetAirSteering(state); return out;
     }
-    const double speed = std::hypot(in.velocityX, in.velocityY);
+    const double speed = std::hypot(static_cast<double>(in.velocityX), static_cast<double>(in.velocityY));
     const double available = static_cast<double>(p.acceleration) * p.wishSpeed *
                              p.surfaceFriction * p.interval;
     if (!std::isfinite(speed) || speed > 100000 || !std::isfinite(available)) {
@@ -73,8 +71,9 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
         ResetAirSteering(state); return out;
     }
     const double camera = Wrap(in.viewYaw * radians);
-    const double desired = Wrap(camera + std::atan2(in.left, in.forward));
-    const double velocityYaw = speed > 0.000001 ? std::atan2(in.velocityY, in.velocityX) : desired;
+    const double desired = Wrap(camera + std::atan2(static_cast<double>(in.left), static_cast<double>(in.forward)));
+    const double velocityYaw = speed > 0.000001 ?
+        std::atan2(static_cast<double>(in.velocityY), static_cast<double>(in.velocityX)) : desired;
     const double error = Wrap(desired - velocityYaw);
     const double cap = std::min(p.wishSpeedCap, p.wishSpeed);
     Candidate chosen{};
@@ -95,21 +94,26 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
         double projection = gainProjection;
         const double gainTurn = HeadingChange(gainProjection, speed, available, cap);
         state.mode = SteeringMode::Accelerating;
-        if (std::abs(error) > gainTurn + 0.000001) {
-            // The most backward projection satisfying our gain floor is
-            // analytical in both branches. It turns almost as hard as the
-            // former equal-speed impulse, but accelerates throughout circles.
-            const double gainStep = std::min(available, std::max(0.0, cap - gainProjection));
-            const double requiredGain = turnGainFraction * gainStep * (2 * gainProjection + gainStep);
-            const double fullProjection = (requiredGain - available * available) / (2 * available);
-            const double turnProjection = std::clamp(fullProjection <= cap - available ? fullProjection :
-                -std::sqrt(std::max(0.0, cap * cap - requiredGain)), -speed, gainProjection);
+        if (std::abs(error) > pi / 2 + 0.000001) {
+            // A half-turn orbit protects old momentum at the cost of reversal
+            // latency. Full wish toward a behind-velocity intent instead spends
+            // the actual available impulse canceling that unwanted momentum.
+            // No numerical +/-pi side choice can alternate the braking axis.
+            state.mode = SteeringMode::Reversing;
+            chosen = Simulate(in, p, desired, 1);
+        } else if (std::abs(error) > gainTurn + 0.000001) {
+            // For A<S the tangent to the available impulse circle is q=-A;
+            // it gives asin(A/S) of turn and sqrt(S*S-A*A) of retained speed.
+            // At/above A=S, avoid the zero-velocity antipodal singularity.
+            // The cap never restricts q=-A since C+A>A.
+            const double turnProjection = available < speed ? -available :
+                (available == speed ? -speed * (1 - 1e-10) : -speed);
             projection = turnProjection;
             state.mode = SteeringMode::Turning;
             if (std::abs(error) < HeadingChange(turnProjection, speed, available, cap)) {
                 // Between gain and turn directions, heading is monotone.
-                // Solve only this narrow interval, keeping full input and
-                // the gain floor. Sixteen bounded scalar iterations avoid
+                // Solve only this interval, keeping full input. Sixteen
+                // bounded scalar iterations avoid
                 // an angle scan and land small corrections without a delay.
                 double low = turnProjection, high = gainProjection;
                 for (int iteration = 0; iteration < 16; ++iteration) {
@@ -120,8 +124,9 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
                 projection = (low + high) / 2;
             }
         }
-        chosen = Simulate(in, p, velocityYaw + side *
-            std::acos(std::clamp(projection / speed, -1.0, 1.0)), 1);
+        if (state.mode != SteeringMode::Reversing)
+            chosen = Simulate(in, p, velocityYaw + side *
+                std::acos(std::clamp(projection / speed, -1.0, 1.0)), 1);
     }
     const double relative = Wrap(chosen.angle - camera);
     out.forward = static_cast<float>(chosen.amount * std::cos(relative));
@@ -130,8 +135,57 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
     out.accelerationStep = static_cast<float>(chosen.step);
     out.predictedVelocityX = static_cast<float>(chosen.x);
     out.predictedVelocityY = static_cast<float>(chosen.y);
-    out.headingError = static_cast<float>(Wrap(desired - std::atan2(chosen.y, chosen.x)) / radians);
-    out.headingChange = static_cast<float>(Wrap(std::atan2(chosen.y, chosen.x) - velocityYaw) / radians);
+    // Stopping at the exact reversal budget has no heading yet. Do not report
+    // atan2(0,0) (or roundoff-sized velocity) as a completed direction change.
+    const bool headingValid = std::hypot(chosen.x, chosen.y) > 0.000001;
+    out.headingError = static_cast<float>((headingValid ?
+        Wrap(desired - std::atan2(chosen.y, chosen.x)) : error) / radians);
+    out.headingChange = headingValid ? static_cast<float>(
+        Wrap(std::atan2(chosen.y, chosen.x) - velocityYaw) / radians) : 0;
     out.mode = state.mode; out.valid = true;
     return out;
+}
+
+SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& input,
+                                      const AirPhysics& physics) noexcept {
+#ifdef CS2_STEERING_BENCHMARK
+    commandEvaluations = 0;
+#endif
+    SteeringCommand command{};
+    // Validate the original time quantum before splitting; dividing an invalid
+    // long quantum must not make it appear supported to the fragment solver.
+    if (!std::isfinite(physics.interval) || physics.interval <= 0 || physics.interval > 0.1f) {
+        ResetAirSteering(state); return command;
+    }
+    auto fragmentPhysics = physics;
+    fragmentPhysics.interval /= static_cast<float>(AirSteeringSliceCount);
+    auto fragmentInput = input;
+    auto nextState = state;
+    double totalImpulse = 0;
+    SteeringMode strongestMode = SteeringMode::Accelerating;
+    for (std::size_t i = 0; i < command.slices.size(); ++i) {
+        const auto output = PlanAirSteering(nextState, fragmentInput, fragmentPhysics);
+#ifdef CS2_STEERING_BENCHMARK
+        commandEvaluations += candidateEvaluations;
+#endif
+        if (!output.valid) { ResetAirSteering(state); return {}; }
+        command.slices[i] = output;
+        fragmentInput.velocityX = output.predictedVelocityX;
+        fragmentInput.velocityY = output.predictedVelocityY;
+        totalImpulse += output.accelerationStep;
+        if (output.mode == SteeringMode::Reversing ||
+            (output.mode == SteeringMode::Turning && strongestMode != SteeringMode::Reversing))
+            strongestMode = output.mode;
+    }
+    command.valid = true; command.count = command.slices.size();
+    command.summary = command.slices.back();
+    command.summary.accelerationStep = static_cast<float>(totalImpulse);
+    command.summary.mode = strongestMode;
+    const double originalYaw = std::hypot(static_cast<double>(input.velocityX), static_cast<double>(input.velocityY)) > 0.000001 ?
+        std::atan2(static_cast<double>(input.velocityY), static_cast<double>(input.velocityX)) :
+        Wrap(input.viewYaw * radians + std::atan2(static_cast<double>(input.left), static_cast<double>(input.forward)));
+    command.summary.headingChange = std::hypot(static_cast<double>(fragmentInput.velocityX), static_cast<double>(fragmentInput.velocityY)) > 0.000001 ?
+        static_cast<float>(Wrap(std::atan2(static_cast<double>(fragmentInput.velocityY), static_cast<double>(fragmentInput.velocityX)) - originalYaw) / radians) : 0;
+    state = nextState;
+    return command;
 }

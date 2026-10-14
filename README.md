@@ -50,14 +50,16 @@ new buffer signal can start an earlier release/retry. Cooldown is measured from
 the conservative observation time, without mixing engine stamp clock domains.
 When the server's automatic bunnyhop mode is already enabled, held jump remains
 down throughout flight. The code reads that setting without changing it.
-Autostrafe uses full normalized input throughout air movement. Near the requested
-heading it selects the maximum-gain impulse toward intent; larger corrections
-choose the strongest turn retaining at least half the maximum squared-speed gain
-for that command. Continuous circles therefore gain speed during corrections,
-instead of alternating acceleration with turns that deliberately gain zero.
-There is no retained entry-speed ceiling or fixed 15-degree heading envelope.
-Small corrections between those two impulse directions use a bounded projection
-solve. Heading excursions scale with the current physics and speed.
+Autostrafe uses full normalized input and eight timed direction updates per air
+command. Each fragment spends only its share of that command's acceleration,
+then replans against its predicted velocity. This avoids leaving one wish
+direction capped for the rest of the tick. Near the requested heading it selects
+a maximum-gain impulse; sharper corrections maximize direction capture and can
+sacrifice speed. Intent behind the current velocity applies the available impulse
+directly toward that requested axis, instead of taking a wide half-turn orbit.
+There is no positive-gain requirement during corrections, retained entry-speed
+ceiling or fixed 15-degree heading envelope. Reachable intermediate headings use
+a bounded projection solve. Heading excursions scale with current physics/speed.
 It changes normalized movement and direction buttons without rotating the camera.
 Releasing WASD restores ordinary axes before integration and leaves coasting alone.
 The first ground slice restores physical WASD axes after assisted air movement;
@@ -73,10 +75,11 @@ against local metadata and machine code. See
 [read-only build verifier](tools/inspect_movement.py).
 
 Command mutation runs on the engine input callback before its original
-movement-data finalization. It adds explicit time-zero analog and separate jump
-transitions through verified game-owned protobuf allocation/reuse. Analog deltas
-start from historical effective input, matching the engine's integration order;
-final base values alone are ingested after that integration. Existing camera
+movement-data finalization. It adds timed analog and separate time-zero jump
+transitions through verified game-owned protobuf allocation/reuse. The first
+analog delta starts from historical effective input; later deltas start from
+the preceding generated axes, matching the engine's integration order. Final
+base values alone are ingested after that integration. Existing camera
 deltas/times, attacks and other actions retain relative order. State is discarded on
 pawn/service/handle changes, command rollback, loss of focus or ownership change.
 Dead/frozen/swimming/waterjump pawns and ladder/noclip/observer modes retain normal
@@ -175,8 +178,8 @@ Both Release menu builds pass all ten test suites, including 39 jump-planner
 checks and same-command ground-rewind regressions. The user still disliked
 autostrafe in this run.
 
-**Revision 7 aggressive steering:** replaces the zero-gain turn policy with the
-turn/gain solver described above. Physical keys and camera yaw are sampled before
+**Revision 7 aggressive steering (baseline `4f0a1aa`):** replaced the zero-gain
+turn policy with one keeping half the best squared-speed gain. Physical keys and camera yaw are sampled before
 command replay; changed steering refreshes analogs from the frozen command-start
 velocity, physics and planner state. Repeating an unchanged command retains its
 output. The existing jump choice and edge remain stable across either kind of
@@ -189,7 +192,7 @@ accelerator. Research references were Valve's published
 and a public [CS2 directional autostrafer](https://github.com/cacamelio/weave-v3-csgo-and-cs2/blob/main/cs2/counterstrike2/feature/movement/movement_.cpp).
 The latter supplied control-design background; its code, hardcoded angles and
 runtime layouts were not imported. Neverlose's implementation is not available
-for verification. Revision 7 still needs the user's offline gameplay test.
+for verification.
 
 **Revision 7 verification:** both public and diagnostic x64 Release builds pass
 all ten CTest suites, including 30 steering checks and 37 replay checks. The
@@ -205,13 +208,53 @@ held gives 393 → 416 final speed and 7.3 → 1.0 degrees mean heading error. T
 before/after harness and complete outputs are under `logs/revision7-comparison/`.
 Very fast intent rotation at rising speed can exceed available turning authority;
 useful gain and arbitrary direction changes cannot both be guaranteed by ordinary
-air physics. These are model results, with no live revision 7 run yet.
+air physics. These were model results; the user's later offline run is below.
+
+**Observed revision 7 result:** `logs/overlay-18352-134363851916287038.log`
+confirms revision 7, ordinary cap 30 / acceleration 12 and working input refresh.
+The user reported improved control but weak acceleration and slow W→S reversals.
+Active snapshots still predicted gain while several flight observations lost
+speed; those copied snapshots include prediction/collision effects. All recorded
+ingestion mismatches followed Space release, so this log does not establish an
+active command-ingestion failure. Body/leg animation is not a physics measurement.
+
+**Revision 8 direction capture and timed acceleration:** removes the gain floor
+during corrections and adds the eight timed updates described above. A W→S
+request now cancels unwanted momentum directly before rebuilding speed. Timed
+analogs interleave with original camera/action messages without changing their
+relative order. Rebuilds reuse the whole sequence or regenerate it from frozen
+command-start state when intent changes; the selected jump edge stays stable.
+Release/ground handoff reduces it to one physical-axis transition and neutralizes
+the remaining owned events. Allocations and ownership remain game-managed.
+
+The independent model harness in `logs/revision8-comparison/` compares baseline
+`4f0a1aa` with revision 8 under the same synthetic ordinary physics. From speed
+250, W→S reaches the requested heading within 5 degrees after 6 commands (94ms),
+versus 17 commands (266ms). From speed 30, that takes 1 command versus 32. Holding
+W for two collision-free seconds gives 594 final speed versus 422. A diagonal
+rotating 90 degrees/second gives 573 versus 421, with maximum heading error 1.3
+versus 5.6 degrees. At 500 degrees/second, the new policy trades speed (318 versus
+378) for heading control (maximum lag 1.2 versus 20.1 degrees). These are timed
+model outputs, not observed client/server behavior. Revision 8 needs an offline
+gameplay test; exact per-substep camera/duck/walk/fire modifiers and collisions
+can change its predictions. Camera/model angles are not manipulated for twitching.
+
+**Revision 8 verification:** public and diagnostic x64 Release builds pass all
+ten CTest suites, including 29 steering and 49 replay checks. They independently
+decode/integrate all generated deltas, verify the shared acceleration budget,
+capture/reversal behavior, exact-stop precision, action ordering, retained jump
+edges, release/landing handoff and bounded ownership across 10,000 rebuilds.
+The installed-client verifier passes. The standalone complete-command benchmark
+evaluates exactly eight fragment candidates and records about three microseconds
+per command on its corpus; it excludes the engine callback and rendering. No
+revision 8 client run has been performed yet.
 
 Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
 WASD, including diagonals and low-speed recovery. Release WASD to check normal
-coasting with no autostop. For revision 7, also cycle W → WA → A → AS → S → SD → D
+coasting with no autostop. For revision 8, also test W→S at low and running speeds,
+cycle W → WA → A → AS → S → SD → D
 → DW and turn the camera with a diagonal held. The launcher writes movement telemetry to the existing
 `logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
 

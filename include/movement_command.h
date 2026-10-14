@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <span>
 
 struct MovementButtons {
     std::uint64_t down = 0, changed = 0, third = 0;
@@ -23,5 +24,16 @@ void MovementEncodeJump(MovementButtons& buttons, bool down, bool previousDown) 
 void MovementEncodeStrafe(MovementButtons& buttons, float forward, float left, std::uint64_t previousDown) noexcept;
 void MovementSanitizeSubtick(MovementSubtick& step, bool jump, bool strafe) noexcept;
 MovementSubtick MovementAnalogTransition(float desiredForward, float desiredLeft,
-                                        float historicalForward, float historicalLeft) noexcept;
+                                        float historicalForward, float historicalLeft, float when = 0) noexcept;
 MovementSubtick MovementJumpTransition(bool down) noexcept;
+
+struct MovementSubtickOrderEntry {
+    std::uintptr_t address = 0;
+    float when = 0;
+    bool owned = false;
+};
+// Merge generated timed events into a monotone original stream. Equal-time
+// generated events precede original actions, whose relative order is retained.
+// Invalid input returns false without changing the caller's output buffer.
+bool MovementOrderSubticks(std::span<const MovementSubtickOrderEntry> entries,
+                          std::span<std::uintptr_t> ordered) noexcept;

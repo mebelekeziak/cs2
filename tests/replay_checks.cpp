@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstdio>
 #include <vector>
+#include <algorithm>
+#include <limits>
 
 namespace {
 int failures = 0;
@@ -210,10 +212,9 @@ int main() {
     steeringStart.state.turnSide = -1;
     steeringStart.directions = off::Forward;
     auto initialState = steeringStart.state;
-    const auto initialSteering = PlanAirSteering(initialState, steeringStart.input, steeringStart.physics);
+    const auto initialSteering = PlanAirSteeringCommand(initialState, steeringStart.input, steeringStart.physics);
     auto initialAirPlan = press;
-    initialAirPlan = MovementRefreshReplaySteering(initialAirPlan, initialSteering.forward,
-        initialSteering.left, steeringStart.directions);
+    initialAirPlan = MovementRefreshReplaySteeringCommand(initialAirPlan, initialSteering, steeringStart.directions);
     MovementReplayIntent initialIntent{1, 0, 0, true, keys::Forward};
     auto airContext = cached; airContext.grounded = false; airContext.intent = initialIntent;
     const auto sameJump = [](const MovementReplayPlan& first, const MovementReplayPlan& second) {
@@ -227,7 +228,8 @@ int main() {
     auto retarget = MovementPlanReplaySteering(steeringStart, initialIntent, leftIntent, initialAirPlan);
     auto expectedState = steeringStart.state;
     auto expectedInput = steeringStart.input; expectedInput.forward = 0; expectedInput.left = 1;
-    const auto expectedSteering = PlanAirSteering(expectedState, expectedInput, steeringStart.physics);
+    const auto expectedCommand = PlanAirSteeringCommand(expectedState, expectedInput, steeringStart.physics);
+    const auto expectedSteering = expectedCommand.summary;
     Expect(MovementCanReplay(airContext, current) && retarget.refreshed && retarget.steering.valid &&
         near(retarget.plan.forward, expectedSteering.forward) && near(retarget.plan.left, expectedSteering.left) &&
         sameJump(initialAirPlan, retarget.plan),
@@ -250,7 +252,7 @@ int main() {
     auto turnedCamera = initialIntent; turnedCamera.viewYaw = 90;
     const auto cameraRefresh = MovementPlanReplaySteering(steeringStart, initialIntent, turnedCamera, initialAirPlan);
     expectedState = steeringStart.state; expectedInput = steeringStart.input; expectedInput.viewYaw = 90;
-    const auto expectedCamera = PlanAirSteering(expectedState, expectedInput, steeringStart.physics);
+    const auto expectedCamera = PlanAirSteeringCommand(expectedState, expectedInput, steeringStart.physics).summary;
     Expect(cameraRefresh.refreshed && near(cameraRefresh.plan.forward, expectedCamera.forward) &&
         near(cameraRefresh.plan.left, expectedCamera.left) && sameJump(initialAirPlan, cameraRefresh.plan),
         "same-command camera turn immediately refreshes camera-relative axes with the original jump unchanged");
@@ -301,5 +303,158 @@ int main() {
     const auto acquireAir = MovementPlanReplaySteering(steeringStart, releasedIntent, leftIntent, previouslyReleased);
     Expect(acquireAir.refreshed && acquireAir.steering.valid && acquireAir.plan.strafe && sameJump(press, acquireAir.plan),
         "a new WASD press can acquire air steering in a command that originally had no directional assistance");
+
+    std::array<MovementSubtick, MovementReplayEventCount> timedEvents{};
+    std::array<bool, MovementReplayEventCount> activeEvents{};
+    bool timedTransitionsValid = initialAirPlan.analogCount == AirSteeringSliceCount;
+    float effectiveForward = -0.3f, effectiveLeft = 0.4f;
+    for (std::size_t index = 0; index < timedEvents.size(); ++index) {
+        timedTransitionsValid &= MovementReplayTransition(initialAirPlan, index, -0.3f, 0.4f,
+            timedEvents[index], activeEvents[index]);
+        if (index < AirSteeringSliceCount) {
+            effectiveForward += timedEvents[index].forwardDelta; effectiveLeft += timedEvents[index].leftDelta;
+            timedTransitionsValid &= activeEvents[index] && !timedEvents[index].button && timedEvents[index].presence == 0x1c &&
+                near(timedEvents[index].when, static_cast<float>(index) / AirSteeringSliceCount) &&
+                near(effectiveForward, initialSteering.slices[index].forward) &&
+                near(effectiveLeft, initialSteering.slices[index].left);
+        }
+    }
+    Expect(timedTransitionsValid && near(effectiveForward, initialAirPlan.forward) &&
+        near(effectiveLeft, initialAirPlan.left) && activeEvents[MovementReplayJumpEventIndex] &&
+        timedEvents[MovementReplayJumpEventIndex].button == off::Jump && !timedEvents[MovementReplayJumpEventIndex].when,
+        "eight timed analog deltas reach every planned axis in order and keep the jump as a separate time-zero event");
+
+    // Decode emitted analog events and independently integrate their actual
+    // time fractions. The base axes arrive only after these slices execute.
+    double integratedX = steeringStart.input.velocityX, integratedY = steeringStart.input.velocityY;
+    double integratedImpulse = 0, integratedDuration = 0;
+    effectiveForward = -0.3f; effectiveLeft = 0.4f;
+    for (std::size_t index = 0; index < AirSteeringSliceCount; ++index) {
+        effectiveForward += timedEvents[index].forwardDelta; effectiveLeft += timedEvents[index].leftDelta;
+        const double endWhen = index + 1 < AirSteeringSliceCount ? timedEvents[index + 1].when : 1;
+        const double duration = (endWhen - timedEvents[index].when) * steeringStart.physics.interval;
+        const double magnitude = std::hypot(effectiveForward, effectiveLeft);
+        const double yawRadians = steeringStart.input.viewYaw * 0.017453292519943295;
+        const double dx = (effectiveForward * std::cos(yawRadians) - effectiveLeft * std::sin(yawRadians)) / magnitude;
+        const double dy = (effectiveForward * std::sin(yawRadians) + effectiveLeft * std::cos(yawRadians)) / magnitude;
+        const double wish = steeringStart.physics.wishSpeed * std::min(magnitude, 1.0);
+        const double available = steeringStart.physics.acceleration * wish * steeringStart.physics.surfaceFriction * duration;
+        const double impulse = std::min(available, std::max(0.0,
+            std::min<double>(wish, steeringStart.physics.wishSpeedCap) - integratedX * dx - integratedY * dy));
+        integratedX += impulse * dx; integratedY += impulse * dy;
+        integratedImpulse += impulse; integratedDuration += duration;
+    }
+    const double wholeTickBudget = steeringStart.physics.acceleration * steeringStart.physics.wishSpeed *
+        steeringStart.physics.surfaceFriction * steeringStart.physics.interval;
+    Expect(std::abs(integratedDuration - steeringStart.physics.interval) < 0.000001 &&
+        integratedImpulse <= wholeTickBudget + 0.0001 &&
+        std::abs(integratedX - initialSteering.summary.predictedVelocityX) < 0.002 &&
+        std::abs(integratedY - initialSteering.summary.predictedVelocityY) < 0.002 &&
+        std::abs(integratedImpulse - initialSteering.summary.accelerationStep) < 0.002,
+        "independent event integration matches the eight-slice prediction without spending more than one tick's acceleration");
+
+    std::array<MovementSubtickOrderEntry, MovementReplayEventCount + 6> unordered{};
+    const std::array<float, 6> originalTimes{0, 0.25f, 0.5f, 0.5f, 0.93f, 1};
+    for (std::size_t index = 0; index < originalTimes.size(); ++index)
+        unordered[index] = {0x5000 + index, originalTimes[index], false};
+    for (std::size_t index = 0; index < timedEvents.size(); ++index)
+        unordered[index + originalTimes.size()] = {0x6000 + index, timedEvents[index].when, true};
+    std::array<std::uintptr_t, unordered.size()> merged{};
+    const bool mergedOk = MovementOrderSubticks(unordered, merged);
+    bool originalOrderPreserved = true, allEventsOnce = true, monotone = true;
+    std::size_t nextOriginal = 0;
+    float lastTime = -1;
+    for (const auto address : merged) {
+        const auto entry = std::find_if(unordered.begin(), unordered.end(),
+            [address](const auto& candidate) { return candidate.address == address; });
+        allEventsOnce &= entry != unordered.end() && std::count(merged.begin(), merged.end(), address) == 1;
+        if (entry == unordered.end()) continue;
+        monotone &= entry->when >= lastTime; lastTime = entry->when;
+        if (!entry->owned) originalOrderPreserved &= address == 0x5000 + nextOriginal++;
+    }
+    Expect(mergedOk && originalOrderPreserved && nextOriginal == originalTimes.size() && allEventsOnce && monotone &&
+        merged[0] == 0x6000 && merged[1] == 0x6000 + MovementReplayJumpEventIndex && merged[2] == 0x5000,
+        "timed steering interleaves with physical events while preserving every original/equal-time action and leading time-zero analog/jump");
+    auto nonmonotone = unordered;
+    nonmonotone[1].when = 0.75f; nonmonotone[2].when = 0.25f;
+    merged.fill(0xABCDEF);
+    const bool rejectedNonmonotone = !MovementOrderSubticks(nonmonotone, merged);
+    Expect(rejectedNonmonotone && std::all_of(merged.begin(), merged.end(), [](auto address) { return address == 0xABCDEF; }),
+        "nonmonotone original timings reject the entire ordering operation without modifying its output");
+    auto invalidTime = unordered;
+    invalidTime.back().when = std::numeric_limits<float>::quiet_NaN();
+    Expect(!MovementOrderSubticks(invalidTime, merged) &&
+        std::all_of(merged.begin(), merged.end(), [](auto address) { return address == 0xABCDEF; }),
+        "invalid generated timing is rejected without a partially rewritten pointer stream");
+
+    messages.clear(); allocator = 0x2000;
+    std::array<MovementReplayStep, MovementReplayEventCount> timedOwned{};
+    bool everyTimedReplayStable = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        const float historyForward = frame & 1 ? 0.9f : -0.3f, historyLeft = frame & 1 ? -0.1f : 0.4f;
+        effectiveForward = historyForward; effectiveLeft = historyLeft;
+        for (std::size_t index = 0; index < timedOwned.size(); ++index) {
+            MovementSubtick event{}; bool active = false;
+            everyTimedReplayStable &= MovementReplayTransition(initialAirPlan, index, historyForward, historyLeft, event, active) && active;
+            Reconcile(messages, timedOwned[index], event, allocator);
+            if (index < AirSteeringSliceCount) {
+                effectiveForward += event.forwardDelta; effectiveLeft += event.leftDelta;
+                everyTimedReplayStable &= near(effectiveForward, initialSteering.slices[index].forward) &&
+                    near(effectiveLeft, initialSteering.slices[index].left);
+            }
+        }
+        everyTimedReplayStable &= messages.size() == MovementReplayEventCount;
+    }
+    Expect(everyTimedReplayStable && allocator == 0x2000 + MovementReplayEventCount,
+        "10000 eight-slice rebuilds reuse exactly nine owned events and refresh only the first historical delta");
+    const auto priorTimedAddresses = timedOwned;
+    messages.erase(std::remove_if(messages.begin(), messages.end(), [&](const auto& message) {
+        return message.address == timedOwned[2].address || message.address == timedOwned[5].address;
+    }), messages.end());
+    for (std::size_t index = 0; index < timedOwned.size(); ++index) {
+        MovementSubtick event{}; bool active = false;
+        MovementReplayTransition(initialAirPlan, index, 0, 0, event, active);
+        Reconcile(messages, timedOwned[index], event, allocator);
+    }
+    Expect(messages.size() == MovementReplayEventCount && allocator == 0x2000 + MovementReplayEventCount + 2 &&
+        timedOwned[0].address == priorTimedAddresses[0].address && timedOwned[2].address != priorTimedAddresses[2].address &&
+        timedOwned[5].address != priorTimedAddresses[5].address &&
+        timedOwned[MovementReplayJumpEventIndex].address == priorTimedAddresses[MovementReplayJumpEventIndex].address,
+        "losing two generated pool entries restores only those entries and leaves all retained analog/jump ownership intact");
+
+    bool fullCommandRefresh = retarget.plan.analogCount == AirSteeringSliceCount && sameJump(initialAirPlan, retarget.plan);
+    for (std::size_t index = 0; index < AirSteeringSliceCount; ++index)
+        fullCommandRefresh &= near(retarget.plan.analogs[index].forward, expectedCommand.slices[index].forward) &&
+            near(retarget.plan.analogs[index].left, expectedCommand.slices[index].left);
+    Expect(fullCommandRefresh, "changed physical intent refreshes all eight frozen-start slices and retains the selected jump edge");
+    bool retiredSlicesNeutral = releaseRefresh.plan.analogCount == 1;
+    unsigned activeAfterRelease = 0;
+    for (std::size_t index = 0; index < timedOwned.size(); ++index) {
+        MovementSubtick event{}; bool active = false;
+        retiredSlicesNeutral &= MovementReplayTransition(releaseRefresh.plan, index, -0.6f, 0.8f, event, active);
+        activeAfterRelease += active;
+        Reconcile(messages, timedOwned[index], event, allocator);
+        if (index && index < AirSteeringSliceCount)
+            retiredSlicesNeutral &= !active && event.presence == 4 && !event.button && !event.when &&
+                !event.forwardDelta && !event.leftDelta;
+    }
+    Expect(retiredSlicesNeutral && activeAfterRelease == 2 && messages.size() == MovementReplayEventCount &&
+        sameJump(initialAirPlan, releaseRefresh.plan),
+        "WASD release retains one time-zero analog handoff and the cached jump while neutralizing every later owned slice");
+    const auto groundHandoffPlan = MovementRefreshReplaySteering(initialAirPlan, 1, 0, initialAirPlan.buttons.down);
+    MovementSubtick groundHandoff{}; bool groundHandoffActive = false;
+    Expect(MovementReplayTransition(groundHandoffPlan, 0, initialAirPlan.forward, initialAirPlan.left,
+        groundHandoff, groundHandoffActive) && groundHandoffActive && groundHandoffPlan.analogCount == 1 &&
+        near(initialAirPlan.forward + groundHandoff.forwardDelta, 1) &&
+        near(initialAirPlan.left + groundHandoff.leftDelta, 0) && sameJump(initialAirPlan, groundHandoffPlan),
+        "ground handoff uses one physical-axis transition instead of carrying timed airborne steering into ground movement");
+    auto oversizedPlan = initialAirPlan; oversizedPlan.analogCount = AirSteeringSliceCount + 1;
+    auto badSliceOrder = initialAirPlan; badSliceOrder.analogs[2].when = badSliceOrder.analogs[1].when;
+    MovementSubtick untouchedEvent{}; untouchedEvent.button = 1; untouchedEvent.presence = 7;
+    bool untouchedActive = false;
+    Expect(!MovementReplayTransition(oversizedPlan, 0, 0, 0, untouchedEvent, untouchedActive) &&
+        !MovementReplayAnalogTransition(badSliceOrder, 2, 0, 0, untouchedEvent) &&
+        untouchedEvent.button == 1 && untouchedEvent.presence == 7,
+        "oversized or nonincreasing analog plans fail validation without replacing an existing event payload");
     return failures ? 1 : 0;
 }
