@@ -52,7 +52,7 @@ ImVec2 TabPosition(int index) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const float contentWidth = Menu()->Size.x - style.WindowPadding.x * 2;
     const float tabWidth = std::fmin(100.0f, std::fmax(1.0f,
-        (contentWidth - style.ItemSpacing.x) * 0.5f));
+        (contentWidth - style.ItemSpacing.x * 3) / 4));
     return { start.x + tabWidth * 0.5f + static_cast<float>(index) * (tabWidth + style.ItemSpacing.x),
              start.y + 8 + style.ItemSpacing.y + 12.5f };
 }
@@ -186,6 +186,34 @@ int main() {
     altered.skyTint[1] = 0.3f;
     altered.worldTint[2] = 0.25f;
     WorldSetSettings(altered);
+    Click(TabPosition(3));
+    Frame();
+    Expect(Body() && std::strstr(Body()->Name, "##LightingSettings"),
+           "lighting tab opens native lighting controls");
+    ActivateWorldControl("Disable local lights");
+    Expect(!WorldGetSettings().disableLocalLights, "disabled lighting master blocks local-light control");
+    Click(EnablePosition());
+    Expect(WorldGetSettings().lightingEnabled && WorldGetSettings().skyEnabled && WorldGetSettings().enabled,
+           "lighting master publishes independently of sky and screen color");
+    ActivateWorldControl("Disable local lights");
+    Expect(WorldGetSettings().disableLocalLights, "local-light checkbox publishes native suppression setting");
+    altered = WorldGetSettings();
+    altered.localLightBrightness = 2.5f;
+    altered.localLightTint[0] = 0.3f;
+    WorldSetSettings(altered);
+    ImGui::SetScrollY(Body(), Body()->ScrollMax.y);
+    Frame(); Frame();
+    ActivateWorldControl("Reset lighting");
+    const auto lightReset = WorldGetSettings();
+    Expect(!lightReset.lightingEnabled && !lightReset.disableLocalLights && lightReset.localLightBrightness == 1 &&
+           lightReset.localLightTint[0] == 1 && lightReset.skyEnabled && lightReset.enabled && lightReset.flatTextures,
+           "lighting reset restores its controls while preserving other world effects");
+    altered = lightReset;
+    altered.lightingEnabled = true;
+    altered.disableLocalLights = true;
+    altered.localLightBrightness = 2.5f;
+    altered.localLightTint[0] = 0.3f;
+    WorldSetSettings(altered);
     Click(TabPosition(1));
     Frame();
     Expect(MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
@@ -197,12 +225,17 @@ int main() {
            WorldGetSettings().worldMaterialEnabled && WorldGetSettings().flatTextures &&
            WorldGetSettings().worldTint[2] == 0.25f,
            "tab switching preserves world settings");
+    Expect(WorldGetSettings().lightingEnabled && WorldGetSettings().disableLocalLights &&
+           WorldGetSettings().localLightBrightness == 2.5f && WorldGetSettings().localLightTint[0] == 0.3f,
+           "tab switching preserves native lighting settings");
     ImGui::SetScrollY(Body(), Body()->ScrollMax.y);
     Frame();
     Frame();
     ActivateWorldControl("Reset world visuals");
     const WorldSettings reset = WorldGetSettings();
     Expect(!reset.enabled && !reset.skyEnabled && !reset.worldMaterialEnabled && !reset.flatTextures &&
+           !reset.lightingEnabled && !reset.disableLocalLights && reset.localLightBrightness == 1 &&
+           reset.localLightTint[0] == 1 && reset.localLightTint[1] == 1 && reset.localLightTint[2] == 1 &&
            reset.worldTint[0] == 1 && reset.worldTint[1] == 1 && reset.worldTint[2] == 1 && reset.exposureEv == 0 &&
            reset.contrast == 1 && reset.saturation == 1 && reset.gamma == 1 &&
            reset.tint[0] == 1 && reset.tint[1] == 1 && reset.tint[2] == 1 &&

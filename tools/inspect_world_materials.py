@@ -36,11 +36,23 @@ def main():
     parser.add_argument('--calls', action='append', default=[], help='Direct rel32 call target RVA')
     parser.add_argument('--vtable', action='append', default=[], help='Pointer slot RVA; find preceding RTTI locator')
     parser.add_argument('--rtti', action='append', default=[], help='RTTI exact class suffix name')
+    parser.add_argument('--export', action='append', default=[], help='Export-name fragment')
     args = parser.parse_args()
     raw, image, base, code = mapped(args.binary)
     print(json.dumps({'path': str(args.binary), 'sha256': hashlib.sha256(raw).hexdigest(), 'base':hex(base), 'code':code}))
     md = Cs(CS_ARCH_X86, CS_MODE_64)
     md.detail = True
+    if args.export:
+        pe = struct.unpack_from('<I',raw,0x3c)[0]
+        export,_ = struct.unpack_from('<II',raw,pe+24+112)
+        count = struct.unpack_from('<I',image,export+24)[0]
+        funcs,names,ordinals = struct.unpack_from('<III',image,export+28)
+        for index in range(count):
+            string = struct.unpack_from('<I',image,names+index*4)[0]
+            name = bytes(image[string:image.find(0,string)]).decode(errors='replace')
+            if any(fragment in name for fragment in args.export):
+                ordinal = struct.unpack_from('<H',image,ordinals+index*2)[0]
+                print('EXPORT',name,hex(struct.unpack_from('<I',image,funcs+ordinal*4)[0]))
     for name in args.rtti:
         encoded = f'.?AV{name}@@'.encode()+b'\0'
         typename = image.find(encoded)-16

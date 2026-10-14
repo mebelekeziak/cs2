@@ -28,13 +28,13 @@ bool Check(HRESULT result, const char* action) {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 4) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World] [scroll pixels]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting] [scroll pixels]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 2 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be 0, 1 or 2.\n");
+    if (selectedTab < 0 || selectedTab > 3 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be 0, 1, 2 or 3.\n");
         return 1;
     }
     const long scroll = argc == 4 ? std::wcstol(argv[3], &end, 10) : 0;

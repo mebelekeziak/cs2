@@ -18,10 +18,19 @@ struct WorldSettings {
     bool worldMaterialEnabled = false;
     float worldTint[3]{1.0f, 1.0f, 1.0f};
     bool flatTextures = false;
+    // Native lighting controls, independent of sky and screen grading.
+    bool lightingEnabled = false;
+    bool disableLocalLights = false;
+    float localLightTint[3]{1.0f, 1.0f, 1.0f};
+    float localLightBrightness = 1.0f;
+    float sunLightTint[3]{1.0f, 1.0f, 1.0f};
+    float sunLightBrightness = 1.0f;
+    int directionalLightmapsMode = 0; // Game value / enabled / disabled.
 };
 
 WorldSettings WorldSanitizeSettings(const WorldSettings& settings) noexcept;
 WorldSettings WorldGetSettings() noexcept;
 void WorldSetSettings(const WorldSettings& settings) noexcept;
 void WorldResetSettings() noexcept;
+void WorldResetLightingSettings() noexcept;
 

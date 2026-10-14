@@ -129,7 +129,7 @@ void DrawPublicMenu() {
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
         int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
         const float tabWidth = std::min(100.0f, std::max(1.0f,
-            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3));
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 3) / 4));
         const auto tab = [&](const char* label, int index) {
             const bool selected = selectedTab == index;
             ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{ 0.12f, 0.18f, 0.23f, 1 }
@@ -146,6 +146,8 @@ void DrawPublicMenu() {
         tab("Movement", 1);
         ImGui::SameLine();
         tab("World", 2);
+        ImGui::SameLine();
+        tab("Lighting", 3);
         ImGui::GetStateStorage()->SetInt(tabId, selectedTab);
         ImGui::Separator();
 
@@ -181,7 +183,7 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (changed) MovementSetSettings(settings);
-        } else {
+        } else if (selectedTab == 2) {
             WorldSettings settings = WorldGetSettings();
             bool changed = false;
             bool reset = false;
@@ -239,6 +241,45 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (reset) WorldResetSettings();
+            else if (changed) WorldSetSettings(settings);
+        } else {
+            WorldSettings settings = WorldGetSettings();
+            bool changed = false;
+            bool reset = false;
+            if (ImGui::BeginChild("##LightingSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                changed |= FeatureCheckbox("Override lighting", settings.lightingEnabled);
+                ImGui::Separator();
+                ImGui::TextUnformatted("Local lights");
+                ImGui::TextDisabled("Point, spot and orthographic color");
+                ImGui::BeginDisabled(!settings.lightingEnabled);
+                changed |= FeatureCheckbox("Disable local lights", settings.disableLocalLights);
+                ImGui::BeginDisabled(settings.disableLocalLights);
+                ImGui::TextUnformatted("Light color");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##LocalLightTint", settings.localLightTint, ImGuiColorEditFlags_NoInputs);
+                ImGui::TextUnformatted("Light brightness");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderFloat("##LocalLightBrightness", &settings.localLightBrightness, 0, 8, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::TextUnformatted("Sunlight");
+                ImGui::TextUnformatted("Sun color");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##SunLightTint", settings.sunLightTint, ImGuiColorEditFlags_NoInputs);
+                ImGui::TextUnformatted("Sun brightness");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderFloat("##SunLightBrightness", &settings.sunLightBrightness, 0, 8, "%.2f");
+                ImGui::Separator();
+                ImGui::TextUnformatted("Directional lightmaps");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::Combo("##DirectionalLightmaps", &settings.directionalLightmapsMode,
+                                       "Game value\0Enabled\0Disabled\0");
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                reset = ImGui::Button("Reset lighting", { -1, 0 });
+            }
+            ImGui::EndChild();
+            if (reset) WorldResetLightingSettings();
             else if (changed) WorldSetSettings(settings);
         }
         ImGui::TextDisabled("Insert  Menu    End  Stop");

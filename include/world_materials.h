@@ -33,6 +33,7 @@ bool WorldMaterialsApplyNewDraws(const WorldDrawList& before, const WorldDrawLis
     std::size_t& changed) noexcept;
 #ifdef CS2_WORLD_MATERIAL_CHECKS
 using WorldMaterialsTestGenerateFn = void (*)(void*, void*, void*, void*);
-void WorldMaterialsTestConfigure(std::uintptr_t sceneBase, WorldMaterialsTestGenerateFn fn) noexcept;
+void WorldMaterialsTestConfigure(std::uintptr_t sceneBase, WorldMaterialsTestGenerateFn fn,
+    const WorldFlatMaterial& flat = {}) noexcept;
 void WorldMaterialsTestGenerate(void* desc, void* object, void* args, void* list) noexcept;
 #endif

@@ -80,15 +80,19 @@ invalid counts/capacities, storage arithmetic overflow or an unreadable field
 reject mutation. Each new record must belong to the same scene object at
 record +0x18 and already contain non-null render material/mode pointers.
 
-## World tint and flat-material selection
+## Packed color limitation and flat-material selection
 
 The aggregate record constructor 0x371E0 receives packed RGBA in R9D and writes
 it at +0x50 (0x37214). Aggregate generation supplies 0xFFFFFFFF from
 0x5DE4E4 at 0x42099. Other geometry generation uses the same record, converting
 linear float4 to sRGB packed RGB and linear alpha with helper 0x49C8D0;
 stores at 0x49C97C/0x49C9DA/0x49CA4E/0x49CA55 prove byte channel order.
-The override multiplies original packet RGB by the selected surface tint and
-preserves alpha. It does not write the source entity/model/material color.
+However, aggregate `DrawArray` (0x42330) and `DrawPrimitive` (0x44550) do not
+consume the packet's +0x50 color. Aggregate surfaces use their own instance and
+vertex streams. The initial implementation reused this generic packet field
+and therefore did not establish a real aggregate surface tint input. The
+revised packet path leaves all RGBA bytes unchanged. Surface tint requires its
+own verified shader consumer and is not implemented by this packet helper.
 
 The engine owns a native debug material binding at scenesystem +0x9217D8.
 Its name is `materials/dev/reflectivity_90.vmat`, associated with that binding
@@ -96,10 +100,12 @@ by the initializer at 0xBF390/0xBF39E. The original aggregate method itself
 selects this binding at 0x42189, dereferences the material at 0x42195, and sets
 native override bit0x10 in record flags+0x62 at 0x42198.
 
-The material is stored at record+0x20 (0x421D7). The mode is stored at +0x28
-(0x421DE / 0x421F4). The original mode lookup at 0x421EA is exactly
+The material is stored at record+0x20 (0x421D7). The opaque sorting/material
+selection tuple is stored at +0x28 (0x421DE / 0x421F4). The original lookup at 0x421EA is exactly
 `material->vtable[0x30 / 8](material, sceneView + 0x30)`, returning the selected
-mode pointer. Our hook uses that exact dispatch, first requiring the method
+material variant pointer. DrawArray consumes +0x20 at 0x425E2 and resolves the
+actual shader pass separately through material vtable+0x28 at 0x42601. Our
+hook uses the native packet dispatch, first requiring the method
 address to fall inside the verified loaded materialsystem2 image. This native
 call happens outside our mutation lock; disarm is rechecked afterward.
 Neither the binding nor material reference is cached across callbacks.
@@ -109,8 +115,14 @@ streams from scenesystem+0x921390 / +0x9213A8 at 0x421A9 / 0x421B7. The hook
 matches those replacements at record+0x48; a missing required stream leaves
 that packet unchanged. Other types preserve their existing stream.
 
-The original native selection requires scene-view flags+0x48 bit24 set and
-bit32 clear, tested at 0x42164/0x4216B. The hook follows those view constraints.
+The original debug-fallback branch tests scene-view flags+0x48 bit24 set and
+bit32 clear at 0x42164/0x4216B. These tests choose that native fallback branch;
+they do not establish a contract identifying camera versus auxiliary views.
+The first implementation incorrectly treated them as a view eligibility gate.
+The corresponding native base-geometry path explicitly bypasses that flag
+condition when `sc_disable_world_materials` is enabled, loading its value at
+0x7832D. The revised hook resolves the selected flat material against the
+actual scene view, rather than inventing view classification from those bits.
 It does not modify console variables, shader code, installed textures or
 material files. Flat mode replaces qualifying aggregate world surface
 materials with the existing built-in reflectivity material. It is a flat
@@ -133,9 +145,33 @@ or specialized shader. It excludes the distinct animatable player/weapon and
 UI descriptor callbacks. Custom sky asset replacement and fog removal were
 not implemented by this path. Fog remains an independent engine subsystem.
 
-Standalone tests exercise tint/opacity, packet neighbors, older and foreign
+Standalone tests exercise unchanged RGBA/opacity, packet neighbors, older and foreign
 packets, overflow reallocation, invalid bounds/counts, exact native material
 tuples/stream selection, descriptor/view exclusion, disable/regeneration and
-cooperative stop while the fake original is still running. Builds/tests and
+cooperative stop while the fake original is still running. They now include
+native view flag combinations that the incorrect earlier eligibility gate
+excluded. Builds/tests and
 the frozen verifier are evidence of implementation correctness only. No live
-client render, material appearance or actual map coverage has been observed.
+client render, material appearance or actual map coverage has been observed
+for the revised flat path.
+
+## First live failure and actionable diagnostics
+
+The user reported working sky controls but no visible surface override or
+flat-texture change in `logs/overlay-40608-134364575022549814.log`. The snapshot
+recorded more than nine million material callbacks, zero changed packets and
+zero counted rejections. The hook was active; early list/descriptor/view exits
+were previously silent, so those counters cannot identify which guard rejected
+that run. The game process had already exited when this follow-up investigation
+began; no live pointer snapshot could be recovered. The false view gate and
+unused color field are statically established implementation defects, but the
+old log does not prove that either was the only failed runtime prerequisite.
+
+`WORLD_MATERIAL` now records master/flat disabled calls, unreadable versus
+invalid pre-call list, descriptor rejection with last vtable RVA, unreadable
+view, unreadable post-call list, native callbacks emitting no records, missing
+native flat binding, unexpected material method module, unavailable selected
+mode, rejected packet layout, and neutral packets. It includes observed view
+flags and rejected list counts/capacities. These are bounded atomic counters
+drained on Present, without game-thread file writes. Native calls remain
+outside the mutation lock; post-call disarm is checked before packet writes.

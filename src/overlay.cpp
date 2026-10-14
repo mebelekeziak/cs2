@@ -27,6 +27,9 @@
 #include "world_postprocess.h"
 #include "world_sky.h"
 #include "world_materials.h"
+#include "world_lighting_switches.h"
+#include "world_lighting.h"
+#include "world_environment_lighting.h"
 #if !CS2_DIAGNOSTIC_UI
 #include "public_menu.h"
 #endif
@@ -223,6 +226,9 @@ void CleanupOnRenderThread(const char* reason) {
     MovementStop(reason);
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
+    WorldLightingSwitchesStop(reason);
+    WorldLightingStop(reason);
+    WorldEnvironmentLightingStop(reason);
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
     Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
@@ -389,6 +395,9 @@ void DrawFrame(IDXGISwapChain* chain) {
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();
+    WorldLightingSwitchesFlushTelemetry();
+    WorldLightingFlushTelemetry();
+    WorldEnvironmentLightingFlushTelemetry();
     ScopedImGuiContext scopedContext;
     if (deviceObjectsDirty) {
         ImGui_ImplDX11_InvalidateDeviceObjects();
@@ -440,6 +449,9 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Movement: %s", MovementStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
+        ImGui::Text("Local light switches: %s", WorldLightingSwitchesStatus());
+        ImGui::Text("Local light color: %s", WorldLightingStatus());
+        ImGui::Text("Sun/lightmaps: %s", WorldEnvironmentLightingStatus());
         ImGui::Text("Screen color: %s", WorldPostprocessStatus());
         ImGui::Text("Players: %zu | drawing: %zu | matrix: %s", players.playerCount,
             espStats.drawn, players.matrixValid ? "valid" : "unavailable");
@@ -538,6 +550,9 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             MovementStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
+            WorldLightingSwitchesStop("stopped before selecting render chain");
+            WorldLightingStop("stopped before selecting render chain");
+            WorldEnvironmentLightingStop("stopped before selecting render chain");
             stopped.store(true);
             Log("STOPPED_RESIDENT before selecting a real chain; hooks/DLL retained.");
             FlushLog();
@@ -615,6 +630,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool movementPrepared = MovementPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
+    const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
+    const bool lightingPrepared = WorldLightingPrepare(&EspLog);
+    const bool environmentLightingPrepared = WorldEnvironmentLightingPrepare(&EspLog);
     status = MH_QueueEnableHook(present);
     if (status == MH_OK) status = MH_QueueEnableHook(resize);
     if (status == MH_OK) status = MH_ApplyQueued();
@@ -622,6 +640,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         MovementStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
+        WorldLightingSwitchesStop("partial hook activation failure");
+        WorldLightingStop("partial hook activation failure");
+        WorldEnvironmentLightingStop("partial hook activation failure");
         stopRequested.store(true);
         Log("Hook activation failed=%s; stop requested; retain all code/trampolines (partial activation possible)", MH_StatusToString(status));
         startState.store(-1); return 6;
@@ -629,6 +650,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (movementPrepared) MovementActivate();
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
+    if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
+    if (lightingPrepared) WorldLightingActivate();
+    if (environmentLightingPrepared) WorldEnvironmentLightingActivate();
     startState.store(2);
     Log("HOOKS_INSTALLED; waiting for an observed real D3D11 Present. Discovery alone does not confirm game rendering.");
     return 0;
@@ -639,6 +663,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     MovementStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
+    WorldLightingSwitchesStop("explicit overlay stop request");
+    WorldLightingStop("explicit overlay stop request");
+    WorldEnvironmentLightingStop("explicit overlay stop request");
     Log("STOP_REQUESTED; cleanup needs next Present on original render thread. No thread forced/physical unload.");
     return stopped.load(std::memory_order_acquire) ? 0 : 1;
 }

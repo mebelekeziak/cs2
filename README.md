@@ -4,6 +4,13 @@ x64 client overlay with movement assistance, player ESP and an explicit manual m
 
 ## World visuals
 
+**Follow-up paused October 14, 2026:** sky tint/brightness are user-confirmed.
+The initial surface/flat controls had no observed effect. Material fixes and new
+native lighting controls are in progress; the current follow-up has not passed
+full integration verification, and surface tint remains unfinished. See
+[resume checkpoint](RESUME.md) before building or loading this revision. The
+feature descriptions below record the prior baseline until the follow-up finishes.
+
 The public menu's **World** tab provides independent controls, all disabled by
 default. Existing movement changes were committed as `664ab24` before this work.
 Settings last for the current run; **Reset world visuals** disables overrides

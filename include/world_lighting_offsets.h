@@ -1,0 +1,25 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+// Installed AMD64 scenesystem.dll fingerprint and operands verified from disk.
+// SHA256 bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831.
+namespace world_lighting_offsets {
+inline constexpr std::uint32_t Timestamp = 0x6AC7FF95, ImageSize = 0x978000;
+inline constexpr std::uintptr_t GenerateSubLights = 0x4A3CE0;
+inline constexpr std::uintptr_t PerViewReturn = 0x1A2061;
+inline constexpr std::uintptr_t PackAreaLight = 0x1B0FB0;
+inline constexpr std::uintptr_t AreaReturnA = 0x1B0060, AreaReturnB = 0x1B00DB;
+inline constexpr std::size_t AreaStride = 0x90, AreaRadiance = 0x70;
+inline constexpr std::size_t SubLightStride = 0x12C, Radiance = 0xB4;
+inline constexpr unsigned MaxSubLights = 6;
+inline constexpr std::uint32_t Omni = 1, Directional = 2, Spot = 3, Ortho = 4;
+inline constexpr unsigned char GeneratorBytes[]{
+    0x48,0x8b,0xc4,0x44,0x88,0x48,0x20,0x55,0x48,0x8d,0xa8,0x68,0xf7,0xff,0xff,
+    0x48,0x81,0xec,0x90,0x09,0x00,0x00};
+inline constexpr unsigned char CallBytes[]{0xe8,0x7f,0x1c,0x30,0x00};
+inline constexpr unsigned char AreaBytes[]{
+    0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x55,0x57,0x41,0x56,
+    0x48,0x8b,0xec,0x48,0x81,0xec,0x80,0x00,0x00,0x00};
+inline constexpr unsigned char AreaCallABytes[]{0xe8,0x50,0x0f,0x00,0x00};
+inline constexpr unsigned char AreaCallBBytes[]{0xe8,0xd5,0x0e,0x00,0x00};
+}
