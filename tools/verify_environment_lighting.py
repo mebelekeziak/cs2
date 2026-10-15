@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, default=DEFAULT_GAME)
+    parser.add_argument("--header", type=Path, default=ROOT / "include/world_environment_lighting_offsets.h")
     args = parser.parse_args()
     path = args.game / "bin/win64/scenesystem.dll"
     raw, image, _, nt, _ = load_image(path)
@@ -28,7 +29,14 @@ def main():
         expected = bytes.fromhex(hexbytes)
         if image[site:site + len(expected)] != expected:
             raise SystemExit(f"Changed installed operand {label} at 0x{site:X}")
-    source = (ROOT / "include/world_environment_lighting_offsets.h").read_text()
+    for label, site, hexbytes in [
+        ("ambient_context_key", 0x1AF956, "41b8f1ae1083"),
+        ("ambient_context_getter", 0x1AF993, "e8d8d8e9ff"),
+        ("ambient_float4_store", 0x1AF998, "0f10442460488b05e4427700f30f7f85f0000000"),
+    ]:
+        if image[site:site + len(bytes.fromhex(hexbytes))] != bytes.fromhex(hexbytes):
+            raise SystemExit(f"Changed installed operand {label} at 0x{site:X}")
+    source = args.header.read_text()
     def constant(name):
         match = re.search(r"\b" + name + r"\s*=\s*(0x[0-9A-Fa-f]+)", source)
         if not match:
@@ -44,18 +52,22 @@ def main():
         "DirectionalProducer": 0x1AF917,
         "DirectionalStore": 0x1AF939,
         "SunProducer": 0x1AFA8C,
+        "AmbientProducer": 0x1AF956,
+        "AmbientStore": 0x1AF998,
         "BufferSize": struct.unpack_from("<I", image, 0x1B0CB7)[0],
         # Native base source is RBP-0x30. Store RBP+0x7970 therefore
         # maps to source+0x79A0, not the neighboring direction at +0x7990.
         "SunRgb": struct.unpack_from("<I", image, 0x1AFAA0)[0] + 0x30,
         "DirectionalLightmap": image[0x1AF93D] + 0x30,
+        "AmbientRgb": struct.unpack_from("<I", image, 0x1AF9A8)[0] + 0x30,
     }
     for name, value in expected.items():
         if constant(name) != value:
             raise SystemExit(f"{name}: header differs from decoded local native operand")
     sites = {"CopyBytes": 0x569120, "ProducerBytes": 0x1B0CB5,
              "UploadBytes": 0x1B0F77,
-             "DirectionalBytes": 0x1AF917, "DirectionalStoreBytes": 0x1AF939, "SunBytes": 0x1AFA8C}
+             "DirectionalBytes": 0x1AF917, "DirectionalStoreBytes": 0x1AF939, "SunBytes": 0x1AFA8C,
+             "AmbientProducerBytes": 0x1AF956, "AmbientStoreBytes": 0x1AF998}
     for name, site in sites.items():
         match = re.search(r"\b" + name + r"\[\]\s*\{([^}]+)\}", source)
         if not match:

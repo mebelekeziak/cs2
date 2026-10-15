@@ -250,9 +250,23 @@ void DrawPublicMenu() {
             if (ImGui::BeginChild("##LightingSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Override lighting", settings.lightingEnabled);
                 ImGui::Separator();
+                ImGui::BeginDisabled(!settings.lightingEnabled);
+                ImGui::TextUnformatted("Ambient fill");
+                changed |= FeatureCheckbox("Add ambient light", settings.ambientLightEnabled);
+                ImGui::BeginDisabled(!settings.ambientLightEnabled);
+                ImGui::TextUnformatted("Ambient color");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::ColorEdit3("##AmbientLightTint", settings.ambientLightTint, ImGuiColorEditFlags_NoInputs);
+                ImGui::TextUnformatted("Ambient intensity");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderFloat("##AmbientLightBrightness", &settings.ambientLightBrightness, 0, 4, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("Adds diffuse light to surfaces. Baked map lighting remains.");
+                ImGui::PopStyleColor();
+                ImGui::Separator();
                 ImGui::TextUnformatted("Local lights");
                 ImGui::TextDisabled("Point, spot, orthographic and area lights");
-                ImGui::BeginDisabled(!settings.lightingEnabled);
                 changed |= FeatureCheckbox("Disable local lights", settings.disableLocalLights);
                 ImGui::BeginDisabled(settings.disableLocalLights);
                 ImGui::TextUnformatted("Light color");

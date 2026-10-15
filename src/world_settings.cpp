@@ -23,12 +23,14 @@ WorldSettings WorldSanitizeSettings(const WorldSettings& settings) noexcept {
         result.skyLightingTint[channel] = Clamp(result.skyLightingTint[channel], 0.0f, 1.0f, 1.0f);
         result.localLightTint[channel] = Clamp(result.localLightTint[channel], 0.0f, 1.0f, 1.0f);
         result.sunLightTint[channel] = Clamp(result.sunLightTint[channel], 0.0f, 1.0f, 1.0f);
+        result.ambientLightTint[channel] = Clamp(result.ambientLightTint[channel], 0.0f, 1.0f, 1.0f);
     }
     result.vignette = Clamp(result.vignette, 0.0f, 1.0f, 0.0f);
     result.sharpening = Clamp(result.sharpening, 0.0f, 1.0f, 0.0f);
     result.skyBrightness = Clamp(result.skyBrightness, 0.0f, 4.0f, 1.0f);
     result.localLightBrightness = Clamp(result.localLightBrightness, 0.0f, 8.0f, 1.0f);
     result.sunLightBrightness = Clamp(result.sunLightBrightness, 0.0f, 8.0f, 1.0f);
+    result.ambientLightBrightness = Clamp(result.ambientLightBrightness, 0.0f, 4.0f, 0.25f);
     result.directionalLightmapsMode = std::clamp(result.directionalLightmapsMode, 0, 2);
     return result;
 }
@@ -53,6 +55,9 @@ void WorldResetLightingSettings() noexcept {
     currentSettings.localLightBrightness = 1.0f;
     for (float& channel : currentSettings.sunLightTint) channel = 1.0f;
     currentSettings.sunLightBrightness = 1.0f;
+    currentSettings.ambientLightEnabled = false;
+    for (float& channel : currentSettings.ambientLightTint) channel = 1.0f;
+    currentSettings.ambientLightBrightness = 0.25f;
     currentSettings.directionalLightmapsMode = 0;
 }
 

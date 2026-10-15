@@ -10,94 +10,116 @@
 #include <limits>
 namespace {
 using namespace world_lighting_offsets;
-constexpr std::uintptr_t base=0x10000000;
-unsigned checks=0,failures=0;
-std::array<unsigned char,SubLightStride*MaxSubLights> records{};
-std::array<unsigned char,0x120> source{};
-std::array<unsigned char,AreaStride> areaRecord{};
-int requestedCount=1;
-bool invalidLast=false,argsPreserved=false;
-void* matrixSentinel=reinterpret_cast<void*>(0x12345678);
-HANDLE originalEntered=nullptr,originalResume=nullptr;
-void Check(bool good,const char* name) { ++checks; if (!good) { ++failures; std::printf("FAIL %s\n",name); } }
-template<class T> void Put(void* p,std::size_t offset,T v) { std::memcpy(static_cast<unsigned char*>(p)+offset,&v,sizeof(v)); }
-float Channel(int record,unsigned channel) { float v=0;std::memcpy(&v,records.data()+record*SubLightStride+Radiance+channel*4,4);return v; }
-bool Near(float a,float b) {return std::abs(a-b)<0.00001f;}
-int NativeGenerator(void* out,void* matrices,void* input,bool shadows,float scale) {
-    argsPreserved=out==records.data() && matrices==matrixSentinel && input==source.data() && shadows && scale==1.75f;
-    if (originalEntered) {SetEvent(originalEntered);WaitForSingleObject(originalResume,INFINITE);}
-    // Native generator also updates derived source geometry. Forwarding must
-    // retain those native changes, while our modifier touches output RGB only.
-    Put(input,0xD0,std::uint32_t{0xABCDEF01});
-    for(int i=0;i<requestedCount && i<static_cast<int>(MaxSubLights);++i) {
-        float rgb[]{2.0f+i,3,4};
-        if(invalidLast && i==requestedCount-1) rgb[2]=std::numeric_limits<float>::quiet_NaN();
-        std::memcpy(static_cast<unsigned char*>(out)+i*SubLightStride+Radiance,rgb,sizeof(rgb));
-    }
-    return requestedCount;
+constexpr std::uintptr_t base = 0x10000000, nativeResult = 0x8877665544332211ULL;
+unsigned checks = 0, failures = 0, nativeCalls = 0;
+std::array<unsigned char, GpuStride> output{}, expectedNative{};
+std::array<unsigned char, 0x640> source{};
+std::array<unsigned char, 128> binner{};
+float nativeRgb[3]{2, 3, 4};
+bool argsPreserved = false;
+HANDLE originalEntered = nullptr, originalResume = nullptr;
+void Check(bool good, const char* name) {
+    ++checks;
+    if (!good) { ++failures; std::printf("FAIL %s\n", name); }
 }
-std::uintptr_t NativeArea(void* context,void* out,int index) {
-    argsPreserved=context==source.data() && out==areaRecord.data() && index==13;
-    if(originalEntered) {SetEvent(originalEntered);WaitForSingleObject(originalResume,INFINITE);}
-    const float rgb[]{2,3,4};std::memcpy(static_cast<unsigned char*>(out)+AreaRadiance,rgb,sizeof(rgb));
-    Put(out,0x7C,std::uint32_t{0xABCDEF01});
-    return 0x8877665544332211ULL;
+float Channel(unsigned channel) {
+    float value = 0;
+    std::memcpy(&value, output.data() + GpuRadiance + channel * 4, 4);
+    return value;
 }
-void Setup(std::uint32_t type=Omni) {
-    records.fill(0xAB);areaRecord.fill(0xEF);source.fill(0xCD);Put(source.data(),0,type);
-    requestedCount=1;invalidLast=false;argsPreserved=false;
-    WorldLightingTestConfigure(base,NativeGenerator,NativeArea);
-    WorldSettings s{};s.lightingEnabled=true;s.localLightBrightness=2;
-    s.localLightTint[0]=0.5f;s.localLightTint[1]=0.25f;s.localLightTint[2]=0;WorldSetSettings(s);
+bool Near(float a, float b) { return std::abs(a - b) < 0.00001f; }
+std::uintptr_t NativePack(void* context, void* input, void* out) {
+    ++nativeCalls;
+    argsPreserved = context == binner.data() && input == source.data() && (out == output.data() || !out);
+    if (originalEntered) { SetEvent(originalEntered); WaitForSingleObject(originalResume, INFINITE); }
+    // Model a complete native pack, including geometry/flags. Our modifier must
+    // preserve every one of these native output bytes outside the RGB float3.
+    for (std::size_t i = 0; i < expectedNative.size(); ++i)
+        expectedNative[i] = static_cast<unsigned char>(i * 37 + nativeCalls);
+    std::memcpy(expectedNative.data() + GpuRadiance, nativeRgb, sizeof(nativeRgb));
+    if (out) std::memcpy(out, expectedNative.data(), expectedNative.size());
+    return nativeResult;
 }
-int Generate(std::uintptr_t caller=base+PerViewReturn) {return WorldLightingTestGenerate(records.data(),matrixSentinel,source.data(),true,1.75f,caller);}
-std::uintptr_t Area(std::uintptr_t caller=base+AreaReturnA) {return WorldLightingTestPackArea(source.data(),areaRecord.data(),13,caller);}
-float AreaChannel(unsigned channel) {float value=0;std::memcpy(&value,areaRecord.data()+AreaRadiance+channel*4,4);return value;}
+void Setup() {
+    output.fill(0xAB); source.fill(0xCD); binner.fill(0xEF);
+    nativeRgb[0] = 2; nativeRgb[1] = 3; nativeRgb[2] = 4;
+    argsPreserved = false; nativeCalls = 0;
+    WorldLightingTestConfigure(base, NativePack);
+    WorldSettings s{};
+    s.lightingEnabled = true; s.localLightBrightness = 2;
+    s.localLightTint[0] = 0.5f; s.localLightTint[1] = 0.25f; s.localLightTint[2] = 0;
+    WorldSetSettings(s);
+}
+std::uintptr_t Pack(std::uintptr_t caller = base + PackReturn, void* target = output.data()) {
+    return WorldLightingTestPackLight(binner.data(), source.data(), target, caller);
+}
+bool OutsideRgbUnchanged() {
+    auto expected = expectedNative;
+    std::memcpy(expected.data() + GpuRadiance, output.data() + GpuRadiance, 12);
+    return expected == output;
+}
 }
 int main() {
-    Setup();auto initial=source;
-    Check(Generate()==1 && argsPreserved,"five native arguments and result preserved");
-    Check(Near(Channel(0,0),2)&&Near(Channel(0,1),1.5f)&&Channel(0,2)==0,"native radiance tint and brightness");
-    Put(initial.data(),0xD0,std::uint32_t{0xABCDEF01});Check(source==initial,"source colors untouched and native geometry retained");
-    Check(records[Radiance-1]==0xAB && records[Radiance+12]==0xAB,"only RGB twelve bytes changed");
-    requestedCount=6;Check(Generate()==6 && Near(Channel(5,0),7)&&Near(Channel(5,1),1.5f),"all six omni sublights modified");
-    for(unsigned i=0;i<100;++i) Generate();Check(Near(Channel(5,1),1.5f),"fresh output baseline prevents accumulation");
-    Setup(Spot);Generate();Check(Near(Channel(0,1),1.5f),"spot classified from native type");
-    Setup(Ortho);Generate();Check(Near(Channel(0,1),1.5f),"ortho classified from native type");
-    Setup(Directional);Generate();Check(Channel(0,1)==3,"directional sunlight kept independent");
-    Setup(1234);Generate();Check(Channel(0,1)==3,"unknown source type forwards");
-    Setup();Generate(base+PerViewReturn+1);Check(Channel(0,1)==3,"other generator caller forwards");
-    auto s=WorldGetSettings();s.lightingEnabled=false;WorldSetSettings(s);Generate();
-    Check(Channel(0,1)==3 && std::strstr(WorldLightingStatus(),"disabled"),"disabled controls retain native output");
-    s.lightingEnabled=true;s.localLightBrightness=0;WorldSetSettings(s);Generate();Check(Channel(0,0)==0&&Channel(0,1)==0&&Channel(0,2)==0,"zero native light brightness");
-    Setup();requestedCount=6;invalidLast=true;Generate();
-    Check(Channel(0,1)==3&&std::isnan(Channel(5,2)),"entire RGB batch validates before changes");
-    Setup();requestedCount=7;Generate();Check(Channel(0,1)==3,"unexpected result count rejects modification");
-    Setup();requestedCount=0;Check(Generate()==0&&records[Radiance]==0xAB,"empty output forwards");
-    Setup();Generate();WorldLightingStop("test");WorldLightingActivate();Generate();
-    Check(Channel(0,1)==3 && std::strstr(WorldLightingStatus(),"resident"),"stopped hook remains native and resident");
-    Setup();originalEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);originalResume=CreateEventW(nullptr,TRUE,FALSE,nullptr);
-    std::thread inOriginal([]{Generate();});WaitForSingleObject(originalEntered,INFINITE);
-    WorldLightingStop("native generator busy");SetEvent(originalResume);inOriginal.join();
-    CloseHandle(originalEntered);CloseHandle(originalResume);originalEntered=originalResume=nullptr;
-    Check(Channel(0,1)==3,"stop does not wait on original and blocks later writes");
-    Setup();auto areaSource=source;auto areaNative=areaRecord;
-    const float rgb[]{2,3,4};std::memcpy(areaNative.data()+AreaRadiance,rgb,sizeof(rgb));Put(areaNative.data(),0x7C,std::uint32_t{0xABCDEF01});
-    Check(Area()==0x8877665544332211ULL && argsPreserved,"area pack all arguments and full RAX preserved");
-    Check(Near(AreaChannel(0),2)&&Near(AreaChannel(1),1.5f)&&AreaChannel(2)==0,"area GPU radiance changes");
-    Check(source==areaSource,"area scene source retained");
-    std::memcpy(areaNative.data()+AreaRadiance,areaRecord.data()+AreaRadiance,12);
-    Check(areaNative==areaRecord,"area modifies twelve GPU RGB bytes only");
-    for(unsigned i=0;i<100;++i)Area();Check(Near(AreaChannel(1),1.5f),"area repeated views never accumulate");
-    Area(base+AreaReturnB);Check(Near(AreaChannel(1),1.5f),"second native area view caller supported");
-    Area(base+AreaReturnA+1);Check(AreaChannel(1)==3,"unknown area caller retained");
-    s=WorldGetSettings();s.lightingEnabled=false;WorldSetSettings(s);Area();Check(AreaChannel(1)==3,"disabled area native baseline");
-    s.lightingEnabled=true;s.localLightBrightness=0;WorldSetSettings(s);Area();Check(AreaChannel(0)==0&&AreaChannel(1)==0&&AreaChannel(2)==0,"zero area radiance");
-    Setup();originalEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);originalResume=CreateEventW(nullptr,TRUE,FALSE,nullptr);
-    std::thread inArea([]{Area();});WaitForSingleObject(originalEntered,INFINITE);
-    WorldLightingStop("native area pack busy");SetEvent(originalResume);inArea.join();
-    CloseHandle(originalEntered);CloseHandle(originalResume);originalEntered=originalResume=nullptr;
-    Check(AreaChannel(1)==3,"stop inside native area pack prevents later RGB writes");
-    Area();Check(AreaChannel(1)==3,"area forwarding retained after stop");
-    std::printf("world lighting checks: %u checks, %u failures\n",checks,failures);return failures?1:0;
+    Setup();
+    const auto sourceBefore = source;
+    const auto binnerBefore = binner;
+    Check(Pack() == nativeResult && argsPreserved && nativeCalls == 1,
+        "three native arguments, one original call and complete RAX preserved");
+    Check(Near(Channel(0), 2) && Near(Channel(1), 1.5f) && Channel(2) == 0,
+        "final GPU radiance tint and brightness applied once");
+    Check(OutsideRgbUnchanged(), "every byte outside twelve GPU RGB bytes preserved");
+    Check(source == sourceBefore && binner == binnerBefore, "per-view source and binner never modified");
+    for (unsigned i = 0; i < 100; ++i) Pack();
+    Check(Near(Channel(1), 1.5f) && OutsideRgbUnchanged(), "fresh complete native pack prevents accumulation");
+    nativeRgb[0] = 8; nativeRgb[1] = 6; nativeRgb[2] = 10;
+    Pack();
+    Check(Near(Channel(0), 8) && Near(Channel(1), 3) && Channel(2) == 0,
+        "new registered or generated light baseline receives same final modifier");
+    Pack(base + PackReturn + 1);
+    Check(output == expectedNative && argsPreserved, "other callback caller forwards exact native record");
+    auto s = WorldGetSettings(); s.lightingEnabled = false; WorldSetSettings(s); Pack();
+    Check(output == expectedNative && std::strstr(WorldLightingStatus(), "disabled"), "disabled preserves complete native pack");
+    s.lightingEnabled = true; s.localLightBrightness = 1;
+    for (float& channel : s.localLightTint) channel = 1;
+    WorldSetSettings(s); Pack();
+    Check(output == expectedNative && std::strstr(WorldLightingStatus(), "neutral"), "neutral preserves exact native bytes");
+    nativeRgb[1] = std::numeric_limits<float>::quiet_NaN(); Pack();
+    Check(output == expectedNative, "neutral forwards nonfinite native payload without rewrite");
+    Setup(); s = WorldGetSettings(); s.localLightBrightness = 0; WorldSetSettings(s); Pack();
+    Check(Channel(0) == 0 && Channel(1) == 0 && Channel(2) == 0 && OutsideRgbUnchanged(), "zero local brightness changes RGB only");
+    Setup(); nativeRgb[2] = std::numeric_limits<float>::quiet_NaN(); Pack();
+    Check(output == expectedNative, "entire RGB validates before any write on NaN");
+    nativeRgb[2] = std::numeric_limits<float>::infinity(); Pack();
+    Check(output == expectedNative, "nonfinite native RGB rejected");
+    nativeRgb[2] = -1; Pack();
+    Check(output == expectedNative, "unexpected negative native RGB rejected");
+    Setup(); nativeRgb[0] = std::numeric_limits<float>::max();
+    s = WorldGetSettings(); s.localLightTint[0] = 1; s.localLightBrightness = 8; WorldSetSettings(s); Pack();
+    Check(output == expectedNative, "overflow rejects full RGB modification");
+    Setup(); Check(Pack(base + PackReturn, nullptr) == nativeResult && argsPreserved, "null output rejects modifier while forwarding full native call");
+    Setup(); s = WorldGetSettings();
+    s.sunLightBrightness = 8; s.sunLightTint[0] = 0; s.skyEnabled = true; s.skyBrightness = 0;
+    WorldSetSettings(s); Pack();
+    Check(Near(Channel(0), 2) && Near(Channel(1), 1.5f), "sun and sky controls independent of local RGB modifier");
+    WorldLightingStop("test"); WorldLightingActivate(); Pack();
+    Check(output == expectedNative && std::strstr(WorldLightingStatus(), "resident"), "stopped forwarding remains native and resident despite activation");
+    Setup();
+    originalEntered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    originalResume = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE stoppedEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Check(originalEntered && originalResume && stoppedEvent, "create stop race events");
+    std::thread inNative([] { Pack(); });
+    Check(WaitForSingleObject(originalEntered, 5000) == WAIT_OBJECT_0, "native original entered");
+    std::thread stop([stoppedEvent] { WorldLightingStop("native GPU pack busy"); SetEvent(stoppedEvent); });
+    const bool stopDidNotWait = WaitForSingleObject(stoppedEvent, 5000) == WAIT_OBJECT_0;
+    SetEvent(originalResume);
+    inNative.join(); stop.join();
+    Check(stopDidNotWait, "stop barrier never encloses native renderer");
+    Check(output == expectedNative, "stop during original prevents later RGB write");
+    CloseHandle(originalEntered); CloseHandle(originalResume); CloseHandle(stoppedEvent);
+    originalEntered = originalResume = nullptr;
+    Pack();
+    Check(output == expectedNative && argsPreserved, "later native callback remains forwarded after stop");
+    std::printf("world lighting checks: %u checks, %u failures\n", checks, failures);
+    return failures ? 1 : 0;
 }

@@ -27,8 +27,10 @@ void* NativeCopy(void* to, const void* from, std::size_t size) {
 void Seed(unsigned char* bytes, float scalar = 0) {
     std::memset(bytes, 0x29, BufferSize * 2);
     const float sun[4]{8, 4, 2, 0.7f};
+    const float ambient[4]{0.1f, 0.2f, 0.3f, 0.9f};
     std::memcpy(bytes + SunRgb, sun, sizeof(sun));
     std::memcpy(bytes + DirectionalLightmap, &scalar, sizeof(scalar));
+    std::memcpy(bytes + AmbientRgb, ambient, sizeof(ambient));
 }
 float Value(const unsigned char* bytes, std::size_t offset) {
     float value = 0; std::memcpy(&value, bytes + offset, sizeof(value)); return value;
@@ -98,7 +100,62 @@ int main() {
     WorldResetSettings(); Seed(buffer); Run(buffer);
     Check(Value(buffer, SunRgb) == 8, "reset uses native baseline on the next view");
 
-    Configure(Settings());
+    // Real diffuse fill is added before material/albedo evaluation. It does
+    // not scale the sunlight or replace existing baked/probe illumination.
+    WorldSettings fill{};
+    fill.lightingEnabled = true;
+    fill.ambientLightEnabled = true;
+    fill.ambientLightBrightness = 0.5f;
+    fill.ambientLightTint[0] = 1;
+    fill.ambientLightTint[1] = 0.5f;
+    fill.ambientLightTint[2] = 0;
+    Configure(fill);
+    Seed(buffer); std::memcpy(baseline, buffer, BufferSize); Run(buffer);
+    Check(std::fabs(Value(buffer, AmbientRgb) - 0.6f) < 0.00001f &&
+          std::fabs(Value(buffer, AmbientRgb + 4) - 0.45f) < 0.00001f &&
+          Value(buffer, AmbientRgb + 8) == 0.3f, "ambient adds independently colored scene-linear radiance");
+    Check(Value(buffer, AmbientRgb + 12) == 0.9f, "ambient fourth component preserved");
+    std::memcpy(baseline + AmbientRgb, buffer + AmbientRgb, 12);
+    Check(std::memcmp(baseline, buffer, BufferSize) == 0, "ambient-only update preserves sunlight and every unrelated byte");
+    Check(std::memcmp(buffer, buffer + BufferSize, BufferSize) == 0, "ambient reaches copied native frame variants");
+    Seed(buffer); Run(buffer);
+    Check(std::fabs(Value(buffer, AmbientRgb) - 0.6f) < 0.00001f, "ambient does not accumulate across regenerated views");
+    fill.ambientLightEnabled = false; WorldSetSettings(fill); Seed(buffer); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "disabled ambient preserves original fill");
+    fill.ambientLightEnabled = true; fill.ambientLightBrightness = 0;
+    WorldSetSettings(fill); Seed(buffer); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "zero fill strength preserves native values exactly");
+    fill.ambientLightBrightness = 4; for (float& channel : fill.ambientLightTint) channel = 0;
+    WorldSetSettings(fill); Seed(buffer); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "black fill color preserves native values exactly");
+    fill.ambientLightTint[0] = 1; fill.ambientLightBrightness = 0.5f;
+    WorldSetSettings(fill); Seed(buffer); Run(buffer, Base + CopyReturn + 1);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "ambient rejects unrelated copy caller");
+    Seed(heap.get()); Run(heap.get());
+    Check(Value(heap.get(), AmbientRgb) == 0.1f, "ambient cannot mutate heap or persistent scene state");
+    Seed(buffer); std::memcpy(buffer + AmbientRgb + 4, &nan, sizeof(nan)); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f && std::isnan(Value(buffer + BufferSize, AmbientRgb + 4)),
+        "invalid ambient rejects all override writes while forwarding native copy");
+    fill.lightingEnabled = false; WorldSetSettings(fill); Seed(buffer); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "lighting master disables ambient fill");
+    fill.lightingEnabled = true; fill.ambientLightBrightness = 100; fill.ambientLightTint[0] = -1;
+    fill.ambientLightTint[1] = nan; fill.ambientLightTint[2] = 2; WorldSetSettings(fill);
+    const auto bounded = WorldGetSettings();
+    Check(bounded.ambientLightBrightness == 4 && bounded.ambientLightTint[0] == 0 &&
+          bounded.ambientLightTint[1] == 1 && bounded.ambientLightTint[2] == 1,
+        "ambient settings reject nonfinite color and bound radiance");
+    fill.ambientLightBrightness = nan; WorldSetSettings(fill);
+    Check(WorldGetSettings().ambientLightBrightness == 0.25f, "nonfinite ambient strength restores the default");
+    WorldResetLightingSettings();
+    const auto reset = WorldGetSettings();
+    Check(!reset.ambientLightEnabled && reset.ambientLightBrightness == 0.25f &&
+          reset.ambientLightTint[0] == 1 && reset.ambientLightTint[1] == 1 && reset.ambientLightTint[2] == 1,
+        "lighting reset disables ambient and restores visible default strength");
+    Seed(buffer); Run(buffer);
+    Check(Value(buffer, AmbientRgb) == 0.1f, "lighting reset restores next frame native ambient");
+
+    fill = Settings(); fill.ambientLightEnabled = true;
+    Configure(fill);
     entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     resume = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::atomic<bool> stopDone{false};
@@ -122,7 +179,7 @@ int main() {
     CloseHandle(stopStarted); CloseHandle(stopReturned);
     Check(stopDone.load(), "stop completes after native packet copy drains");
     WorldEnvironmentLightingActivate(); Seed(buffer); Run(buffer);
-    Check(Value(buffer, SunRgb) == 8 && Value(buffer, DirectionalLightmap) == 0,
+    Check(Value(buffer, SunRgb) == 8 && Value(buffer, DirectionalLightmap) == 0 && Value(buffer, AmbientRgb) == 0.1f,
         "stopped resident callback forwards and cannot reactivate");
     std::printf("%u environment lighting checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;

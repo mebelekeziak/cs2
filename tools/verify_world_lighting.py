@@ -1,4 +1,4 @@
-"""Read-only, stdlib-only proof of installed native local-light radiance path."""
+"""Read-only, stdlib-only verification of native final local-light GPU packing."""
 import argparse
 import hashlib
 import json
@@ -7,85 +7,99 @@ import struct
 from pathlib import Path
 from verify_sky_draw import mapped, require_bytes
 
-ROOT=Path(__file__).resolve().parents[1]
-DEFAULT=Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game')
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game')
+
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--game',type=Path,default=DEFAULT)
-    parser.add_argument('--header',type=Path,default=ROOT/'include/world_lighting_offsets.h')
-    args=parser.parse_args()
-    raw,image,base,nt=mapped(args.game/'bin/win64/scenesystem.dll')
-    digest=hashlib.sha256(raw).hexdigest()
-    if digest!='040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--game', type=Path, default=DEFAULT)
+    parser.add_argument('--header', type=Path, default=ROOT / 'include/world_lighting_offsets.h')
+    args = parser.parse_args()
+    raw, image, base, nt = mapped(args.game / 'bin/win64/scenesystem.dll')
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
         raise SystemExit('Changed scenesystem.dll: investigate before changing lighting.')
-    scopes={
-        'generator':(0x4A3CE0,0x4A4C8F,'f5bd3634615d09da402e7a8e8cdc2b475e035fe1201838e0aede79d354f0ae95'),
-        'area_pack':(0x1B0FB0,0x1B1461,'282ac6c2001659af1fec0b4661bb4bc5ab586f155555665560453454d622d5a3'),
+    # These identities and instruction locations are frozen independently of the
+    # implementation header. A header edit cannot redefine the expected binary.
+    scopes = {
+        'final_gpu_pack': (0x1B14B0, 0x1B244F, '8c26a6a330d6a4fb4315cc748ea1ac45f178f5619b3dca261687ec6f373602ff'),
+        'gpu_array_upload': (0x1B2450, 0x1B2612, 'c59b6411baa962e62ba94057c298380d2bd2a88748676470b1bae4a699d20d01'),
+        'selected_sun_removal': (0x1A7FD0, 0x1A814B, 'c24ab7cd649d275f8c4f7e15da610b2db9c0f15ed343787aa1f79a58948aad0c'),
+        'registered_light_gather': (0x19FE30, 0x1A0F7C, 'e7e5d936b114ab71e2ccc177b73e54abf6daa35292c3c1eae66bb495d9c10dcf'),
     }
-    for label,(start,end,expected) in scopes.items():
-        if hashlib.sha256(image[start:end]).hexdigest()!=expected:
+    for label, (start, end, expected) in scopes.items():
+        if hashlib.sha256(image[start:end]).hexdigest() != expected:
             raise SystemExit(f'Changed complete {label} function scope')
-    checks={
-        'generator_entry':(0x4A3CE0,'488bc44488482055488da868f7ffff4881ec90090000'),
-        'fifth_float':(0x4A3D43,'f30f598dc0080000'),
-        'generation_call':(0x1A205C,'e87f1c3000'),
-        'original_source_argument':(0x1A1F88,'4c8bc6'),
-        'source_rgb':(0x4A3F45,'f20f104604f2410f1186b4000000'),
-        'source_b':(0x4A3F53,'8b460c'),
-        'output_b':(0x4A3F5E,'418986bc000000'),
-        'output_stride':(0x1A2426,'4981c52c010000'),
-        'generated_record_transfer':(0x1A2234,'488d4b18498bd5e8d0adeeff'),
-        'perview_record_rgb_transfer':(0x8D099,'f20f1082b4000000f20f1181b4000000'),
-        'gpu_pack_light_data':(0x1B15DF,'488d4f18'),
-        'gpu_pack_transform':(0x1B1674,'e8774f2f00'),
-        'gpu_pack_data_rgb_copy':(0x8BF39,'f20f1082b4000000f20f1181b4000000'),
-        'gpu_pack_rgb_inputs':(0x1B177B,'f30f105d04f30f104d08f30f10550c'),
-        'gpu_pack_rg_store':(0x1B17BB,'f20f119ba0000000'),
-        'gpu_pack_b_store':(0x1B17C3,'f30f1193a8000000'),
-        'return_count':(0x4A4C76,'4584c9b801000000b9060000000f45c1'),
-        'type_switch':(0xCFF67,'486302'),
-        'omni_label':(0xCFFBB,'488d1596df5100'),
-        'spot_label':(0xD00EB,'488d1556de5100'),
-        'directional_label':(0xD021B,'488d1586dd5100'),
-        'ortho_label':(0xD0354,'488d153ddc5100'),
-        'area_entry':(0x1B0FB0,'48895c2410488974241855574156488bec4881ec80000000'),
-        'area_call_a':(0x1B005B,'e8500f0000'),
-        'area_call_b':(0x1B00D6,'e8d50e0000'),
-        'area_stack_gpu_record':(0x1B003F,'488d9560010000'),
-        'area_gpu_stride':(0x1B004B,'488d0cc048c1e104'),
-        'area_rgb_source':(0x1B1313,'f20f1086a0020000'),
-        'area_rg_store':(0x1B131B,'f2410f114670'),
-        'area_b_source':(0x1B1321,'8b86a8020000'),
-        'area_b_store':(0x1B1327,'41894678'),
+    checks = {
+        'pack_entry': (0x1B14B0, '488bc45553488da8e8fdffff4881ec08030000'),
+        'vtable_thunk': (0x1B14A0, 'e90b000000'),
+        'output_argument': (0x1B14CA, '498bd8'),
+        'input_argument': (0x1B14D5, '488bfa'),
+        'binner_argument': (0x1B14EF, '4c8bf9'),
+        'perview_light_data': (0x1B15DF, '488d4f18'),
+        'native_transform': (0x1B1674, 'e8774f2f00'),
+        'rgb_inputs': (0x1B177B, 'f30f105d04f30f104d08f30f10550c'),
+        'rgb_output': (0x1B17BB, 'f20f119ba0000000f30f1193a8000000'),
+        'final_native_blue': (0x1B18C6, 'f30f1193a8000000'),
+        'final_native_green': (0x1B18CE, 'f30f118ba4000000'),
+        'final_native_red': (0x1B18D9, 'f30f1183a0000000'),
+        'only_return': (0x1B2445, '4881c4080300005b5dc3'),
+        'gpu_output_stride': (0x1B2519, '4c69c0e0010000'),
+        'cpu_input_stride': (0x1B2520, '4869d040060000'),
+        'output_array': (0x1B2527, '4c03442448'),
+        'input_array': (0x1B252C, '480393b0e30000'),
+        'pack_virtual_call': (0x1B2533, '41ff5170'),
+        'return_ignored': (0x1B2537, 'ffc7'),
+        'upload_array': (0x1B2550, '4c8b442448'),
+        'upload_size': (0x1B2561, '4c69c8e0010000'),
+        'upload_call': (0x1B2572, '41ff9280030000'),
+        'registered_source_rgb': (0x19FF0D, 'f3410f1085a4010000'),
+        'registered_record_copy': (0x1A002E, 'e8ddcfeeff'),
+        'registered_record_enqueue': (0x1A0F1C, 'e81f8b0200'),
+        'sun_existing_removed': (0x1A8064, 'ff8ea8e30000'),
+        'sun_fallback_removed': (0x1A812B, 'ff8ea8e30000'),
+        'sun_selection_call': (0x1A9B59, 'e872e4ffff'),
+        'ordinary_upload_call': (0x1B4569, 'e8e2deffff'),
     }
-    require_bytes(image,checks)
-    table=[struct.unpack_from('<I',image,0xD058C+i*4)[0] for i in range(6)]
-    if table[1:5]!=[0xCFF8C,0xD01EC,0xD00BC,0xD031C]:
-        raise SystemExit('Changed light type classification jump table')
-    observed={
-        'Timestamp':struct.unpack_from('<I',raw,nt+8)[0], 'ImageSize':len(image),
-        'GenerateSubLights':0x1A2061+struct.unpack_from('<i',image,0x1A205D)[0],
-        'PerViewReturn':0x1A2061,
-        'SubLightStride':struct.unpack_from('<I',image,0x1A2429)[0],
-        'Radiance':struct.unpack_from('<I',image,0x4A3F4F)[0],
-        'MaxSubLights':struct.unpack_from('<I',image,0x4A4C7F)[0],
-        'PackAreaLight':0x1B0060+struct.unpack_from('<i',image,0x1B005C)[0],
-        'AreaReturnA':0x1B0060,'AreaReturnB':0x1B00DB,
-        'AreaStride':(1+(1<<(image[0x1B004E]>>6)))*(1<<image[0x1B0052]),
-        'AreaRadiance':image[0x1B1320],
-        'Omni':1,'Directional':2,'Spot':3,'Ortho':4,
+    require_bytes(image, checks)
+    thunk = struct.unpack_from('<Q', image, 0x5FE688 + 0x70)[0] - base
+    if thunk != 0x1B14A0:
+        raise SystemExit('Changed CLightBinnerGPU packing vtable target')
+    # Decode branch targets, strides, slot and RGB displacements from installed
+    # operands, rather than reading expected values from the header itself.
+    observed = {
+        'Timestamp': struct.unpack_from('<I', raw, nt + 8)[0],
+        'ImageSize': len(image),
+        'PackLocalLight': thunk + 5 + struct.unpack_from('<i', image, thunk + 1)[0],
+        'PackThunk': thunk,
+        'PackReturn': 0x1B2533 + 4,
+        'BinnerVtable': 0x5FE688,
+        'PackSlot': image[0x1B2536],
+        'GpuStride': struct.unpack_from('<I', image, 0x1B251C)[0],
+        'GpuRadiance': struct.unpack_from('<I', image, 0x1B17BF)[0],
+        'OutputStrideInstruction': 0x1B2519,
+        'RadianceStore': 0x1B17BB,
     }
-    source=re.sub(r'//[^\n]*|/\*.*?\*/','',args.header.read_text(),flags=re.S)
-    for name,value in observed.items():
-        match=re.search(rf'\b{name}\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)',source)
-        if not match or int(match[1],0)!=value: raise SystemExit(f'Header {name} differs: {value:#x}')
-    for name,address in [('GeneratorBytes',observed['GenerateSubLights']),('CallBytes',observed['PerViewReturn']-5),
-                         ('AreaBytes',observed['PackAreaLight']),('AreaCallABytes',observed['AreaReturnA']-5),
-                         ('AreaCallBBytes',observed['AreaReturnB']-5)]:
-        match=re.search(rf'\b{name}\[\]\s*\{{([^}}]+)\}}',source)
-        blob=bytes(int(v,0) for v in re.findall(r'0[xX][0-9a-fA-F]+|\d+',match[1])) if match else b''
-        if not blob or image[address:address+len(blob)]!=blob: raise SystemExit(f'Header bytes {name} differ')
-    print(json.dumps({'sha256':digest,'verified_function_scopes':list(scopes),'verified':list(checks),'constants':{k:hex(v) for k,v in observed.items()},'live_visual_observation':False},indent=2))
+    if struct.unpack_from('<I', image, 0x1B17C7)[0] != observed['GpuRadiance'] + 8:
+        raise SystemExit('GPU RGB output no longer forms one contiguous float3')
+    if struct.unpack_from('<I', image, 0x1B2564)[0] != observed['GpuStride']:
+        raise SystemExit('Upload stride differs from individual GPU output stride')
+    source = re.sub(r'//[^\n]*|/\*.*?\*/', '', args.header.read_text(), flags=re.S)
+    for name, value in observed.items():
+        match = re.search(rf'\b{name}\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)', source)
+        if not match or int(match[1], 0) != value:
+            raise SystemExit(f'Header {name} differs: {value:#x}')
+    for name, address in [('PackBytes', 0x1B14B0), ('ThunkBytes', 0x1B14A0),
+                          ('CallBytes', 0x1B2533), ('StrideBytes', 0x1B2519), ('RadianceBytes', 0x1B17BB)]:
+        match = re.search(rf'\b{name}\[\]\s*\{{([^}}]+)\}}', source)
+        blob = bytes(int(v, 0) for v in re.findall(r'0[xX][0-9a-fA-F]+|\d+', match[1])) if match else b''
+        if not blob or image[address:address + len(blob)] != blob:
+            raise SystemExit(f'Header bytes {name} differ')
+    print(json.dumps({'sha256': digest, 'verified_function_scopes': list(scopes), 'verified': list(checks),
+                      'constants': {k: hex(v) for k, v in observed.items()},
+                      'legacy_cubemap_hook_removed': True, 'live_visual_observation': False}, indent=2))
 
-if __name__=='__main__':main()
+
+if __name__ == '__main__':
+    main()

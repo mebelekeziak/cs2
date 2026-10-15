@@ -46,10 +46,12 @@ bool OwnedFrame(void* destination, const void* source, std::size_t size) noexcep
         upper - from >= BufferSize * 2 && to == from + BufferSize;
 }
 bool WriteFrame(std::uintptr_t frame, const float (&sun)[3], bool sunChanged,
-                float directional, bool directionalChanged) noexcept {
+                float directional, bool directionalChanged,
+                const float (&ambient)[3], bool ambientChanged) noexcept {
     __try {
         if (sunChanged) std::memcpy(reinterpret_cast<void*>(frame + SunRgb), sun, sizeof(sun));
         if (directionalChanged) std::memcpy(reinterpret_cast<void*>(frame + DirectionalLightmap), &directional, sizeof(directional));
+        if (ambientChanged) std::memcpy(reinterpret_cast<void*>(frame + AmbientRgb), ambient, sizeof(ambient));
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -62,11 +64,13 @@ void* CopyFrame(void* destination, const void* source, std::size_t size, std::ui
     const bool sunChanged = settings.sunLightBrightness != 1 || settings.sunLightTint[0] != 1 ||
         settings.sunLightTint[1] != 1 || settings.sunLightTint[2] != 1;
     const bool directionalChanged = settings.directionalLightmapsMode != 0;
-    if (!sunChanged && !directionalChanged) return originalCopy(destination, source, size);
+    const bool ambientChanged = settings.ambientLightEnabled && settings.ambientLightBrightness > 0 &&
+        (settings.ambientLightTint[0] > 0 || settings.ambientLightTint[1] > 0 || settings.ambientLightTint[2] > 0);
+    if (!sunChanged && !directionalChanged && !ambientChanged) return originalCopy(destination, source, size);
     AcquireSRWLockExclusive(&mutationLock);
     bool apply = enabled.load(std::memory_order_acquire) && !stopped && OwnedFrame(destination, source, size);
     const auto frame = reinterpret_cast<std::uintptr_t>(source);
-    float sun[3]{}, directional = settings.directionalLightmapsMode == 1 ? 0.0f : 1.0f;
+    float sun[3]{}, ambient[3]{}, directional = settings.directionalLightmapsMode == 1 ? 0.0f : 1.0f;
     float nativeDirectional = 0;
     if (apply && directionalChanged) {
         apply = Read(frame + DirectionalLightmap, &nativeDirectional, sizeof(nativeDirectional)) &&
@@ -79,7 +83,14 @@ void* CopyFrame(void* destination, const void* source, std::size_t size, std::ui
             if (apply) sun[i] *= settings.sunLightTint[i] * settings.sunLightBrightness;
         }
     }
-    if (apply) apply = WriteFrame(frame, sun, sunChanged, directional, directionalChanged);
+    if (apply && ambientChanged) {
+        apply = Read(frame + AmbientRgb, ambient, sizeof(ambient));
+        for (unsigned i = 0; apply && i < 3; ++i) {
+            apply = std::isfinite(ambient[i]) && std::fabs(ambient[i]) <= 65536;
+            if (apply) ambient[i] += settings.ambientLightTint[i] * settings.ambientLightBrightness;
+        }
+    }
+    if (apply) apply = WriteFrame(frame, sun, sunChanged, directional, directionalChanged, ambient, ambientChanged);
     if (!apply) {
         rejected.fetch_add(1, std::memory_order_relaxed);
         ReleaseSRWLockExclusive(&mutationLock);
@@ -92,7 +103,7 @@ void* CopyFrame(void* destination, const void* source, std::size_t size, std::ui
     void* result = originalCopy(destination, source, size);
     modified.fetch_add(1, std::memory_order_relaxed);
     lastOwner.store(GetCurrentThreadId(), std::memory_order_relaxed);
-    status.store("sun and directional lightmap view constants active", std::memory_order_release);
+    status.store("sun, ambient fill and directional lightmap view constants active", std::memory_order_release);
     ReleaseSRWLockExclusive(&mutationLock);
     return result;
 }
@@ -114,7 +125,8 @@ bool WorldEnvironmentLightingPrepare(WorldEnvironmentLightingLogCallback callbac
         !Match(sceneBase + CopyBuffer, CopyBytes) || !Match(sceneBase + BufferProducer, ProducerBytes) ||
         !Match(sceneBase + BufferUpload, UploadBytes) ||
         !Match(sceneBase + DirectionalProducer, DirectionalBytes) ||
-        !Match(sceneBase + DirectionalStore, DirectionalStoreBytes) || !Match(sceneBase + SunProducer, SunBytes)) {
+        !Match(sceneBase + DirectionalStore, DirectionalStoreBytes) || !Match(sceneBase + SunProducer, SunBytes) ||
+        !Match(sceneBase + AmbientProducer, AmbientProducerBytes) || !Match(sceneBase + AmbientStore, AmbientStoreBytes)) {
         status.store("environment lighting build verification failed", std::memory_order_release);
         return false;
     }
@@ -125,7 +137,7 @@ bool WorldEnvironmentLightingPrepare(WorldEnvironmentLightingLogCallback callbac
         return false;
     }
     status.store("awaiting native lighting view constants", std::memory_order_release);
-    if (logger) logger("WORLD_ENV_LIGHT_BUILD_VERIFIED copy=0x569120 caller=0x1B0CD1 buffer=0x7DE0 sun_rgb=0x79A0 directional_lightmaps=0x40; freshly constructed native stack output only, no scene/cvar writes");
+    if (logger) logger("WORLD_ENV_LIGHT_BUILD_VERIFIED copy=0x569120 caller=0x1B0CD1 buffer=0x7DE0 sun_rgb=0x79A0 ambient_rgb=0x120 directional_lightmaps=0x40; freshly constructed native stack output only, no scene/cvar writes");
     return true;
 }
 void WorldEnvironmentLightingActivate() noexcept {

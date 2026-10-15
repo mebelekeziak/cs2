@@ -24,6 +24,9 @@ struct WorldSettings {
     float localLightBrightness = 1.0f;
     float sunLightTint[3]{1.0f, 1.0f, 1.0f};
     float sunLightBrightness = 1.0f;
+    bool ambientLightEnabled = false;
+    float ambientLightTint[3]{1.0f, 1.0f, 1.0f};
+    float ambientLightBrightness = 0.25f; // Added scene-linear diffuse fill.
     int directionalLightmapsMode = 0; // Game value / enabled / disabled.
 };
 

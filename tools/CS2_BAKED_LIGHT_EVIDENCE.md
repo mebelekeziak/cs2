@@ -127,3 +127,65 @@ writable engine field, a recurring setter, or the lightmap shader's source
 buffer offset. No fullbright or arbitrary ambient scalar is inferred from it.
 Installed worldrenderer `r_lightmap_size`, `r_lightmap_set` are load/resource
 configuration, rather than verified live brightness parameters.
+
+## October 15 native ambient diffuse fill
+
+The existing per-view frame contains a separate RGB diffuse-fill input at
+**`buffer+0x120`**. This is now implemented as optional additive native ambient
+fill; it is not a baked-lightmap scale or a screen postprocess.
+
+The builder loads context key `0x8310AEF1` at `0x1AF956`, supplies a zero
+float4 default, and calls native float4 getter `0x4D270` at `0x1AF993`.
+Instructions `0x1AF998` and `0x1AF9A4` copy its result from local output
+`RSP+0x60` into `RBP+0xF0`. With the established native buffer base `RBP-0x30`,
+the latter is exactly `buffer+0x120`. The context key's source spelling remains
+unresolved; its output has been identified through the actual shader consumer.
+
+Original installed shader DXBC establishes that this slot is used. Both ordinary
+generic and CS:GO lightmapped shader families bind the frame as CB3. Their first
+compressed static-combo payloads contain four and eight DXBC variants respectively,
+including variants declaring baked-lighting CB5. Every one of these twelve variants
+reads **CB3 float4 18**, byte offset `18*16=0x120`, as diffuse ambient fill.
+For example, the original lightmapped variant 3 contains:
+
+```text
+mul r2.xyz, r0.yyyy, cb3[1946].xyzx
+mad r0.yzw, r0.zzzz, r2.xxyz, cb3[18].xxyz
+...
+mov r0.yzw, cb3[18].xxyz
+```
+
+The first branch accumulates shadowed directional sunlight and this fill; the
+other uses fill alone. CB3 float4 1946 is `0x79A0`, independently matching the
+already verified sun-radiance producer. Later shader instructions combine this
+diffuse light with local and baked contributions and multiply by material albedo
+before fog/output. The fill follows the native scene-linear light path, with no
+independent tone-map/exposure multiplier inferred for this parameter.
+
+`python tools/inspect_ambient_lighting.py` reproduces the producer checks, extracts
+the original installed shaders read-only, verifies their existing frozen SHA-256
+hashes, decompresses their original DXBC with the retained MIT VRF dictionary,
+and verifies both ambient branch instructions and matching sun input in all twelve
+variants. Report `logs/research/ambient-lighting-report.json` records each original
+DXBC SHA-256, byte length, and CB5 presence; original assemblies are saved as
+`ambient-generic-ps0..3-20261015.asm` and `ambient-lightmapped-ps0..7-20261015.asm`.
+Lightmapped variant 3 SHA-256:
+`e44808d982234b3d0f73e969f701e5362b99b16de2d914464fddf0e5421f81fd`.
+The asset hashes remain those recorded in `CS2_SURFACE_TINT_EVIDENCE.md`.
+
+The new setting adds `RGB tint * strength` to freshly constructed native fill,
+preserving its fourth float and every unrelated frame byte. The optional checkbox
+starts disabled, with white tint and strength 0.25 so enabling it has a useful
+starting intensity. Strength 0..4 is a bounded scene-linear additive control range,
+not a measured physical-unit conversion. Disabled, zero-strength, or black fill
+preserves the native input exactly. Values regenerate from native data each frame;
+no accumulated scaling, persistent entity/cvar writes, or shader/resource copies
+are involved. The existing exact caller/size/current-thread-stack checks and
+cooperative copy barrier cover these writes and native variant propagation.
+
+This can add colored diffuse fill in shadowed areas. It cannot darken or recolor
+existing baked irradiance, update reflections, or recompute light/shadow transport.
+The proven shader coverage is the twelve inspected ordinary variants, not every
+shader family or static combination used by the game. Native UI/HUD paths are not
+processed by a fullscreen color filter. Static proof and standalone checks do not
+establish live appearance in a map; an authorized offline visual check is pending.

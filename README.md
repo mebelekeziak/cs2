@@ -50,13 +50,44 @@ It is currently unsupported; see [surface tint evidence](tools/CS2_SURFACE_TINT_
   orthographic, area and barn-light contributions.
 - Disable local lights, following the native gather routines' disabled path.
 - Sun RGB tint and brightness (0–8).
+- **Add ambient light:** independent RGB color and intensity (0–4, initially
+  0.25). This adds native diffuse fill before surface coloring and fog, so
+  shaded surfaces can share the chosen ambience. It starts disabled; zero
+  intensity or black adds nothing. This does not affect the HUD through a
+  screen filter.
 - Directional lightmaps: **Game value**, **Enabled** or **Disabled**.
 
-These controls change generated radiance, current-view GPU records or freshly
+These controls change current-view GPU records or freshly
 constructed frame-stack constants on their native callbacks. They do not write
 persistent scene entities, shared cvars or installed game files. Disabling local
 lights leaves baked illumination intact; directional-lightmap mode follows the
 engine switch and does not disable all baked lighting or recompute shadows.
+Ambient fill does not subtract, replace or recolor existing baked irradiance;
+it adds illumination to the current map lighting. **Reset lighting** also
+disables ambient fill and restores its default color/intensity.
+
+The October 15 ambience follow-up traced the old local-light implementation
+beyond CPU counters. The callback previously described as area-light packing
+actually packs cubemap reflection volumes: its tint is not a local diffuse
+lighting control. The corrected path targets the local-light GPU records used
+by the installed world shaders. See the [comparison and scope](docs/CS2_AMBIENCE_RESEARCH.md)
+and [native-light evidence](tools/CS2_LIGHTING_EVIDENCE.md). Screen color grading
+is unchanged by this follow-up.
+
+**Follow-up verification, October 15, 2026:** both public and diagnostic x64
+Release builds succeed, with **16/16 CTest suites passing in each**. All seven
+installed-binary compatibility checks pass; the fresh report is
+`logs/compatibility/20261015T131101141927Z/`. The ambient shader probe verifies
+twelve original generic/lightmapped variants. Temporary header mutations reject
+incorrect ambient offsets/producers/bytes and local RGB/caller/prolog values.
+The real Lighting menu preview was inspected, and mouse-driven tests cover the
+ambient master, intensity, resets and independence from other settings.
+No new live client appearance observation is claimed. Restart CS2 normally and
+use the rebuilt **Load Overlay.cmd** workflow for the next offline/private
+check; stopped old hooks remain resident until process exit. Under **Lighting**,
+enable **Override lighting**, then **Add ambient light** and choose its color
+and intensity. Local tint/brightness now applies at the final native light GPU
+packing stage; baked lamps/irradiance remain separate from dynamic local lights.
 
 **Screen color:** exposure (−3 to +3 EV), contrast, saturation, gamma, RGB tint,
 vignette and sharpening process the game image, including its HUD, before this

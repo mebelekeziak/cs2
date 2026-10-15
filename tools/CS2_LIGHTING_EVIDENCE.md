@@ -1,117 +1,136 @@
-# Native local-light radiance, installed CS2 1.41.9.1
+# Native local-light GPU radiance, installed CS2 1.41.9.1
 
-Read-only local-binary research. Module RVAs throughout. Canonical verifier:
-`python tools/verify_world_lighting.py`. No process launch, injection, or game
-file changes were used for research or synthetic checks.
+Read-only installed-binary and shader research, corrected October 15, 2026.
+Canonical verifier: `python tools/verify_world_lighting.py`. Module RVAs
+throughout. Research did not launch or inject into a process, access a public
+session, or change installed game files. No live visual result is claimed.
 
 `scenesystem.dll` SHA256:
 `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`;
 AMD64 PE timestamp `0x6ACFCD4F`, image size `0x978000`.
 
-The light creation switch `0xCFF50` reads the source light-data type DWORD.
-Its jump table `0xD058C` maps 1 to the constructor path labelled `OmniLight`,
-2 to `DirectionalLight`, 3 to `SpotLight`, and 4 to `OrthoLight`.
+## Two actual defects in the earlier local-light modifier
 
-Recurring per-view light gathering `0x1A1460` calls native sublight generation
-`0x4A3CE0` at `0x1A205C` (return address `0x1A2061`). Its ABI is
-`int(outSubLights, outMatrices, lightData, bool, float)` on Windows x64.
-The source pointer is passed in R8; its RGB radiance is a float3 at `+4`.
-The fifth float is read from entry RSP+0x28 (frame RBP+0x8C0).
-The native function returns 1 generated record, or 6 when the omni-light
-six-face option is true. Other types return zero. Record stride is `0x12C`.
+The old hook modified native generator `0x4A3CE0` output RGB `+0xB4` at
+caller return `0x1A2061`. That handles generated point/spot/orthographic
+sublights but misses the ordinary registered-light path `0x19FE30`.
+Registered lights copy source `+0xF0` into a fresh per-view record `+0x18`
+through `0x8D010` at `0x1A002E`. Source radiance `+0x1A4/+0x1A8/+0x1AC`
+(`0xF0 + 0xB4`) is tested at `0x19FF0D..0x19FF4B`. The completed record
+is enqueued through `0x1C9A40` at `0x1A0F1C`, without calling the generator.
+Both paths later reach the same final GPU packing callback.
 
-Radiance is copied/scaled from source RGB into each generated record's RGB
-float3 at `+0xB4`. Explicit source and output instructions include
-`0x4A3F45..0x4A3F5E`, `0x4A422E..0x4A424E`, and
-`0x4A4AB7..0x4A4AD9`. Generation writes some native derived geometry back into
-its input; an input clone would suppress these expected updates and is
-therefore inappropriate here.
+The second hook, previously called an area-light extension, was incorrectly
+classified. Function `0x1B0FB0` actually packs **environment cubemap volumes**.
+Its `0x90`-byte records begin at per-view constant buffer `+0x190` (cb3[25]);
+their RGB `+0x70` corresponds to cb3[9*index+32]. The generic shader's
+`S_SPECULAR=1` branch samples `texturecubearray t10`, selects its layer using
+cb3[9*index+28].w, multiplies reflection RGB by cb3[9*index+32].xyz and blends
+probe volumes. It does not produce diffuse area/barn-light radiance.
 
-The caller transfers each generated sublight record into its private per-view
-record at `+0x18`, by calling `0x8D010` at `0x1A223B`. That copier preserves
-RGB `+0xB4` explicitly at `0x8D099..0x8D0AF`. The per-view record's RGB is thus
-at `+0xCC`. Per-view records are copied by value, including generated data,
-into native light-list storage before later GPU packing.
+That output really is uploaded: the base `0x7DE0`-byte packet is copied at
+`0x1B0CCC` and optionally again at `0x1B0D83`, then uploaded at `0x1B0F91`.
+The defect was feature classification, not a later overwrite. The inspected
+generic static-1 shader consumes it in eight dynamic variants; generic
+static-0 and lightmapped static-0/4/6 in 24 inspected dynamic variants do not.
 
-The GPU-packing callback is `CLightBinnerGPU` primary vtable `+0x70`, whose
-thunk `0x1B14A0` jumps to `0x1B14B0`. It takes a per-view record in RDX and
-GPU-record output in R8. At `0x1B15DF` it passes `record+0x18` to `0x4A65F0`
-at `0x1B1674`. This helper copies the transformed light data by value through
-`0x8BEB0`, including RGB `+0xB4` explicitly at `0x8BF39..0x8BF4F`. The
-caller's stack temporary begins at RSP+0x50; temporary RGB `+0xB4` is therefore
-at frame RBP+4/+8/+0xC. Instructions `0x1B177B..0x1B17C3` read that RGB,
-multiply native light factors, and write GPU-record RGB at `+0xA0/+0xA4/+0xA8`.
-This proves the modified generated radiance reaches the actual GPU record,
-separately from sky shader tint and screen color grading.
+**Both old hooks have been removed.** Local-light tint no longer changes
+cubemap reflection-volume constants, and no generator-stage multiplication
+remains to apply the same scale twice.
 
-The implemented hook calls the original generator on its original arguments,
-then modifies only generated stack-record RGB values after validating all
-colors and the count. It applies only at exact return `0x1A2061`, with native
-type 1/3/4. Type 2 is retained for separate sunlight controls. No persistent
-scene field is changed by this modifier, no pointers are retained between
-views, and all geometry, other output fields, and native return values remain
-native. Repeated views rebuild their radiance baseline without accumulation.
+## Final common GPU record
 
-Stop disarms first and drains only short output writes using an SRW barrier.
-Original native generation runs outside that barrier. Stopped forwarding code
-remains resident; queued rendering may complete after stop. This backend does
-not claim baked-lightmap changes, probe ambient changes, or live visual
-validation. The implemented area extension is described below. These controls supplement the working
-visible-sky controls; lighting-sky tint does not replace native light radiance.
+`CLightBinnerGPU` primary vtable `0x5FE688`, slot `+0x70`, points to thunk
+`0x1B14A0` (`e9 0b 00 00 00`), which jumps to `0x1B14B0`. The complete
+contiguous function is `0x1B14B0..0x1B244F` (exclusive end, sole return
+`0x1B244E`). Its Windows x64 inputs are exactly:
 
-## Area/barn extension
+- RCX: native binner/context.
+- RDX: current per-view CPU light record.
+- R8: one caller-owned GPU output record.
 
-The area extension is implemented in `src/world_lighting.cpp`, with constants
-in `include/world_lighting_offsets.h` and synthetic cases in
-`tests/world_lighting_checks.cpp`. It hooks native GPU-record packing
-`0x1B0FB0` only at callers returning to `0x1B0060` or `0x1B00DB`.
-Its Windows x64 arguments are RCX context, RDX output GPU record, R8d integer
-light index. The native caller ignores the return; the forwarding wrapper
-preserves full RAX as `uintptr_t` without assigning a semantic return type.
+It consumes no fourth register or stack argument. The caller ignores RAX;
+the forwarding wrapper preserves the complete register as `uintptr_t` without
+assigning a boolean/count meaning to it.
 
-Both callers supply their current thread's stack GPU-record array at frame
-RBP+0x160, with record stride `0x90`. Original packing reads scene light RGB
-float3 at `+0x2A0` and stores output GPU RGB at `+0x70/+0x74/+0x78` at
-`0x1B1313..0x1B1327`; later native debug coloring may replace it before
-original return. The modifier applies shared local color/brightness after
-original returns, to those twelve output bytes only. It preserves all native
-arguments, other GPU fields, and scene data. Native originals remain outside
-the writer barrier. Separate telemetry counters report ordinary radiance
-records and area GPU records.
+The native virtual call is `0x1B2533`, bytes `41 ff 51 70`, returning to
+`0x1B2537`. The caller computes input as `[binner+0xE3B0] + index*0x640`
+and output as its private array plus `index*0x1E0`. The array initially has
+64 records on the caller's stack and may grow through native allocation.
+After packing, graphics upload vtable `+0x380` at `0x1B2572` receives that
+same array and `count*0x1E0` bytes. Native cleanup follows upload. The modifier
+retains neither input nor output pointers across callbacks.
 
-The area array lies inside the native per-view constant-buffer stack source
-at RBP-0x30. The same builder copies that source at `0x1B0CCC` through
-`0x569120` into the complete `0x7DE0`-byte upload buffer, and eventually calls
-the native graphics upload vtable `+0xF8` at `0x1B0F91`. These instructions
-were inspected from the installed local binary. The area source/store,
-caller/prolog, and stride checks are included in `verify_world_lighting.py`;
-final upload checks can be added on resume if needed.
+Native transformation at `0x1B1674` copies the light's RGB into temporary
+data. Instructions `0x1B17BB/0x1B17C3` unconditionally write output RGB
+`+0xA0/+0xA4/+0xA8`. Additional native factors can scale these values at
+`0x1B18C6/0x1B18CE/0x1B18D9`. The new hook therefore applies only **after
+the complete native function returns**, and only for exact return
+`0x1B2537`. It multiplies those twelve output bytes by local tint/brightness.
+All source records, geometry, flags and unrelated output bytes remain native.
 
-## Validation after resume, October 15, 2026
+This common output includes lights from both generator and registered-light
+gathering, without a source-type restriction that would omit area/barn-shaped
+native lights. It changes contributions represented in this local GPU list;
+it does not recolor baked irradiance or manufacture map lights.
 
-The x64 Release `world_lighting_checks` target builds successfully and passes
-all 29 synthetic checks, including both area callers, RGB-only byte changes,
-full area return-register preservation, baseline regeneration, disabling,
-zero brightness, and stopping while either native original is busy. The code
-review found no source-ownership, forwarding, or stop-barrier repair necessary.
+## Selected sun independence
 
-The original 1.41.9.0 evidence used SHA256
-`bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831`
-and timestamp `0x6AC7FF95`. On resume, verification correctly rejected the
-new installed module before recertification. All 31 frozen instruction
-checks still match in 1.41.9.1. Both entire native functions were decoded
-from entry through their final return: 716 instructions in generator
-`0x4A3CE0..0x4A4C8F` and 269 instructions in area pack
-`0x1B0FB0..0x1B1461` (exclusive end addresses). This confirmed the original
-five-argument generator ABI, three-argument area ABI, output ownership,
-RGB consumers, and native return behavior. Header operands were independently
-decoded again, including the area stride's LEA scale and shift immediate.
+Native selection `0x1A7FD0` removes the selected sun from the ordinary
+`+0xE3B0/+0xE3A8` list. For an existing sun it removes the matching source
+identifier; for fallback selection it copies the directional record and
+removes it with native memmove. Count decrements occur at `0x1A8064` and
+`0x1A812B`. Selection runs at `0x1A9B59`, before ordinary final packing
+through `0x1B4569 -> 0x1B2450`. The selected sun remains under the separate
+native sun control. This does not establish behavior for every hypothetical
+additional directional source that the engine might place in its local list.
 
-The runtime timestamp and verifier fingerprint now pin the recertified
-1.41.9.1 identity above. RVAs, layouts, and runtime behavior did not change.
-The verifier additionally pins SHA256 fingerprints for both complete native
-function scopes. This recertification applies only to this local-light
-backend; other subsystems require their own current-build verification.
+## Actual shader consumers
 
-No live client test, injection, public session, or observed lighting result is
-claimed. Existing sky files were preserved throughout this lighting work.
+Installed shader metadata identifies `g_BarnLights` as generic resource t14
+and lightmapped resource t17 in the inspected variants. Both are structured
+buffers with stride 480 (`0x1E0`). Their shaders load RGB at byte offset 160
+(`0xA0`), multiply it by native per-light attenuation and accumulate lighting.
+This directly connects the final GPU float3 to world shading, independently
+of sky tint, cubemap-volume coefficients and screen grading.
+
+Retained research under `logs/research/`:
+
+- `local-light-final-gpu-findings-20261015.md`: consolidated correction.
+- `final-local-1b14a0-complete-20261015.txt`: full final pack and caller/upload.
+- `final-local-sun-selection-20261015.txt`: native sun selection and callers.
+- `environment-gather-complete.txt`: registered-light path bypassing generator.
+- `area-shader-bindings-20261015.py`: actual g_BarnLights binding metadata.
+- `area-shader-consumers-20261015.py/.json`: inspected shader variants.
+- `area-generic-s1-d0-20261015.asm`: explicit cubemap-volume consumer
+  (search `cb3[r15.x + 32]`).
+
+## Verification, lifecycle and limits
+
+The standalone verifier pins the complete installed module and four complete
+native function scopes: final pack, GPU-array builder/upload, selected-sun
+removal and registered-light gather. It checks 29 frozen instruction ranges,
+decodes the thunk target, virtual slot, GPU stride and RGB displacement
+independently, and compares all runtime header constants and fingerprints.
+`--header` mutation checks rejected an altered RGB offset, caller return and
+prolog fingerprint. Verification never updates offsets automatically.
+
+Public and diagnostic x64 Release builds both succeeded after this correction,
+and all 16 CTest suites passed in each configuration. All seven component
+compatibility verifiers passed against the installed build.
+
+`tests/world_lighting_checks.cpp` exercises three-argument forwarding, complete
+RAX preservation, all output bytes outside RGB, source preservation, fresh
+native baselines, exact caller selection, disabled/neutral behavior, invalid
+and overflowing radiance, zero brightness, independent settings, and stop
+during a busy native original. These synthetic cases cannot demonstrate a
+live material's final appearance or engine scheduling.
+
+Native packing always runs outside the short RGB-write barrier. Stop disarms
+first and drains only pending output writes; a native call that returns after
+stop receives no modification. Hooks remain forwarding and resident until
+normal process exit. Stopped and resident does not mean physically unloaded;
+queued GPU work can finish. Neutral controls perform no RGB read or write.
+Telemetry distinguishes callback visits, nonzero source radiance and actual
+changed GPU RGB records, and includes current tint/brightness. These counters
+are diagnostic evidence, not proof of visible pixels.

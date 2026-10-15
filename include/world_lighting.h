@@ -7,9 +7,7 @@ void WorldLightingStop(const char* reason) noexcept;
 const char* WorldLightingStatus() noexcept;
 void WorldLightingFlushTelemetry() noexcept;
 #ifdef CS2_WORLD_LIGHTING_CHECKS
-using WorldLightingTestGenerator = int (*)(void*,void*,void*,bool,float);
-using WorldLightingTestArea = std::uintptr_t (*)(void*,void*,int);
-void WorldLightingTestConfigure(std::uintptr_t base, WorldLightingTestGenerator original,WorldLightingTestArea area=nullptr) noexcept;
-int WorldLightingTestGenerate(void* outputs,void* matrices,void* source,bool shadows,float scale,std::uintptr_t caller) noexcept;
-std::uintptr_t WorldLightingTestPackArea(void* context,void* output,int index,std::uintptr_t caller) noexcept;
+using WorldLightingTestPack = std::uintptr_t (*)(void*, void*, void*);
+void WorldLightingTestConfigure(std::uintptr_t base, WorldLightingTestPack original) noexcept;
+std::uintptr_t WorldLightingTestPackLight(void* binner, void* light, void* output, std::uintptr_t caller) noexcept;
 #endif

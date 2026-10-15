@@ -180,26 +180,31 @@ Headers: [world_lighting_offsets.h](../include/world_lighting_offsets.h) and
 
 | Namespace / C++ symbol | Current value / kind | Verifier and rediscovery anchor |
 | --- | --- | --- |
-| `world_lighting_offsets::GenerateSubLights`, `PerViewReturn` | `0x4A3CE0`, function RVA; `0x1A2061`, return-site RVA | [verify_world_lighting.py](../tools/verify_world_lighting.py): per-view gather call `0x1A205C`, source/output radiance copies and GPU consumer |
-| `world_lighting_offsets::SubLightStride`, `Radiance`, `MaxSubLights` | `0x12C`, `0xB4`, `6`, stride/member/count | Generator emits 1 or 6 records; native source types Omni/Directional/Spot/Ortho = 1/2/3/4 |
-| `world_lighting_offsets::PackAreaLight`, `AreaReturnA`, `AreaReturnB` | `0x1B0FB0`, function RVA; `0x1B0060`, `0x1B00DB`, return-site RVAs | Area GPU-record packing and two caller-owned stack arrays |
-| `world_lighting_offsets::AreaStride`, `AreaRadiance` | `0x90`, `0x70`, stride/member | Native array indexing and output RGB stores `0x1B1313..0x1B1327` |
+| `world_lighting_offsets::PackLocalLight`, `PackThunk`, `PackReturn` | `0x1B14B0`, `0x1B14A0`, function/thunk RVAs; `0x1B2537`, return-site RVA | [verify_world_lighting.py](../tools/verify_world_lighting.py): actual `g_BarnLights` record pack, reached from the ordinary GPU-light upload |
+| `world_lighting_offsets::BinnerVtable`, `PackSlot` | `0x5FE688`, vtable RVA; `0x70`, slot byte offset | `CLightBinnerGPU` descriptor and indirect native packing dispatch |
+| `world_lighting_offsets::GpuStride`, `GpuRadiance` | `0x1E0`, `0xA0`, stride/member | Native output stride at `0x1B2519` and RGB store at `0x1B17BB`; generic/lightmapped structured-buffer consumers load 480-byte records at byte 160 |
 | `world_lighting_switch_offsets::GatherPointSpot`, `GatherArea` | `0x19F300`, `0x19FE30`, function RVAs | [verify_lighting_switches.py](../tools/verify_lighting_switches.py): exact `lb_enable_lights` registration and clean native disabled paths |
 | `world_lighting_switch_offsets::PointGate`, `AreaGate`, `FrameClear` | `0x19F30D`, `0x19FE49`, `0x1A898B`, instruction RVAs | Native boolean consumers branch before output/state work; per-view `[binner+0xE3D0]=0` clear |
 
-The generator ABI is `int(outSubLights, outMatrices, lightData, bool, float)`;
-preserve its fifth stack float and native return. Area packing receives context,
-output GPU record, integer index; preserve RAX without inventing its semantics.
-Only modify fresh RGB output after original generation. Do not clone generator
-input: it receives native derived geometry writes. Both suppression gathers
+The local GPU pack receives binner, source record and output GPU record in
+RCX/RDX/R8. Preserve its full RAX and all native arguments; modify only fresh
+output RGB after the original returns at the exact verified upload caller.
+The engine removes the selected sun from this ordinary light list, leaving sun
+controls independent. Both suppression gathers
 take three pointers and return void; their native disabled paths establish
 that skipping is safe before output work. Sun/shadow gates inside other large
 functions do not establish safe whole-function early returns.
 
+The old generator tint hook has been replaced to cover the final light records.
+The removed `0x1B0FB0` hook was misidentified as area/barn packing: it packs
+cubemap reflection volumes (`0x90` stride, multiplier at `+0x70`). Those values
+are not diffuse local-light radiance. Do not restore that hook under a local
+lighting label or treat its callback counts as proof of a world-light change.
+
 Details: [local radiance evidence](../tools/CS2_LIGHTING_EVIDENCE.md) and
 [gather/switch evidence](../tools/CS2_ENV_LIGHT_EVIDENCE.md).
 
-## Sun and directional lightmaps: scenesystem.dll
+## Sun, ambient fill and directional lightmaps: scenesystem.dll
 
 Header: [world_environment_lighting_offsets.h](../include/world_environment_lighting_offsets.h),
 namespace `world_environment_lighting_offsets`.
@@ -210,6 +215,7 @@ Details: [baked/environment lighting evidence](../tools/CS2_BAKED_LIGHT_EVIDENCE
 | --- | --- | --- |
 | `CopyBuffer`, `CopyReturn`, `BufferProducer`, `BufferUpload` | `0x569120`, function RVA; `0x1B0CD1`, return-site RVA; `0x1B0CB5`, `0x1B0F77`, instruction RVAs | Native per-view buffer builder `0x1AF7B0`; source-to-variant copy and graphics upload slot `+0xF8` |
 | `BufferSize`, `SunRgb`, `DirectionalLightmap` | `0x7DE0`, size; `0x79A0`, `0x40`, buffer members | Copy/upload byte count; source buffer base is `RBP-0x30`, so stack `RBP+0x7970` is buffer RGB `+0x79A0` |
+| `AmbientProducer`, `AmbientStore`, `AmbientRgb` | `0x1AF956`, `0x1AF998`, instruction RVAs; `0x120`, buffer member | Context key `0x8310AEF1` and float4 getter `0x4D270`; stack `RBP+0xF0` maps to buffer `+0x120`; original generic/lightmapped DXBC reads CB3 float4 18 as diffuse fill |
 | `DirectionalProducer`, `DirectionalStore`, `SunProducer` | `0x1AF917`, `0x1AF939`, `0x1AFA8C`, instruction RVAs | Exact `r_directional_lightmaps` registration; native 0/1 producer/store; selected-sun RGB loads |
 
 Modify the first freshly built stack **source**, so native copies propagate to
@@ -219,6 +225,14 @@ from adjacent `+0x7990`; keep alpha/other fields intact. Directionality zero
 means enabled, one disabled. This changes shading constants, not baked textures.
 `sc_disable_baked_lighting` and shader metadata `g_flLightMapScalar` do not
 establish safe recurring fullbright controls.
+
+The optional ambient control adds `color * intensity` to the fresh native fill
+RGB, preserving W. Disabled, zero-intensity or black is a no-op. This is a real
+scene-lighting input before albedo/fog; it cannot subtract/recolor baked
+irradiance. [inspect_ambient_lighting.py](../tools/inspect_ambient_lighting.py)
+reproduces consumers in twelve original installed shader variants. Its heavier
+shader research dependencies are documented in the evidence; the ordinary
+environment verifier checks the native producer/store and header constants.
 
 ## Overlay and final-image pass
 

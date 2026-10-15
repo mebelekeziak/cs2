@@ -267,6 +267,10 @@ int main() {
            "lighting tab opens native lighting controls");
     ClickControl("Disable local lights");
     Expect(!WorldGetSettings().disableLocalLights, "disabled lighting master blocks local-light control");
+    ClickControl("Add ambient light");
+    ClickControl("##AmbientLightBrightness", 0.7f);
+    Expect(!WorldGetSettings().ambientLightEnabled && WorldGetSettings().ambientLightBrightness == 0.25f,
+           "disabled lighting master blocks ambient fill checkbox and intensity");
     ClickControl("##SunLightBrightness", 0.8f);
     ClickControl("##DirectionalLightmaps");
     Expect(WorldGetSettings().sunLightBrightness == 1 && WorldGetSettings().directionalLightmapsMode == 0 &&
@@ -275,6 +279,14 @@ int main() {
     ClickControl("Override lighting");
     Expect(WorldGetSettings().lightingEnabled && WorldGetSettings().skyEnabled && WorldGetSettings().enabled,
            "lighting master publishes independently of sky and screen color");
+    ClickControl("##AmbientLightBrightness", 0.7f);
+    Expect(WorldGetSettings().ambientLightBrightness == 0.25f,
+           "disabled ambient checkbox blocks intensity even with lighting enabled");
+    ClickControl("Add ambient light");
+    ClickControl("##AmbientLightBrightness", 0.3f);
+    Expect(WorldGetSettings().ambientLightEnabled && WorldGetSettings().ambientLightBrightness > 0.25f &&
+           WorldGetSettings().sunLightBrightness == 1 && WorldGetSettings().localLightBrightness == 1,
+           "ambient fill checkbox and intensity publish independently through mouse input");
     ClickControl("Disable local lights");
     Expect(WorldGetSettings().disableLocalLights, "local-light checkbox publishes native suppression setting");
     ClickControl("##LocalLightBrightness", 0.8f);
@@ -295,8 +307,9 @@ int main() {
     DrawPublicMenu();
     const char* lightingLabels = ImGui::GetCurrentContext()->LogBuffer.c_str();
     Expect(std::strstr(lightingLabels, "Point, spot, orthographic and area lights") &&
-           std::strstr(lightingLabels, "Sunlight") && std::strstr(lightingLabels, "Directional lightmaps"),
-           "lighting help covers supported local lights, sunlight and directional lightmaps");
+           std::strstr(lightingLabels, "Sunlight") && std::strstr(lightingLabels, "Directional lightmaps") &&
+           std::strstr(lightingLabels, "Ambient fill") && std::strstr(lightingLabels, "Baked map lighting remains."),
+           "lighting help covers native ambient fill, local lights, sunlight and directional lightmaps");
     ImGui::LogFinish();
     ImGui::Render();
     altered = WorldGetSettings();
@@ -309,7 +322,9 @@ int main() {
     Frame(); Frame();
     ClickControl("Reset lighting");
     const auto lightReset = WorldGetSettings();
-    Expect(!lightReset.lightingEnabled && !lightReset.disableLocalLights && lightReset.localLightBrightness == 1 &&
+    Expect(!lightReset.lightingEnabled && !lightReset.ambientLightEnabled && lightReset.ambientLightBrightness == 0.25f &&
+           lightReset.ambientLightTint[0] == 1 && lightReset.ambientLightTint[1] == 1 && lightReset.ambientLightTint[2] == 1 &&
+           !lightReset.disableLocalLights && lightReset.localLightBrightness == 1 &&
            lightReset.localLightTint[0] == 1 && lightReset.localLightTint[1] == 1 && lightReset.localLightTint[2] == 1 &&
            lightReset.sunLightTint[0] == 1 && lightReset.sunLightTint[1] == 1 && lightReset.sunLightTint[2] == 1 &&
            lightReset.sunLightBrightness == 1 && lightReset.directionalLightmapsMode == 0 &&
@@ -319,6 +334,9 @@ int main() {
            "lighting reset restores its controls while preserving other world effects");
     altered = lightReset;
     altered.lightingEnabled = true;
+    altered.ambientLightEnabled = true;
+    altered.ambientLightBrightness = 0.4f;
+    altered.ambientLightTint[1] = 0.5f;
     altered.disableLocalLights = true;
     altered.localLightBrightness = 2.5f;
     altered.localLightTint[0] = 0.3f;
@@ -337,6 +355,8 @@ int main() {
            WorldGetSettings().worldMaterialEnabled && WorldGetSettings().flatTextures,
            "tab switching preserves world settings");
     Expect(WorldGetSettings().lightingEnabled && WorldGetSettings().disableLocalLights &&
+           WorldGetSettings().ambientLightEnabled && WorldGetSettings().ambientLightBrightness == 0.4f &&
+           WorldGetSettings().ambientLightTint[1] == 0.5f &&
            WorldGetSettings().localLightBrightness == 2.5f && WorldGetSettings().localLightTint[0] == 0.3f &&
            WorldGetSettings().sunLightBrightness == 3 && WorldGetSettings().sunLightTint[2] == 0.2f &&
            WorldGetSettings().directionalLightmapsMode == 1,
@@ -348,6 +368,8 @@ int main() {
     const WorldSettings reset = WorldGetSettings();
     Expect(!reset.enabled && !reset.skyEnabled && !reset.worldMaterialEnabled && !reset.flatTextures &&
            !reset.lightingEnabled && !reset.disableLocalLights && reset.localLightBrightness == 1 &&
+           !reset.ambientLightEnabled && reset.ambientLightBrightness == 0.25f &&
+           reset.ambientLightTint[0] == 1 && reset.ambientLightTint[1] == 1 && reset.ambientLightTint[2] == 1 &&
            reset.localLightTint[0] == 1 && reset.localLightTint[1] == 1 && reset.localLightTint[2] == 1 &&
            reset.sunLightBrightness == 1 && reset.sunLightTint[0] == 1 && reset.sunLightTint[1] == 1 &&
            reset.sunLightTint[2] == 1 && reset.directionalLightmapsMode == 0 &&
