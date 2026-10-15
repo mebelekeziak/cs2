@@ -6,3 +6,5 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept;
 void SilentAimActivate() noexcept;
 void SilentAimStop(const char* reason) noexcept;
 const char* SilentAimStatus() noexcept;
+// Render owner: reports bounded callback/rejection diagnostics outside hooks.
+void SilentAimFlushTelemetry() noexcept;

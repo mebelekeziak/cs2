@@ -239,6 +239,25 @@ changes through the existing telemetry queue and `AIM_STOPPED_RESIDENT` records
 mutation shutdown. These logs do not prove a hit. Runtime testing remains
 limited to the repository's authorized disconnected/offline/private environment.
 
+**First live report:** the user tested Head and Chest in built-in bot-practice
+deathmatch and reported that shots still followed the crosshair. The supplied
+run `logs/overlay-1708-134365459549632995.log` verifies startup and live opposing
+players, but contains no `AIM_HISTORY` write records. The original build logged
+only successful edits, so that run cannot identify the rejecting condition.
+Do not treat its successful build/static checks as working aim observation.
+
+The diagnostic follow-up now writes bounded **`AIM_DIAGNOSTICS`** records about
+every two seconds from the render owner, including hook counts, enabled/active
+state, shot/target/write counts, exact command-read rejection reason and target
+acquisition/bone-read failure stages. No file I/O was added to the engine hook.
+These diagnostics are always available in the public build; no additional
+flags or launch workflow are needed. They distinguish empty history, absent
+primary input, local identity failures, missing pose/bones and FOV rejection.
+Restart normally, use **Load Overlay.cmd**, enable Aim and repeat a few shots
+in the same offline setup; the new log is needed to isolate the observed
+failure. At this checkpoint no runtime root cause or hit-registration repair
+has been established.
+
 ## Player ESP
 
 Names, outlined player boxes, distance labels, health bars/text, optional armor

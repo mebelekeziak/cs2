@@ -92,3 +92,30 @@ Seven independent in-memory negative mutations were rejected: the header's
 view offset, its named schema field offset and one byte at each of the five
 native anchors. These checks require no game process and do not establish live
 aim behavior.
+
+## Failure investigation: controller identity semantics
+
+Read-only inspection after the user reported no effect found a distinction that
+must remain observable rather than assumed to explain the failure. Function
+`0xB19400` first resolves pawn `m_hController` (`+0x14BC`) through the entity
+table. At `0xB1944D` it compares the complete handle against identity `+0x10`;
+a mismatch rejects that lookup. On assigning a different controller,
+`0xB19474..0xB19496` constructs the reference as
+`((rawHandle >> 15) - (identityFlags & 1)) << 15 | (rawHandle & 0x7FFF)`,
+with invalid-handle handling. Independent assignment at
+`0xC94B3B..0xC94B61` repeats this construction. The verifier freezes all three
+sites, including the flags member, bit mask and serial shifts.
+
+Thus a raw identity handle and a newly constructed reference can differ when
+identity flags bit zero is set. This does not establish that any live controller
+in the user's test had that flag, or that accepting the adjusted serial would
+be correct: the native resolver still requires exact table equality. The aim
+reader retains its existing full identity checks. Optional target diagnostics
+now record the failing stage, raw controller handle, identity flags, reverse
+controller handle, selection counts and bone/model/pose values. These separate
+an identity or pose rejection from an actual angular-FOV rejection.
+
+No current game process or corresponding live target-state capture was
+available during this investigation. The existing log's `AIM_BUILD_VERIFIED`
+only confirms preparation; absence of `AIM_HISTORY` alone cannot identify the
+failing stage or prove that the callback ran.

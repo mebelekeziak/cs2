@@ -74,6 +74,7 @@ void MathChecks() {
 void CommandChecks() {
     ShotFixture fixture;
     AimShot shot{};
+    AimCommandDiagnostics diagnostic{};
     const auto commandBefore = fixture.command, baseBefore = fixture.base;
     const auto baseAnglesBefore = fixture.baseAngles;
     const auto entriesBefore = fixture.entries;
@@ -82,6 +83,9 @@ void CommandChecks() {
     for (auto& message : expectedAngles) Put(Address(message) + cmd::angle::Pitch, desired);
     Expect(SilentAimReadShot(Address(fixture.command), shot) && shot.index == 1 && shot.count == 3 && Near(shot.view.yaw, 5),
            "native primary index selects the reference subtick view");
+    Expect(SilentAimReadShot(Address(fixture.command), shot, &diagnostic) &&
+        !std::strcmp(diagnostic.reason, "ready") && diagnostic.size == 3 && diagnostic.index == 1,
+        "command diagnostics identify valid history and native shot index");
     Expect(SilentAimWriteShot(shot, desired) && fixture.angles == expectedAngles, "primary fire updates all existing angle payloads");
     Expect(fixture.command == commandBefore && fixture.base == baseBefore && fixture.baseAngles == baseAnglesBefore && fixture.entries == entriesBefore,
            "camera/base/CRC/buttons/indices/timestamps/presence/entry order are byte-for-byte preserved");
@@ -93,11 +97,17 @@ void CommandChecks() {
     Put(Address(fixture.command) + movement_offsets::command::Buttons, std::uint64_t{0x208});
     const auto nonfire = fixture.angles;
     Expect(!SilentAimReadShot(Address(fixture.command), shot) && fixture.angles == nonfire, "no primary fire leaves every angle unchanged");
+    Expect(!SilentAimReadShot(Address(fixture.command), shot, &diagnostic) &&
+        !std::strcmp(diagnostic.reason, "no_primary_attack") && diagnostic.buttons == 0x208,
+        "no attack diagnostic distinguishes inactivity from bad history");
     Put(Address(fixture.command) + cmd::command::Presence, std::uint32_t{cmd::command::Attack1Present});
     Put(Address(fixture.command) + cmd::command::Attack1Index, 0);
     Expect(SilentAimReadShot(Address(fixture.command), shot), "intra-command primary tap works after button release");
     Put(Address(fixture.command) + cmd::command::HistorySize, 4);
     Expect(!SilentAimReadShot(Address(fixture.command), shot), "invalid repeated-container count is rejected");
+    Expect(!SilentAimReadShot(Address(fixture.command), shot, &diagnostic) &&
+        !std::strcmp(diagnostic.reason, "history_capacity_below_size") && diagnostic.size == 4 && diagnostic.capacity == 3,
+        "rejected container diagnostics retain the actual count and capacity");
     Put(Address(fixture.command) + cmd::command::HistorySize, 3);
     Put(Address(fixture.command) + cmd::command::HistoryCapacity, 512);
     Expect(SilentAimReadShot(Address(fixture.command), shot), "large retained capacity does not invalidate a small current history");
@@ -190,14 +200,19 @@ struct TargetFixture {
         Configure(local, 1, 3, 0); Configure(enemy, 3, 2, 20); Configure(farther, 5, 2, 40);
         source = {Address(system), Address(local.controller), Address(local.pawn)};
     }
-    bool Select(AimTarget& result, AimHitbox hitbox = AimHitbox::Chest, float fov = 5) {
-        return SilentAimSelectTarget(source, {}, fov, hitbox, bones, result);
+    bool Select(AimTarget& result, AimHitbox hitbox = AimHitbox::Chest, float fov = 5,
+                AimTargetDiagnostics* diagnostics = nullptr) {
+        return SilentAimSelectTarget(source, {}, fov, hitbox, bones, result, diagnostics);
     }
 };
 void TargetChecks() {
     TargetFixture fixture;
     AimTarget target{};
+    AimTargetDiagnostics diagnostic{};
     Expect(fixture.Select(target) && target.enemy.pawn == Address(fixture.enemy.pawn), "nearest angular enemy is selected from validated identities");
+    Expect(fixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && !std::strcmp(diagnostic.stage, "selected") &&
+        diagnostic.controllers == 2 && diagnostic.boneRejected == 0,
+        "target diagnostics distinguish a selected enemy from no candidate");
     const float chestPitch = target.solution.angles.pitch;
     Expect(fixture.Select(target, AimHitbox::Head) && Near(target.solution.angles.pitch, 0), "head resolves its named bone dynamically");
     Expect(fixture.Select(target, AimHitbox::Stomach) && target.solution.angles.pitch < chestPitch,
@@ -222,6 +237,8 @@ void TargetChecks() {
     missingBone = false;
     Put(Address(fixture.enemy.scene) + bone::BoneArray, std::uintptr_t{0});
     Expect(!fixture.Select(target), "missing animated pose skips the target");
+    Expect(!fixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && diagnostic.boneRejected == 1 &&
+        !std::strcmp(diagnostic.boneFailure, "pose cache"), "missing pose diagnostics identify the exact bone-read stage");
     Put(Address(fixture.enemy.scene) + bone::BoneArray, Address(fixture.enemy.pose));
     Put(Address(fixture.enemy.model) + bone::BoneCount, 1);
     Expect(!fixture.Select(target), "bone index is checked against current model count");
@@ -237,6 +254,13 @@ void TargetChecks() {
     fixture.enemy.modelPointer = savedModel;
     Put(Address(fixture.enemy.pawn) + ent::C_BasePlayerPawn::m_hController, std::uint32_t{UINT32_MAX});
     Expect(!SilentAimTargetValid(fixture.source, target) && !fixture.Select(target), "changed reciprocal owner invalidates target");
+    Expect(!fixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && diagnostic.actorRejected >= 1,
+        "invalid reciprocal owner is counted separately from missing bones and FOV");
+    const auto localPawn = fixture.source.pawn;
+    fixture.source.pawn = 0;
+    Expect(!fixture.Select(target, AimHitbox::Chest, 5, &diagnostic) &&
+        !std::strcmp(diagnostic.localFailure, "local pawn global mismatch"), "local source mismatch is diagnosed before enemy scanning");
+    fixture.source.pawn = localPawn;
     Put(Address(fixture.local.pawn) + ent::C_BaseEntity::m_lifeState, std::uint8_t{1});
     Expect(!fixture.Select(target), "dead local player cannot acquire a target");
 }

@@ -396,6 +396,7 @@ void PollMenuMouse(bool foreground) {
 #endif
 
 void DrawFrame(IDXGISwapChain* chain) {
+    SilentAimFlushTelemetry();
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();

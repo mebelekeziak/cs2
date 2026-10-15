@@ -19,38 +19,64 @@ bool Valid(const AimAngles& value) noexcept {
 }
 }
 
-bool SilentAimReadShot(std::uintptr_t command, AimShot& shot) noexcept {
+bool SilentAimReadShot(std::uintptr_t command, AimShot& shot, AimCommandDiagnostics* diagnostics) noexcept {
     shot = {};
-    std::uint32_t presence = 0;
-    int index = -1, size = 0, capacity = 0, allocated = 0;
-    std::uint64_t buttons = 0;
-    std::uintptr_t rep = 0, base = 0, baseAngles = 0;
-    if (!Read(command + off::command::Presence, presence) ||
-        !Read(command + off::command::Attack1Index, index) ||
-        !Read(command + movement_offsets::command::Buttons, buttons) ||
-        !Read(command + off::command::HistorySize, size) || size <= 0 || size > 256 ||
-        !Read(command + off::command::HistoryCapacity, capacity) || capacity < size ||
-        !Read(command + off::command::HistoryRep, rep) || !rep ||
-        !Read(rep + off::repeated::Allocated, allocated) || allocated < size || allocated > capacity ||
-        !Read(command + movement_offsets::command::Base, base) || !base ||
-        !Read(base + movement_offsets::base::Angles, baseAngles) || !baseAngles) return false;
-    const bool initial = (presence & off::command::Attack1Present) && index >= 0 && index < size;
-    if (!initial && !(buttons & 1)) return false;
+    AimCommandDiagnostics observed{};
+    const auto fail = [&](const char* reason) noexcept {
+        observed.reason = reason;
+        if (diagnostics) *diagnostics = observed;
+        shot = {};
+        return false;
+    };
+    std::uintptr_t rep = 0, base = 0;
+    if (!Read(command + off::command::Presence, observed.presence)) return fail("command_presence_unreadable");
+    if (!Read(command + off::command::Attack1Index, observed.index)) return fail("attack_index_unreadable");
+    if (!Read(command + movement_offsets::command::Buttons, observed.buttons)) return fail("buttons_unreadable");
+    if (!Read(command + off::command::HistorySize, observed.size)) return fail("history_size_unreadable");
+    if (observed.size == 0) return fail("history_empty");
+    if (observed.size < 0 || observed.size > 256) return fail("history_size_out_of_range");
+    if (!Read(command + off::command::HistoryCapacity, observed.capacity)) return fail("history_capacity_unreadable");
+    if (observed.capacity < observed.size) return fail("history_capacity_below_size");
+    if (!Read(command + off::command::HistoryRep, rep)) return fail("history_rep_unreadable");
+    if (!rep) return fail("history_rep_missing");
+    if (!Read(rep + off::repeated::Allocated, observed.allocated)) return fail("history_allocated_unreadable");
+    if (observed.allocated < observed.size) return fail("history_allocated_below_size");
+    if (observed.allocated > observed.capacity) return fail("history_allocated_above_capacity");
+    if (!Read(command + movement_offsets::command::Base, base)) return fail("base_unreadable");
+    if (!base) return fail("base_missing");
+    if (!Read(base + movement_offsets::base::Angles, observed.baseAngles)) return fail("base_angles_unreadable");
+    if (!observed.baseAngles) return fail("base_angles_missing");
+    const bool initial = (observed.presence & off::command::Attack1Present) &&
+        observed.index >= 0 && observed.index < observed.size;
+    if (!initial && !(observed.buttons & 1)) return fail("no_primary_attack");
     // For held fire the weapon can use/interpolate retained history, and its
     // final fallback uses the first current entry. Feed every native entry;
     // never synthesize an attack index or edit the weapon's retained ring.
-    shot.command = command; shot.count = size; shot.index = initial ? index : -1; shot.buttons = buttons;
-    for (int i = 0; i < size; ++i) {
+    shot.command = command; shot.count = observed.size;
+    shot.index = initial ? observed.index : -1; shot.buttons = observed.buttons;
+    for (int i = 0; i < observed.size; ++i) {
         auto& entry = shot.history[static_cast<std::size_t>(i)];
-        std::uint32_t entryPresence = 0, anglePresence = 0;
-        if (!Read(rep + off::repeated::Entries + static_cast<std::uintptr_t>(i) * sizeof(std::uintptr_t), entry.entry) || !entry.entry ||
-            !Read(entry.entry + off::history::Presence, entryPresence) || !(entryPresence & off::history::AnglesPresent) ||
-            !Read(entry.entry + off::history::Angles, entry.angles) || !entry.angles || entry.angles == baseAngles ||
-            !Read(entry.angles + off::angle::Presence, anglePresence) ||
-            (anglePresence & off::angle::AllPresent) != off::angle::AllPresent ||
-            !Read(entry.angles + off::angle::Pitch, entry.view) || !Valid(entry.view)) { shot = {}; return false; }
+        observed.entry = i;
+        observed.entryPresence = observed.anglePresence = 0;
+        observed.angles = 0;
+        if (!Read(rep + off::repeated::Entries + static_cast<std::uintptr_t>(i) * sizeof(std::uintptr_t), entry.entry))
+            return fail("history_entry_unreadable");
+        if (!entry.entry) return fail("history_entry_missing");
+        if (!Read(entry.entry + off::history::Presence, observed.entryPresence)) return fail("entry_presence_unreadable");
+        if (!(observed.entryPresence & off::history::AnglesPresent)) return fail("entry_angles_not_present");
+        if (!Read(entry.entry + off::history::Angles, observed.angles)) return fail("entry_angles_unreadable");
+        if (!observed.angles) return fail("entry_angles_missing");
+        if (observed.angles == observed.baseAngles) return fail("entry_angles_alias_base");
+        entry.angles = observed.angles;
+        if (!Read(entry.angles + off::angle::Presence, observed.anglePresence)) return fail("angle_presence_unreadable");
+        if ((observed.anglePresence & off::angle::AllPresent) != off::angle::AllPresent)
+            return fail("angle_components_not_present");
+        if (!Read(entry.angles + off::angle::Pitch, entry.view)) return fail("angle_values_unreadable");
+        if (!Valid(entry.view)) return fail("angle_values_invalid");
     }
-    shot.view = shot.history[static_cast<std::size_t>(initial ? index : 0)].view;
+    shot.view = shot.history[static_cast<std::size_t>(initial ? observed.index : 0)].view;
+    observed.reason = "ready";
+    if (diagnostics) *diagnostics = observed;
     return true;
 }
 bool SilentAimWriteShot(const AimShot& shot, const AimAngles& angles) noexcept {

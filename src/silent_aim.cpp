@@ -25,7 +25,12 @@ std::atomic<const char*> state{"silent aim not initialized"};
 SRWLOCK mutationLock = SRWLOCK_INIT;
 bool stopped = false, prepared = false;
 std::uint64_t callbacks = 0, edited = 0;
+std::atomic<std::uint64_t> historyCalls{0};
+std::uint64_t shots = 0, selected = 0, sourceRejected = 0, writeRejected = 0;
+AimCommandDiagnostics commandDiagnostics{};
+AimTargetDiagnostics targetDiagnostics{};
 ULONGLONG lastReport = 0;
+ULONGLONG lastSummary = 0; // Render owner only.
 
 template<class T> bool Read(std::uintptr_t address, T& value) noexcept {
     return MovementCopy(address, &value, sizeof(value));
@@ -56,17 +61,23 @@ void Process(void* input, void* command) noexcept {
     const auto settings = SilentAimGetSettings();
     if (!settings.enabled) { Status("disabled"); return; }
     AimShot shot{};
-    if (!SilentAimReadShot(reinterpret_cast<std::uintptr_t>(command), shot)) {
+    if (!SilentAimReadShot(reinterpret_cast<std::uintptr_t>(command), shot, &commandDiagnostics)) {
         Status("awaiting primary-fire history"); return;
     }
+    ++shots;
     AimSource source{}, current{};
     AimTarget target{};
-    if (!Source(source) || !SilentAimSelectTarget(source, shot.view, settings.fov, settings.hitbox, bones, target)) {
+    if (!Source(source)) {
+        ++sourceRejected; Status("local source unavailable"); return;
+    }
+    if (!SilentAimSelectTarget(source, shot.view, settings.fov, settings.hitbox, bones, target, &targetDiagnostics)) {
         Status("no enemy in aim FOV"); return;
     }
+    ++selected;
     if (!Source(current) || current.system != source.system || current.controller != source.controller ||
         current.pawn != source.pawn || !SilentAimTargetValid(source, target) ||
         !SilentAimWriteShot(shot, target.solution.angles)) {
+        ++writeRejected;
         Status("source/history changed; shot unchanged"); return;
     }
     ++edited;
@@ -83,6 +94,7 @@ void Process(void* input, void* command) noexcept {
     }
 }
 void HookHistory(void* input, int slot, void* command) noexcept {
+    historyCalls.fetch_add(1, std::memory_order_relaxed);
     original(input, slot, command);
     if (!active.load(std::memory_order_acquire)) return;
     AcquireSRWLockExclusive(&mutationLock);
@@ -144,3 +156,27 @@ void SilentAimStop(const char* reason) noexcept {
     }
 }
 const char* SilentAimStatus() noexcept { return state.load(std::memory_order_acquire); }
+void SilentAimFlushTelemetry() noexcept {
+    if (!logger) return;
+    const auto now = GetTickCount64();
+    if (lastSummary && now - lastSummary < 2000) return;
+    lastSummary = now;
+    char message[1536]{};
+    const auto settings = SilentAimGetSettings();
+    AcquireSRWLockShared(&mutationLock);
+    const auto& command = commandDiagnostics;
+    const auto& target = targetDiagnostics;
+    std::snprintf(message, sizeof(message),
+        "AIM_DIAGNOSTICS hook_calls=%llu callbacks=%llu active=%u enabled=%u hitbox=%d fov=%.2f status=\"%s\" shots=%llu selected=%llu edited=%llu source_rejected=%llu write_rejected=%llu command_reason=%s history=%d/%d allocated=%d attack_index=%d buttons=0x%llx command_presence=0x%x entry=%d entry_presence=0x%x angle_presence=0x%x angles=0x%llx base_angles=0x%llx target_stage=%s local_failure=%s controllers=%u actor_rejected=%u teammates=%u bone_rejected=%u outside_fov=%u bone_failure=%s scene_vtable=0x%llx model_handle=0x%llx model=0x%llx pose=0x%llx bone_count=%d bone_index=%d",
+        historyCalls.load(std::memory_order_relaxed), callbacks, active.load(std::memory_order_acquire), settings.enabled,
+        static_cast<int>(settings.hitbox), settings.fov, SilentAimStatus(), shots, selected, edited, sourceRejected, writeRejected,
+        command.reason, command.size, command.capacity, command.allocated, command.index,
+        command.buttons, command.presence, command.entry, command.entryPresence, command.anglePresence,
+        static_cast<unsigned long long>(command.angles), static_cast<unsigned long long>(command.baseAngles),
+        target.stage, target.localFailure, target.controllers, target.actorRejected, target.teammates,
+        target.boneRejected, target.outsideFov, target.boneFailure,
+        static_cast<unsigned long long>(target.sceneVtable), static_cast<unsigned long long>(target.modelHandle),
+        static_cast<unsigned long long>(target.model), static_cast<unsigned long long>(target.pose), target.boneCount, target.boneIndex);
+    ReleaseSRWLockShared(&mutationLock);
+    logger(message);
+}
