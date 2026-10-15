@@ -4,7 +4,10 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <limits>
 
 namespace {
@@ -22,27 +25,71 @@ bool Finite(const ClipPoint& point) noexcept {
 
 void LogSettings() noexcept {
     if (!logger) return;
-    char message[384]{};
+    char message[768]{};
     std::snprintf(message, sizeof(message),
-        "ESP_SETTINGS enabled=%d names=%d boxes=%d distance=%d health=%d teammates=%d armor=%d range=unlimited",
+        "ESP_SETTINGS enabled=%d names=%d boxes=%d distance=%d health=%d teammates=%d armor=%d range=unlimited "
+        "team_colors=%d box_style=%d thickness=%.2f fill=%d font=%d name_size=%.1f detail_size=%.1f "
+        "box_rgba=%.2f,%.2f,%.2f,%.2f name_rgba=%.2f,%.2f,%.2f,%.2f",
         settings.enabled, settings.names, settings.boxes, settings.distance, settings.health,
-        settings.teammates, settings.armor);
+        settings.teammates, settings.armor, settings.teamColors, settings.boxStyle, settings.boxThickness,
+        settings.boxFill, settings.nameFont, settings.nameSize, settings.detailSize,
+        settings.boxColor[0], settings.boxColor[1], settings.boxColor[2], settings.boxColor[3],
+        settings.nameColor[0], settings.nameColor[1], settings.nameColor[2], settings.nameColor[3]);
     logger(message);
 }
 
-ImU32 TeamColor(int team) {
-    if (team == 2) return IM_COL32(255, 192, 72, 255);
-    if (team == 3) return IM_COL32(86, 190, 255, 255);
-    return IM_COL32(220, 220, 220, 255);
+ImU32 Color(const float (&rgba)[4]) {
+    return ImGui::ColorConvertFloat4ToU32({ rgba[0], rgba[1], rgba[2], rgba[3] });
 }
 
-void OutlinedText(ImDrawList* draw, const ImVec2& position, ImU32 color, const char* text) {
-    const ImU32 black = IM_COL32(0, 0, 0, 230);
-    draw->AddText(ImVec2(position.x - 1, position.y), black, text);
-    draw->AddText(ImVec2(position.x + 1, position.y), black, text);
-    draw->AddText(ImVec2(position.x, position.y - 1), black, text);
-    draw->AddText(ImVec2(position.x, position.y + 1), black, text);
-    draw->AddText(position, color, text);
+ImU32 BoxColor(int team) {
+    if (!settings.teamColors) return Color(settings.boxColor);
+    if (team == 2) return Color(settings.tColor);
+    if (team == 3) return Color(settings.ctColor);
+    return Color(settings.boxColor);
+}
+
+constexpr const char* fontNames[] = { "", "ESP Segoe UI Bold", "ESP Tahoma", "ESP Consolas" };
+constexpr const wchar_t* fontFiles[] = { L"", L"segoeuib.ttf", L"tahoma.ttf", L"consola.ttf" };
+
+// Resolve through the current atlas instead of retaining pointers across context destruction.
+ImFont* FindFont(int choice) noexcept {
+    if (!ImGui::GetCurrentContext() || choice < 1 || choice > 3) return nullptr;
+    for (const ImFontConfig& source : ImGui::GetIO().Fonts->Sources)
+        if (std::strcmp(source.Name, fontNames[choice]) == 0) return source.DstFont;
+    return nullptr;
+}
+
+ImFont* SelectedFont() {
+    if (ImFont* font = FindFont(settings.nameFont)) return font;
+    return ImGui::GetFont();
+}
+
+void LoadFont(ImFontAtlas& atlas, int choice) {
+    wchar_t directory[MAX_PATH]{}, path[MAX_PATH]{};
+    const UINT length = GetWindowsDirectoryW(directory, MAX_PATH);
+    if (!length || length + 8 + std::wcslen(fontFiles[choice]) >= MAX_PATH ||
+        swprintf_s(path, L"%ls\\Fonts\\%ls", directory, fontFiles[choice]) <= 0) return;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 100 || size.QuadPart > 16 * 1024 * 1024) {
+        CloseHandle(file);
+        return;
+    }
+    void* bytes = ImGui::MemAlloc(static_cast<std::size_t>(size.QuadPart));
+    DWORD read = 0;
+    const bool complete = bytes && ReadFile(file, bytes, static_cast<DWORD>(size.QuadPart), &read, nullptr) &&
+                          read == static_cast<DWORD>(size.QuadPart);
+    CloseHandle(file);
+    if (!complete) { ImGui::MemFree(bytes); return; }
+    ImFontConfig config{};
+    strcpy_s(config.Name, fontNames[choice]);
+    config.FontDataOwnedByAtlas = true;
+    // Rasterize once before backend creation; changing face or size never rebuilds the texture.
+    // Windows owns the installed font files; only their in-memory atlas data is retained.
+    atlas.AddFontFromMemoryTTF(bytes, static_cast<int>(size.QuadPart), 20, &config);
 }
 
 void CopyName(const char (&input)[128], char (&output)[128]) {
@@ -56,10 +103,88 @@ void CopyName(const char (&input)[128], char (&output)[128]) {
     if (!length) std::snprintf(output, sizeof(output), "Player");
 }
 
-void CenteredText(ImDrawList* draw, float center, float y, float width, ImU32 color, const char* text) {
-    const float textWidth = ImGui::CalcTextSize(text).x;
-    const float x = std::clamp(center - textWidth * 0.5f, 1.0f, std::max(1.0f, width - textWidth - 1.0f));
-    OutlinedText(draw, ImVec2(x, y), color, text);
+void CenteredText(ImDrawList* draw, ImFont* font, float size, float center, float y,
+                  const EspScreenRect& viewport, ImU32 color, const char* text) {
+    const float textWidth = font->CalcTextSizeA(size, FLT_MAX, 0, text).x;
+    const float x = std::clamp(center - textWidth * 0.5f, viewport.left + 1,
+                             std::max(viewport.left + 1, viewport.right - textWidth - 1));
+    const ImVec4 clip { viewport.left, viewport.top, viewport.right, viewport.bottom };
+    if (settings.textOutline && (color & IM_COL32_A_MASK)) {
+        // Keep outlines within the foreground's opacity, including completely hidden text.
+        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 255) / 255.0f;
+        const ImU32 outline = ImGui::ColorConvertFloat4ToU32({ settings.outlineColor[0],
+            settings.outlineColor[1], settings.outlineColor[2], settings.outlineColor[3] * alpha });
+        for (const ImVec2 offset : { ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1) })
+            draw->AddText(font, size, { x + offset.x, y + offset.y }, outline, text, nullptr, 0, &clip);
+    }
+    draw->AddText(font, size, { x, y }, color, text, nullptr, 0, &clip);
+}
+
+void StrokeBox(ImDrawList* draw, const EspScreenRect& box, ImU32 color, float thickness) {
+    if (settings.boxStyle == 0) {
+        draw->AddRect({ box.left, box.top }, { box.right, box.bottom }, color, 0, 0, thickness);
+        return;
+    }
+    const float dx = (box.right - box.left) * 0.25f, dy = (box.bottom - box.top) * 0.25f;
+    for (int corner = 0; corner < 4; ++corner) {
+        const float x = (corner & 1) ? box.right : box.left;
+        const float y = (corner & 2) ? box.bottom : box.top;
+        const float sx = (corner & 1) ? -dx : dx, sy = (corner & 2) ? -dy : dy;
+        const ImVec2 points[] = { { x + sx, y }, { x, y }, { x, y + sy } };
+        draw->AddPolyline(points, 3, color, 0, thickness);
+    }
+}
+
+void DrawPlayer(ImDrawList* draw, const EspPlayerSnapshot& player, const EspScreenRect& box,
+                const EspScreenRect& viewport, bool validDistance) {
+    const ImU32 color = BoxColor(player.team);
+    if (settings.boxes) {
+        if (settings.boxFill)
+            draw->AddRectFilled({ box.left, box.top }, { box.right, box.bottom }, Color(settings.fillColor));
+        if (settings.boxOutline && (color & IM_COL32_A_MASK)) {
+            const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 255) / 255.0f;
+            const ImU32 outline = ImGui::ColorConvertFloat4ToU32({ settings.outlineColor[0],
+                settings.outlineColor[1], settings.outlineColor[2], settings.outlineColor[3] * alpha });
+            StrokeBox(draw, box, outline, settings.boxThickness + 2);
+        }
+        StrokeBox(draw, box, color, settings.boxThickness);
+    }
+    const float center = (box.left + box.right) * 0.5f;
+    if (settings.names) {
+        char name[128]{};
+        CopyName(player.name, name);
+        CenteredText(draw, SelectedFont(), settings.nameSize, center,
+            std::max(viewport.top + 1, box.top - settings.nameSize - 3), viewport,
+            settings.nameUseBoxColor ? color : Color(settings.nameColor), name);
+    }
+    if (settings.health) {
+        const float ratio = static_cast<float>(std::clamp(player.health, 0, 100)) / 100.0f;
+        const float barX = std::max(viewport.left + 1, box.left - settings.healthBarWidth - 4);
+        float rgba[4]{};
+        for (int component = 0; component < 4; ++component)
+            rgba[component] = settings.healthGradient ? settings.healthLowColor[component] +
+                ratio * (settings.healthColor[component] - settings.healthLowColor[component]) :
+                settings.healthColor[component];
+        // Match background opacity to the bar so alpha zero really hides it.
+        draw->AddRectFilled({ barX - 1, box.top - 1 }, { barX + settings.healthBarWidth + 1, box.bottom + 1 },
+            ImGui::ColorConvertFloat4ToU32({ 0, 0, 0, rgba[3] * 0.94f }));
+        draw->AddRectFilled({ barX, box.bottom - (box.bottom - box.top) * ratio },
+                            { barX + settings.healthBarWidth, box.bottom }, Color(rgba));
+    }
+    char details[96]{};
+    std::size_t used = 0;
+    if (settings.distance && validDistance)
+        used = static_cast<std::size_t>(std::snprintf(details, sizeof(details), "%.0fm", player.distanceMeters));
+    if (settings.health && settings.healthText)
+        used += static_cast<std::size_t>(std::snprintf(details + used, sizeof(details) - used,
+            "%s%d HP", used ? " | " : "", std::clamp(player.health, 0, 999)));
+    if (settings.armor)
+        std::snprintf(details + used, sizeof(details) - used, "%s%d AP", used ? " | " : "",
+                      std::clamp(player.armor, 0, 999));
+    if (details[0])
+        CenteredText(draw, ImGui::GetFont(), settings.detailSize, center,
+            std::min(box.bottom + 3, std::max(viewport.top + 1, viewport.bottom - settings.detailSize - 1)),
+            viewport, Color(settings.detailColor), details);
 }
 } // namespace
 
@@ -126,13 +251,92 @@ void EspSetLogCallback(EspLogCallback callback) noexcept {
 
 const EspSettings& EspGetSettings() noexcept { return settings; }
 
+EspSettings EspSanitizeSettings(const EspSettings& value) noexcept {
+    EspSettings result = value;
+    const EspSettings defaults{};
+    const auto bounded = [](float value, float minimum, float maximum, float fallback) {
+        return std::isfinite(value) ? std::clamp(value, minimum, maximum) : fallback;
+    };
+    const auto color = [&](float (&rgba)[4], const float (&fallback)[4]) {
+        for (int i = 0; i < 4; ++i) rgba[i] = bounded(rgba[i], 0, 1, fallback[i]);
+    };
+    color(result.boxColor, defaults.boxColor);
+    color(result.tColor, defaults.tColor);
+    color(result.ctColor, defaults.ctColor);
+    color(result.fillColor, defaults.fillColor);
+    color(result.nameColor, defaults.nameColor);
+    color(result.detailColor, defaults.detailColor);
+    color(result.outlineColor, defaults.outlineColor);
+    color(result.healthColor, defaults.healthColor);
+    color(result.healthLowColor, defaults.healthLowColor);
+    result.boxStyle = std::clamp(result.boxStyle, 0, 1);
+    result.nameFont = std::clamp(result.nameFont, 0, 3);
+    result.boxThickness = bounded(result.boxThickness, 0.5f, 5, defaults.boxThickness);
+    result.nameSize = bounded(result.nameSize, 10, 28, defaults.nameSize);
+    result.detailSize = bounded(result.detailSize, 9, 22, defaults.detailSize);
+    result.healthBarWidth = bounded(result.healthBarWidth, 1, 8, defaults.healthBarWidth);
+    return result;
+}
+
 void EspSetSettings(const EspSettings& value) noexcept {
-    if (settings.enabled == value.enabled && settings.names == value.names &&
-        settings.boxes == value.boxes && settings.distance == value.distance &&
-        settings.health == value.health && settings.teammates == value.teammates &&
-        settings.armor == value.armor) return;
-    settings = value;
+    const EspSettings sanitized = EspSanitizeSettings(value);
+    if (settings == sanitized) return;
+    settings = sanitized;
     LogSettings();
+}
+
+void EspResetStyle() noexcept {
+    EspSettings defaults{};
+    defaults.enabled = settings.enabled;
+    defaults.names = settings.names;
+    defaults.boxes = settings.boxes;
+    defaults.distance = settings.distance;
+    defaults.health = settings.health;
+    defaults.teammates = settings.teammates;
+    defaults.armor = settings.armor;
+    EspSetSettings(defaults);
+}
+
+void EspConfigureFonts() {
+    if (!ImGui::GetCurrentContext()) return;
+    ImFontAtlas& atlas = *ImGui::GetIO().Fonts;
+    if (atlas.Locked || atlas.IsBuilt()) return;
+    // Keep the embedded menu default first in diagnostic/headless contexts too.
+    if (atlas.Fonts.empty()) ImGui::GetIO().FontDefault = atlas.AddFontDefault();
+    for (int choice = 1; choice <= 3; ++choice)
+        if (!FindFont(choice)) LoadFont(atlas, choice);
+}
+
+bool EspFontAvailable(int font) noexcept {
+    return ImGui::GetCurrentContext() && (font == 0 || FindFont(font) != nullptr);
+}
+
+void EspDrawPreview(float width, float height) {
+    if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) return;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::Dummy({ width, height });
+    if (!ImGui::IsItemVisible()) return;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const EspScreenRect viewport { origin.x, origin.y, origin.x + width, origin.y + height };
+    draw->PushClipRect(origin, { viewport.right, viewport.bottom }, true);
+    draw->AddRectFilled(origin, { viewport.right, viewport.bottom }, IM_COL32(19, 24, 31, 255));
+    const int samples = width >= 300 ? 2 : 1;
+    const float halfBoxWidth = std::min(width / samples * 0.25f, std::max(1.0f, height - 70) * 0.25f);
+    for (int sample = 0; sample < samples; ++sample) {
+        const float center = origin.x + width * (static_cast<float>(sample) + 0.5f) / samples;
+        const EspScreenRect box { center - halfBoxWidth, origin.y + 36,
+                                  center + halfBoxWidth, origin.y + height - 34 };
+        EspPlayerSnapshot player{};
+        const bool terrorist = samples == 2 && sample == 0;
+        strcpy_s(player.name, terrorist ? "T preview" : "CT preview");
+        player.team = terrorist ? 2 : 3;
+        player.health = 72;
+        player.armor = 50;
+        player.distanceMeters = 24;
+        if (settings.enabled && box.bottom > box.top && box.right > box.left)
+            DrawPlayer(draw, player, box, viewport, true);
+    }
+    draw->PopClipRect();
 }
 
 void EspPollControls(bool foreground) noexcept {
@@ -168,7 +372,6 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
         (!frame.players && frame.playerCount) || !ImGui::GetCurrentContext()) return stats;
     // Keep player primitives behind either menu so the controls remain readable.
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    const float fontHeight = ImGui::GetFontSize();
     for (std::size_t i = 0; i < frame.playerCount; ++i) {
         const EspPlayerSnapshot& player = frame.players[i];
         ++stats.considered;
@@ -190,38 +393,7 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
         }
         ++stats.projected;
         const int verticesBefore = draw->VtxBuffer.Size;
-        const ImU32 color = TeamColor(player.team);
-        const ImU32 black = IM_COL32(0, 0, 0, 240);
-        const ImU32 white = IM_COL32(255, 255, 255, 255);
-        if (settings.boxes) {
-            draw->AddRect(ImVec2(box.left, box.top), ImVec2(box.right, box.bottom), black, 0, 0, 3);
-            draw->AddRect(ImVec2(box.left, box.top), ImVec2(box.right, box.bottom), color, 0, 0, 1);
-        }
-        const float center = (box.left + box.right) * 0.5f;
-        if (settings.names) {
-            char name[128]{};
-            CopyName(player.name, name);
-            CenteredText(draw, center, std::max(1.0f, box.top - fontHeight - 3), width, color, name);
-        }
-        if (settings.health) {
-            const float ratio = static_cast<float>(std::clamp(player.health, 0, 100)) / 100.0f;
-            const float barX = std::max(1.0f, box.left - 7);
-            draw->AddRectFilled(ImVec2(barX - 1, box.top - 1), ImVec2(barX + 4, box.bottom + 1), black);
-            draw->AddRectFilled(ImVec2(barX, box.bottom - (box.bottom - box.top) * ratio),
-                                ImVec2(barX + 3, box.bottom), IM_COL32(80, 225, 100, 255));
-        }
-        char details[96]{};
-        std::size_t used = 0;
-        if (settings.distance && validDistance)
-            used = static_cast<std::size_t>(std::snprintf(details, sizeof(details), "%.0fm", player.distanceMeters));
-        if (settings.health)
-            used += static_cast<std::size_t>(std::snprintf(details + used, sizeof(details) - used,
-                "%s%d HP", used ? " | " : "", std::clamp(player.health, 0, 999)));
-        if (settings.armor)
-            std::snprintf(details + used, sizeof(details) - used, "%s%d AP", used ? " | " : "",
-                          std::clamp(player.armor, 0, 999));
-        if (details[0])
-            CenteredText(draw, center, std::min(box.bottom + 3, std::max(1.0f, height - fontHeight - 1)), width, white, details);
+        DrawPlayer(draw, player, box, { 0, 0, width, height }, validDistance);
         if (draw->VtxBuffer.Size > verticesBefore) ++stats.drawn;
     }
     return stats;

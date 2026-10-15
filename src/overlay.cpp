@@ -278,6 +278,7 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
 #else
     ConfigurePublicMenuStyle();
 #endif
+    EspConfigureFonts();
     backendInitialized = ImGui_ImplDX11_Init(device.Get(), context.Get());
     bool objects = backendInitialized && ImGui_ImplDX11_CreateDeviceObjects();
     ImGui::SetCurrentContext(previous);

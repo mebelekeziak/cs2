@@ -39,6 +39,29 @@ struct EspSettings {
     bool health = true;
     bool teammates = true;
     bool armor = false;
+    bool teamColors = true;
+    float boxColor[4] = { 86 / 255.0f, 190 / 255.0f, 1, 1 };
+    float tColor[4] = { 1, 192 / 255.0f, 72 / 255.0f, 1 };
+    float ctColor[4] = { 86 / 255.0f, 190 / 255.0f, 1, 1 };
+    int boxStyle = 0; // 0 = full rectangle, 1 = corners.
+    float boxThickness = 1;
+    bool boxOutline = true;
+    bool boxFill = false;
+    float fillColor[4] = { 86 / 255.0f, 190 / 255.0f, 1, 0.12f };
+    bool nameUseBoxColor = true;
+    float nameColor[4] = { 1, 1, 1, 1 };
+    int nameFont = 0; // 0 = menu font, 1 = Segoe UI Bold, 2 = Tahoma, 3 = Consolas.
+    float nameSize = 14;
+    float detailSize = 13;
+    float detailColor[4] = { 1, 1, 1, 1 };
+    bool textOutline = true;
+    float outlineColor[4] = { 0, 0, 0, 0.94f };
+    float healthColor[4] = { 80 / 255.0f, 225 / 255.0f, 100 / 255.0f, 1 };
+    bool healthGradient = false;
+    float healthLowColor[4] = { 1, 0.2f, 0.2f, 1 };
+    float healthBarWidth = 3;
+    bool healthText = true;
+    bool operator==(const EspSettings&) const = default;
 };
 
 enum class EspProjectionResult {
@@ -73,7 +96,15 @@ EspProjectionResult EspProjectBox(const EspVec3 (&corners)[8], const EspMatrix4x
 // Call on the render owner thread only, outside DllMain/loader lock.
 void EspSetLogCallback(EspLogCallback callback) noexcept;
 const EspSettings& EspGetSettings() noexcept;
+EspSettings EspSanitizeSettings(const EspSettings& value) noexcept;
 void EspSetSettings(const EspSettings& value) noexcept;
+void EspResetStyle() noexcept; // Preserve feature toggles, reset appearance only.
+// Once per ImGui atlas, before building its GPU texture; never during a frame.
+// Fonts are read from Windows, owned by the atlas, with safe menu-font fallback.
+void EspConfigureFonts();
+bool EspFontAvailable(int font) noexcept;
+// Reserve and draw a synthetic player using the same renderer as live ESP.
+void EspDrawPreview(float width, float height);
 void EspPollControls(bool foreground) noexcept;
 // Call between ImGui::NewFrame and ImGui::Render, regardless of menu visibility.
 EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height);

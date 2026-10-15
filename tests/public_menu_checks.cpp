@@ -108,6 +108,86 @@ void SelectDirectionalMode(const char* label) {
         ClickControl(label, 0.5f, popup, ImHashStr(label, 0, popup->GetID(index)));
     }
 }
+void SelectEspCombo(const char* control, const char* label, int index = -1) {
+    ClickControl(control);
+    Frame(); Frame(); // Settle popup placement and clipping after it first opens.
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    const bool opened = !context.OpenPopupStack.empty() && context.OpenPopupStack.back().Window;
+    Expect(opened, "ESP style combo opens through mouse input");
+    if (!opened) return;
+    ImGuiWindow* popup = context.OpenPopupStack.back().Window;
+    const ImGuiID item = index < 0 ? popup->GetID(label) : ImHashStr(label, 0, popup->GetID(index));
+    ClickControl(label, 0.5f, popup, item);
+}
+void EditBoxColor() {
+    const ImGuiID swatch = ImHashStr("##ColorButton", 0, Body()->GetID("##BoxColor"));
+    ClickControl("box color swatch", 0.5f, Body(), swatch);
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    const bool opened = !context.OpenPopupStack.empty() && context.OpenPopupStack.back().Window;
+    Expect(opened, "RGBA picker opens from the box color swatch");
+    if (!opened) return;
+    ImGuiWindow* popup = context.OpenPopupStack.back().Window;
+    const ImGuiID picker = popup->GetID("##picker");
+    const ImRect saturation = ControlRect("box saturation/value", popup, ImHashStr("sv", 0, picker));
+    Click({ saturation.Min.x + saturation.GetWidth() * 0.7f,
+            saturation.Min.y + saturation.GetHeight() * 0.3f });
+    const ImRect alpha = ControlRect("box alpha", popup, ImHashStr("alpha", 0, picker));
+    Click({ alpha.GetCenter().x, alpha.Min.y + alpha.GetHeight() * 0.75f });
+    Expect(EspGetSettings().boxColor[0] != EspSettings{}.boxColor[0] &&
+           EspGetSettings().boxColor[3] > 0.15f && EspGetSettings().boxColor[3] < 0.35f,
+           "mouse-driven RGBA picker publishes box RGB and transparency");
+    Click({ Menu()->Pos.x + 5, Menu()->Pos.y + 5 });
+    Expect(context.OpenPopupStack.empty(), "outside mouse click closes the color picker");
+}
+void EspAppearanceControls() {
+    ClickControl("Boxes and colors");
+    ClickControl("Use team colors");
+    Expect(!EspGetSettings().teamColors, "single box color can replace team colors");
+    EditBoxColor();
+    SelectEspCombo("##BoxStyle", "Corners", 1);
+    ClickControl("##BoxThickness", 0.7f);
+    ClickControl("Box fill");
+    Expect(EspGetSettings().boxStyle == 1 && EspGetSettings().boxThickness > 2 && EspGetSettings().boxFill,
+           "corner style, line thickness and fill publish independently of feature toggles");
+    ClickControl("Boxes and colors");
+    ClickControl("Names and text");
+    const int font = EspFontAvailable(3) ? 3 : 0;
+    SelectEspCombo("##NameFont", font == 3 ? "Consolas" : "Menu font");
+    ClickControl("##NameSize", 0.8f);
+    ClickControl("Names use box color");
+    ClickControl("##DetailSize", 0.6f);
+    ClickControl("Text outlines");
+    Expect(EspGetSettings().nameFont == font && EspGetSettings().nameSize > 20 &&
+           !EspGetSettings().nameUseBoxColor && EspGetSettings().detailSize > 14 && !EspGetSettings().textOutline,
+           "font, name size and color source, detail size and text outlines are configurable");
+    ClickControl("Names and text");
+    ClickControl("Health bar");
+    ClickControl("Health gradient");
+    ClickControl("##HealthBarWidth", 0.6f);
+    ClickControl("Show health value");
+    Expect(EspGetSettings().healthGradient && EspGetSettings().healthBarWidth > 4 && !EspGetSettings().healthText,
+           "health gradient, width and numeric value have separate controls");
+    ClickControl("Enable ESP");
+    ClickControl("Health gradient");
+    ClickControl("##HealthBarWidth", 0.1f);
+    Expect(!EspGetSettings().enabled && EspGetSettings().healthGradient && EspGetSettings().healthBarWidth > 4,
+           "disabled ESP master blocks appearance edits");
+    ClickControl("Reset ESP appearance");
+    const EspSettings reset = EspGetSettings();
+    const EspSettings defaults;
+    Expect(!reset.enabled && !reset.boxes && reset.armor && reset.names && reset.health && reset.distance && reset.teammates &&
+           reset.teamColors && reset.boxStyle == 0 && reset.boxThickness == defaults.boxThickness && !reset.boxFill &&
+           reset.boxColor[3] == 1 && reset.nameFont == 0 && reset.nameSize == defaults.nameSize && reset.nameUseBoxColor &&
+           reset.detailSize == defaults.detailSize && reset.textOutline && !reset.healthGradient &&
+           reset.healthBarWidth == defaults.healthBarWidth && reset.healthText,
+           "appearance reset works while disabled and preserves every feature toggle");
+    Expect(MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe && !WorldGetSettings().enabled,
+           "ESP customization and reset preserve movement and world settings");
+    ClickControl("Enable ESP");
+    ClickControl("Health bar");
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void NativeSettingsBounds() {
     WorldSettings settings;
     settings.localLightBrightness = -1;
@@ -146,7 +226,7 @@ int main() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = io.LogFilename = nullptr;
-    io.DisplaySize = { 800, 600 };
+    io.DisplaySize = { 1000, 800 };
     io.DeltaTime = 1.0f / 60.0f;
     io.ConfigInputTrickleEventQueue = false;
     unsigned char* pixels = nullptr;
@@ -164,6 +244,7 @@ int main() {
         return 1;
     }
     Expect(Menu()->Pos.x == 24 && Menu()->Pos.y == 24, "initial menu position");
+    Expect(Menu()->Size.x == 560 && Menu()->Size.y == 620, "larger menu leaves space for appearance controls");
     Expect(ImGui::GetDrawData()->TotalVtxCount > 0, "public menu submits rendering primitives");
     CheckTabsFit("all four tab labels fit the normal menu");
 
@@ -179,6 +260,7 @@ int main() {
     Click(OptionPosition(4));
     Expect(EspGetSettings().armor && EspGetSettings().health && EspGetSettings().teammates,
            "armor click preserves other visible feature settings");
+    EspAppearanceControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -414,8 +496,9 @@ int main() {
            Menu()->Pos.x + Menu()->Size.x <= 180 && Menu()->Pos.y + Menu()->Size.y <= 150,
            "menu clamps position and size after viewport shrink");
     CheckTabsFit("four tabs wrap with readable labels after viewport shrink");
+    Expect(Body()->ScrollMax.y > 0, "ESP appearance remains reachable by scrolling in a narrow viewport");
 
-    io.DisplaySize = { 800, 600 };
+    io.DisplaySize = { 1000, 800 };
     Frame(); // Settle the child geometry after restoring a larger viewport.
     Frame();
     ImGui::NewFrame();

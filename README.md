@@ -181,6 +181,35 @@ teams and armor text is off. Boxes project the eight corners of the
 current collision bounds using copied scene position/angles/scale. They enclose
 the collision hull, not animated model bones. Team colors: CT blue, T amber.
 
+The **Visuals** tab now includes collapsible ESP appearance controls:
+
+- RGBA colors for individual teams or one custom box color, with opacity.
+- Full rectangles or corner boxes, line thickness, outlines and optional fill.
+- Name fonts: menu font, Segoe UI Bold, Tahoma or Consolas; adjustable name size,
+  a separate name color or the box color, plus detail-label color and size.
+- Text outlines and a shared configurable box/text outline color.
+- Health-bar color, optional low-to-full-health color interpolation, width and
+  an independent numeric-health toggle.
+
+The live sample uses the same renderer as player ESP, showing both team styles
+when space allows. **Reset ESP appearance** restores styling while preserving
+the feature checkboxes. Settings last for the current run. Additional fonts are
+read from the Windows Fonts directory into the overlay's own atlas before its
+GPU texture is built; unavailable fonts fall back to the menu font. No font
+files are copied or distributed. Changing fonts or sizes does not rebuild GPU
+resources during a frame.
+
+The public menu is now **560×620**, up from 370×310. It clamps to smaller
+viewports, wraps its tabs and keeps long sections scrollable. The standalone
+preview's default canvas is 608×668 so the enlarged menu fits.
+
+The pre-customization workspace is saved in checkpoint `fa090a2`. Public and
+diagnostic x64 Release builds pass all **16/16 CTest suites** each. Added checks
+cover mouse-driven RGBA/opacity edits, fonts and styles, rendered geometry and
+glyph metrics, reset independence, missing-font fallback and viewport clamping.
+Standalone software-D3D11 menu previews were inspected. These are standalone
+checks; no new live client appearance observation is claimed.
+
 | Key | Action |
 | --- | --- |
 | F1 | Toggle ESP |

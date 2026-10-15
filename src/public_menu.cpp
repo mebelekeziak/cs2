@@ -76,6 +76,7 @@ void ConfigurePublicMenuStyle() {
         io.FontDefault = LoadSystemFont(*io.Fonts);
         if (!io.FontDefault) io.FontDefault = io.Fonts->AddFontDefault();
     }
+    EspConfigureFonts();
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowPadding = { 12, 10 };
@@ -107,8 +108,8 @@ void ConfigurePublicMenuStyle() {
 void DrawPublicMenu() {
     const ImGuiViewport& viewport = *ImGui::GetMainViewport();
     if (viewport.WorkSize.x <= 0 || viewport.WorkSize.y <= 0) return;
-    const ImVec2 size { std::min(370.0f, viewport.WorkSize.x),
-                        std::min(310.0f, viewport.WorkSize.y) };
+    const ImVec2 size { std::min(560.0f, viewport.WorkSize.x),
+                        std::min(620.0f, viewport.WorkSize.y) };
     ImGui::SetNextWindowPos({ 24, 24 }, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(size);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -159,6 +160,7 @@ void DrawPublicMenu() {
         if (selectedTab == 0) {
             EspSettings settings = EspGetSettings();
             bool changed = false;
+            bool reset = false;
             if (ImGui::BeginChild("##VisualSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable ESP", settings.enabled);
                 ImGui::Separator();
@@ -169,10 +171,90 @@ void DrawPublicMenu() {
                 changed |= FeatureCheckbox("Health bars and values", settings.health);
                 changed |= FeatureCheckbox("Armor", settings.armor);
                 changed |= FeatureCheckbox("Show teammates", settings.teammates);
+                ImGui::Separator();
+                const auto color = [&](const char* label, const char* id, float (&value)[4]) {
+                    ImGui::TextUnformatted(label);
+                    ImGui::SetNextItemWidth(-1);
+                    return ImGui::ColorEdit4(id, value, ImGuiColorEditFlags_NoInputs |
+                        ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf);
+                };
+                const auto slider = [&](const char* label, const char* id, float& value,
+                                        float minimum, float maximum, const char* format) {
+                    ImGui::TextUnformatted(label);
+                    ImGui::SetNextItemWidth(-1);
+                    return ImGui::SliderFloat(id, &value, minimum, maximum, format);
+                };
+                if (ImGui::CollapsingHeader("Boxes and colors", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    changed |= FeatureCheckbox("Use team colors", settings.teamColors);
+                    if (settings.teamColors) {
+                        changed |= color("T color", "##TColor", settings.tColor);
+                        changed |= color("CT color", "##CTColor", settings.ctColor);
+                    } else {
+                        changed |= color("Box color", "##BoxColor", settings.boxColor);
+                    }
+                    ImGui::TextUnformatted("Box style");
+                    ImGui::SetNextItemWidth(-1);
+                    changed |= ImGui::Combo("##BoxStyle", &settings.boxStyle, "Full rectangle\0Corners\0");
+                    changed |= slider("Box thickness", "##BoxThickness", settings.boxThickness, 0.5f, 5, "%.1f px");
+                    changed |= FeatureCheckbox("Box outline", settings.boxOutline);
+                    changed |= FeatureCheckbox("Box fill", settings.boxFill);
+                    ImGui::BeginDisabled(!settings.boxFill);
+                    changed |= color("Fill color", "##FillColor", settings.fillColor);
+                    ImGui::EndDisabled();
+                }
+                if (ImGui::CollapsingHeader("Names and text", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    ImGui::TextUnformatted("Name font");
+                    constexpr const char* fonts[] = { "Menu font", "Segoe UI Bold", "Tahoma", "Consolas" };
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::BeginCombo("##NameFont", fonts[std::clamp(settings.nameFont, 0, 3)])) {
+                        for (int index = 0; index < 4; ++index) {
+                            const bool fontAvailable = EspFontAvailable(index);
+                            ImGui::BeginDisabled(!fontAvailable);
+                            if (ImGui::Selectable(fonts[index], settings.nameFont == index)) {
+                                settings.nameFont = index;
+                                changed = true;
+                            }
+                            ImGui::EndDisabled();
+                            if (!fontAvailable) ImGui::TextDisabled("Unavailable on this computer");
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (!EspFontAvailable(settings.nameFont)) ImGui::TextWrapped("Selected font unavailable. Using menu font.");
+                    changed |= slider("Name size", "##NameSize", settings.nameSize, 10, 28, "%.0f px");
+                    changed |= FeatureCheckbox("Names use box color", settings.nameUseBoxColor);
+                    ImGui::BeginDisabled(settings.nameUseBoxColor);
+                    changed |= color("Name color", "##NameColor", settings.nameColor);
+                    ImGui::EndDisabled();
+                    changed |= slider("Detail size", "##DetailSize", settings.detailSize, 9, 22, "%.0f px");
+                    changed |= color("Detail color", "##DetailColor", settings.detailColor);
+                    changed |= FeatureCheckbox("Text outlines", settings.textOutline);
+                }
+                if (ImGui::CollapsingHeader("Health bar", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    changed |= color("Health color", "##HealthColor", settings.healthColor);
+                    changed |= FeatureCheckbox("Health gradient", settings.healthGradient);
+                    ImGui::BeginDisabled(!settings.healthGradient);
+                    changed |= color("Low health color", "##HealthLowColor", settings.healthLowColor);
+                    ImGui::EndDisabled();
+                    changed |= slider("Health bar width", "##HealthBarWidth", settings.healthBarWidth, 1, 8, "%.1f px");
+                    changed |= FeatureCheckbox("Show health value", settings.healthText);
+                }
+                if (ImGui::CollapsingHeader("Outlines", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    ImGui::BeginDisabled(!settings.boxOutline && !settings.textOutline);
+                    changed |= color("Outline color", "##OutlineColor", settings.outlineColor);
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Shared by box and text outlines.");
+                }
                 ImGui::EndDisabled();
+                // Publish edits before the sample so it responds in the same frame.
+                if (changed) EspSetSettings(settings);
+                if (ImGui::CollapsingHeader("Live preview", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    ImGui::TextWrapped("Sample players, independent of game data.");
+                    EspDrawPreview(std::max(1.0f, ImGui::GetContentRegionAvail().x), 170);
+                }
+                reset = ImGui::Button("Reset ESP appearance", { -1, 0 });
             }
             ImGui::EndChild();
-            if (changed) EspSetSettings(settings);
+            if (reset) EspResetStyle();
         } else if (selectedTab == 1) {
             MovementSettings settings = MovementGetSettings();
             bool changed = false;

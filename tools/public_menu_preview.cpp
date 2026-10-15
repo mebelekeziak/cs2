@@ -42,12 +42,12 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "Scroll must be between 0 and 100000 pixels.\n");
         return 1;
     }
-    const long requestedWidth = argc == 6 ? std::wcstol(argv[4], &end, 10) : 418;
+    const long requestedWidth = argc == 6 ? std::wcstol(argv[4], &end, 10) : 608;
     if (requestedWidth < 180 || requestedWidth > 4096 || (argc == 6 && (end == argv[4] || *end))) {
         std::fprintf(stderr, "Width must be between 180 and 4096 pixels.\n");
         return 1;
     }
-    const long requestedHeight = argc == 6 ? std::wcstol(argv[5], &end, 10) : 388;
+    const long requestedHeight = argc == 6 ? std::wcstol(argv[5], &end, 10) : 668;
     if (requestedHeight < 150 || requestedHeight > 4096 || (argc == 6 && (end == argv[5] || *end))) {
         std::fprintf(stderr, "Height must be between 150 and 4096 pixels.\n");
         return 1;
