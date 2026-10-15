@@ -144,7 +144,8 @@ bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, A
         }
         return false;
     };
-    if (!bones.client || !Read(actor.scene, vtable) || vtable != bones.client + bone::SkeletonVtable)
+    if (!bones.client || !Read(actor.scene, vtable) ||
+        (vtable != bones.client + bone::SkeletonVtable && vtable != bones.client + bone::PlayerSkeletonVtable))
         return fail("skeleton vtable");
     if (!Read(vtable + bone::SkeletonQuerySlot, query) || query != bones.client + bone::SkeletonQuery)
         return fail("skeleton query");

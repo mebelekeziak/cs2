@@ -191,11 +191,13 @@ struct TargetFixture {
         for (unsigned i = 0; i < 4; ++i)
             Put(Address(actor.pose) + i * bone::BoneStride, AimVector{1000, y, 40 + i * 8.0f});
     }
-    TargetFixture() {
+    TargetFixture(bool playerSkeleton = false) {
         strcpy_s(controllerName.data(), controllerName.size(), "cs_player_controller");
         strcpy_s(pawnName.data(), pawnName.size(), "c_cs_player_for_precache");
         Put(Address(system) + ent::entity_layout::TableOffset, reinterpret_cast<std::uintptr_t>(bucket.data()));
-        bones = {Address(vtable) - bone::SkeletonVtable, &FakeLookup};
+        // Captured from both live player scenes on the failing practice run.
+        constexpr std::uintptr_t observedPlayerSkeleton = 0x1ACDE48;
+        bones = {Address(vtable) - (playerSkeleton ? observedPlayerSkeleton : bone::SkeletonVtable), &FakeLookup};
         vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)] = bones.client + bone::SkeletonQuery;
         Configure(local, 1, 3, 0); Configure(enemy, 3, 2, 20); Configure(farther, 5, 2, 40);
         source = {Address(system), Address(local.controller), Address(local.pawn)};
@@ -209,6 +211,15 @@ void TargetChecks() {
     TargetFixture fixture;
     AimTarget target{};
     AimTargetDiagnostics diagnostic{};
+    TargetFixture playerFixture(true);
+    Expect(playerFixture.Select(target, AimHitbox::Chest, 5, &diagnostic),
+           "live player body-component skeleton wrapper supports chest acquisition");
+    Expect(playerFixture.Select(target, AimHitbox::Head, 5, &diagnostic),
+           "live player body-component skeleton wrapper supports head acquisition");
+    playerFixture.bones.client -= 0x100;
+    playerFixture.vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)] = playerFixture.bones.client + bone::SkeletonQuery;
+    Expect(!playerFixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && diagnostic.boneRejected == 2 &&
+        !std::strcmp(diagnostic.boneFailure, "skeleton vtable"), "unverified skeleton class remains rejected even with the same query method");
     Expect(fixture.Select(target) && target.enemy.pawn == Address(fixture.enemy.pawn), "nearest angular enemy is selected from validated identities");
     Expect(fixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && !std::strcmp(diagnostic.stage, "selected") &&
         diagnostic.controllers == 2 && diagnostic.boneRejected == 0,

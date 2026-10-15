@@ -8,6 +8,9 @@
 namespace silent_aim_hitbox_offsets {
 inline constexpr std::ptrdiff_t LookupBone = 0x952940;
 inline constexpr std::ptrdiff_t SkeletonVtable = 0x1C41CE0;
+// NetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance: verified
+// zero-offset CSkeletonInstance base, observed on both live player pawns.
+inline constexpr std::ptrdiff_t PlayerSkeletonVtable = 0x1ACDE48;
 inline constexpr std::ptrdiff_t SkeletonQuerySlot = 0x68;
 inline constexpr std::ptrdiff_t SkeletonQuery = 0x1C9E70;
 inline constexpr std::ptrdiff_t ModelState = 0x140;

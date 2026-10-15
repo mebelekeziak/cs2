@@ -4,8 +4,9 @@ Installed Windows AMD64 client **1.41.9.1**, client/server **2000932**, Steam
 build **25947352**, inspected October 15, 2026. Client path:
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
 SHA-256 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,
-PE timestamp `0x6AD01314`, SizeOfImage `0x299D000`. All investigation here reads
-installed files only. No live pose, aiming or hit observation is claimed.
+PE timestamp `0x6AD01314`, SizeOfImage `0x299D000`. Static verification reads
+installed files only. A subsequent read-only live observation is described
+below; no aiming or hit-registration observation is claimed.
 
 ## Selection labels and scope
 
@@ -40,9 +41,33 @@ MSVC RTTI `.?AVCSkeletonInstance@@` independently identifies primary vtable
 `0x1C41CE0`. Its byte slot `+0x68` points at `0x1C9E70`, whose exact bytes
 `48 8B C1 C3` implement `return this`. The base `CGameSceneNode` vtable at
 `0x1C2E408` instead uses `0x1C9E50`, which returns null at that slot. Therefore
-requiring the verified skeleton vtable and identity query before invoking a
-pawn helper establishes that its scene node is the supported skeleton class.
-Unknown derived-class vtables are skipped instead of assumed compatible.
+requiring a verified skeleton vtable and identity query before invoking a
+pawn helper establishes that its scene node has the supported layout.
+
+The first implementation accepted only that standalone primary vtable. A
+read-only observation in the user's practice client PID `37968` subsequently
+found that both local and enemy pawn scene nodes use **`0x1ACDE48`**. Both
+query slots still pointed at `0x1C9E70`, with non-null model/pose pointers and
+valid model bone counts. This proves that the old exact-vtable predicate
+rejected those live player skeletons before bone lookup, for every selector.
+
+The live table's RTTI identifies
+`.?AVNetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance@@`, with
+complete-object locator `0x1EBC1E0`, type descriptor `0x22C4E20`, and hierarchy
+`0x1EBC208`. Base descriptor `0x1EBC270` names `CSkeletonInstance` and has
+PMD `(0, -1, 0)`, establishing the skeleton base at offset zero. The following
+base is `CGameSceneNode`, also at offset zero. The verifier independently
+resolves this primary vtable and requires its query slot to match the verified
+skeleton identity query.
+
+Named schema registration `CBodyComponentSkeletonInstance` at `0x21C0918`
+has size `0x510`, one field in array `0x21C08D8`, and
+`m_skeletonInstance = 0x80`. Constructor `0x92FC30` allocates `0x510` bytes,
+passes `body+0x80` to the base skeleton constructor `0xA99FC0` at `0x92FC8F`,
+then loads `0x1ACDE48` at `0x92FC99` and stores it at `body+0x80` at
+`0x92FCA0`. Thus the observed wrapper preserves the verified skeleton offsets
+and identity query. Both explicit tables are supported; unverified derived
+vtables remain rejected.
 
 The model-state strong-handle pointer is at skeleton `+0x140+0xA0 = +0x1E0`;
 dereferencing that pointer gives the current model pointer. This agrees with
@@ -92,7 +117,7 @@ unavailable poses. Consequently positions can lag a pending animation refresh.
 ## Read validation contract
 
 Acquire current scene/model/pose values in the command reader's own storage.
-Require the verified skeleton primary vtable, its `+0x68` method pointer and
+Require either verified skeleton vtable, its `+0x68` method pointer and
 query fingerprint, nonzero model-handle and model pointers, a positive bounded
 bone count, a dynamically resolved index in that count and a nonzero pose array.
 Copy world XYZ from the transform's first 12 bytes with fault-tolerant reads;
@@ -122,3 +147,8 @@ The real installed client and source header passed on October 15, 2026.
 Twenty-five independent in-memory mutations were rejected: ten numeric header
 constants, four bone-name literals, nine native byte anchors and both schema
 registration sizes. No mutated input was written to installed game files.
+
+After adding the observed player wrapper, the installed verifier passed again.
+Negative checks additionally reject changes to its header RVA, query pointer,
+RTTI base adjustment, constructor call/store, and body-component schema offset.
+The retained base table and newly supported player table are both checked.

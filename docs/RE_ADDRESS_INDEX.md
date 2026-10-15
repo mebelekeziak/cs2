@@ -147,6 +147,7 @@ Detailed evidence: [history](../tools/CS2_SILENT_AIM_EVIDENCE.md),
 | `silent_aim_target_offsets::ViewOffset` | `0xF60`, pawn member | Exact `C_BaseModelEntity::m_vecViewOffset` schema; contiguous live float3 in native eye transform |
 | `silent_aim_hitbox_offsets::LookupBone` | `0x952940`, function RVA | `(pawn*, const char*) -> int`; native named-pelvis caller `0xC7C507`, no animation refresh |
 | `SkeletonVtable`, `SkeletonQuerySlot`, `SkeletonQuery` | `0x1C41CE0`, vtable RVA; `0x68`, byte slot; `0x1C9E70`, function RVA | `CSkeletonInstance` RTTI; supported query returns scene itself |
+| `PlayerSkeletonVtable` | `0x1ACDE48`, vtable RVA | Live player wrapper `NetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance`; zero-offset skeleton RTTI base, schema `m_skeletonInstance=0x80`, constructor `0x92FC85..0x92FCA7` |
 | `ModelState`, `ModelHandle`, `BoneArray`, `BoneCount`, `BoneStride` | `0x140`, `0xA0`, `0x1C0`, `0x178`, `0x20`, members/stride | Named skeleton/model-state schema; model lookup/count helpers and world-transform consumer |
 
 History construction occurs after the existing movement finalizer. Primary taps

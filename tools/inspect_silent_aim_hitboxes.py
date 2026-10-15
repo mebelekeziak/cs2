@@ -19,6 +19,7 @@ LOOKUP_BYTES = "40534883ec20488b8930030000488bda488b01ff5068488bc8488bd34883c420
 CHECKS = {
     "pawn_named_bone_lookup": (0x952940, LOOKUP_BYTES),
     "skeleton_identity_query": (0x1C9E70, "488bc1c3"),
+    "player_skeleton_constructor": (0x92FC85, "488d8f80000000488907e82ca31600488b5c2430488d05a8e1190148898780000000"),
     "string_to_model_bone_lookup": (0xABB430, "40534883ec20488bc2488bd94885d27414803a00740fba26594131488bc8e85db16affeb0233c0488b8be00100004885c97414488b094885c9740c8bd04883c4205be97958cb00b8ffffffff4883c4205bc3"),
     "model_bone_count": (0xAAF920, "488b81e00100004885c0740c488b084885c90f85285fcc0033c0c3"),
     "model_bone_count_member": (0x1775860, "8b8178010000c3"),
@@ -30,6 +31,7 @@ CHECKS = {
 SCHEMA = {
     "CSkeletonInstance": (0x21FF428, 0x21FF300, 7, 0x490, {"m_modelState": 0x140}),
     "CModelState": (0x21FE008, 0x21FDE40, 14, 0x2B0, {"m_hModel": 0xA0}),
+    "CBodyComponentSkeletonInstance": (0x21C0918, 0x21C08D8, 1, 0x510, {"m_skeletonInstance": 0x80}),
 }
 NAMES = {
     "HeadName": (0x1BA2648, "head_0"),
@@ -77,6 +79,24 @@ def evidence(image, base):
     query = ptr(table + slot)
     if table != 0x1C41CE0 or query != 0x1C9E70:
         raise SystemExit("Changed skeleton RTTI/vtable identity-query contract")
+    player_table = primary_vtable(image, base, b".?AVNetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance@@")
+    if player_table != 0x1ACDE48 or ptr(player_table + slot) != query:
+        raise SystemExit("Changed player networked skeleton vtable/query")
+    locator = ptr(player_table - 8)
+    hierarchy = u32(locator + 16)
+    if u32(hierarchy + 8) != 4:
+        raise SystemExit("Changed player skeleton RTTI base count")
+    base_array = u32(hierarchy + 12)
+    skeleton_base = u32(base_array + 4)
+    if (string(u32(skeleton_base) + 16) != ".?AVCSkeletonInstance@@" or
+            struct.unpack_from("<iii", image, skeleton_base + 8) != (0, -1, 0)):
+        raise SystemExit("Player skeleton no longer inherits CSkeletonInstance at offset zero")
+    constructor_table = 0x92FC99 + 7 + struct.unpack_from("<i", image, 0x92FC9C)[0]
+    constructor_base = 0x92FC8F + 5 + struct.unpack_from("<i", image, 0x92FC90)[0]
+    if (constructor_table != player_table or constructor_base != 0xA99FC0 or
+            u32(0x92FC88) != values["m_skeletonInstance"] or
+            u32(0x92FCA3) != values["m_skeletonInstance"]):
+        raise SystemExit("Player skeleton constructor disagrees with RTTI/schema ownership")
     model_member = u32(0xABB45A)
     if model_member != values["m_modelState"] + values["m_hModel"]:
         raise SystemExit("Named schema model member and native handle consumer disagree")
@@ -84,7 +104,7 @@ def evidence(image, base):
         if string(rva) != name:
             raise SystemExit(f"Changed native bone name: {label}")
     return {
-        "LookupBone": 0x952940, "SkeletonVtable": table,
+        "LookupBone": 0x952940, "SkeletonVtable": table, "PlayerSkeletonVtable": player_table,
         "SkeletonQuerySlot": slot, "SkeletonQuery": query,
         "ModelState": values["m_modelState"], "ModelHandle": values["m_hModel"],
         "BoneArray": u32(0xAB11FC), "BoneCount": u32(0x1775862),

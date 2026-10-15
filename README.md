@@ -254,9 +254,24 @@ These diagnostics are always available in the public build; no additional
 flags or launch workflow are needed. They distinguish empty history, absent
 primary input, local identity failures, missing pose/bones and FOV rejection.
 Restart normally, use **Load Overlay.cmd**, enable Aim and repeat a few shots
-in the same offline setup; the new log is needed to isolate the observed
-failure. At this checkpoint no runtime root cause or hit-registration repair
-has been established.
+in the same offline setup. Diagnostic checkpoint `0e94841` did not yet establish
+a repair.
+
+**Confirmed acquisition blocker and correction:** the next practice run,
+`logs/overlay-37968-134365466201047143.log`, records 744 primary-input commands
+and zero selected targets, with `bone_failure=skeleton vtable`. A read-only live
+snapshot independently found player scenes using vtable RVA `0x1ACDE48`.
+This is `NetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance`, which
+inherits `CSkeletonInstance` at offset zero and uses the same skeleton query.
+The first implementation accepted only the standalone base class's vtable,
+incorrectly rejecting the actual player wrapper before bone lookup.
+
+The reader now accepts both explicitly verified skeleton classes. The frozen
+verifier also checks the player's wrapper RTTI/base offset, body-component
+schema field and constructor. Regressions using the observed wrapper fail for
+both Head and Chest before the correction and pass afterward; unknown classes
+remain rejected. This fixes the observed acquisition blocker; live shot results
+after loading the corrected DLL remain a separate verification step.
 
 ## Player ESP
 
