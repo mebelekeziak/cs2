@@ -6,7 +6,7 @@ build **25947352**, inspected October 15, 2026. Client path:
 SHA-256 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,
 PE timestamp `0x6AD01314`, SizeOfImage `0x299D000`. Static verification reads
 installed files only. A subsequent read-only live observation is described
-below; no aiming or hit-registration observation is claimed.
+below, followed by the user's corrected offline aiming observation.
 
 ## Selection labels and scope
 
@@ -152,3 +152,18 @@ After adding the observed player wrapper, the installed verifier passed again.
 Negative checks additionally reject changes to its header RVA, query pointer,
 RTTI base adjustment, constructor call/store, and body-component schema offset.
 The retained base table and newly supported player table are both checked.
+
+## Corrected offline observation
+
+Fix `fa7845c` accepts the verified player wrapper as well as the standalone
+skeleton. Synthetic regressions using the observed wrapper fail for Head and
+Chest before that change and pass afterward; an unrelated class with the same
+query method remains rejected.
+
+Following normal process restart/reload, the user's bot-practice test produced
+`logs/overlay-36880-134365469299477046.log`. It records Chest bone index 5 on the
+current model, successful target acquisition and 106 applied history edits by
+16:10:25 Warsaw time, with zero bone/write rejections at that snapshot. The user
+then confirmed that shots redirected toward the bot. This supports the corrected
+basic offline aiming path. It does not establish authored hitbox-center accuracy,
+every weapon, guaranteed damage, or a separate observed Head-selection result.

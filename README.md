@@ -270,8 +270,17 @@ The reader now accepts both explicitly verified skeleton classes. The frozen
 verifier also checks the player's wrapper RTTI/base offset, body-component
 schema field and constructor. Regressions using the observed wrapper fail for
 both Head and Chest before the correction and pass afterward; unknown classes
-remain rejected. This fixes the observed acquisition blocker; live shot results
-after loading the corrected DLL remain a separate verification step.
+remain rejected. Fix commit: `fa7845c`.
+
+**Observed corrected result:** after a normal restart and reload in the same
+bot-practice setup, `logs/overlay-36880-134365469299477046.log` records successful
+Chest acquisition and history-angle changes (106 applied commands by
+16:10:25 Warsaw time), with zero bone and write rejections in that snapshot.
+The user confirmed: **shots redirected toward the bot**. This establishes the
+corrected basic firing behavior in that offline test. It does not establish hit
+guarantees, every weapon or a separate live Head-selection result. Public and
+diagnostic Release builds each pass all 17 CTest suites; all ten static
+compatibility checks pass after the correction.
 
 ## Player ESP
 
