@@ -1,7 +1,6 @@
 #include "world_sky.h"
 #include "world_offsets.h"
 #include "world_settings.h"
-#include "cs2_offsets.h"
 #include <Windows.h>
 #include <MinHook.h>
 #include <intrin.h>
@@ -124,8 +123,8 @@ bool WorldSkyPrepare(WorldSkyLogCallback callback) noexcept {
         !Read(sceneBase + world_offsets::SkyDescriptorVtable + 8, renderSlot) || renderSlot != sceneBase + world_offsets::SkyRender ||
         !client || !Read(client, clientDos) || clientDos.e_magic != IMAGE_DOS_SIGNATURE || clientDos.e_lfanew <= 0 || clientDos.e_lfanew > 0x100000 ||
         !Read(client + clientDos.e_lfanew, clientNt) || clientNt.Signature != IMAGE_NT_SIGNATURE || clientNt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
-        clientNt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC || clientNt.FileHeader.TimeDateStamp != cs2_offsets::ClientTimestamp ||
-        clientNt.OptionalHeader.SizeOfImage != cs2_offsets::ClientImageSize ||
+        clientNt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC || clientNt.FileHeader.TimeDateStamp != world_offsets::ClientTimestamp ||
+        clientNt.OptionalHeader.SizeOfImage != world_offsets::ClientImageSize ||
         !Copy(client + world_offsets::LightingProducer, producerBytes, sizeof(producerBytes)) || std::memcmp(producerBytes, world_offsets::LightingProducerBytes, sizeof(producerBytes))) {
         status.store("installed sky draw build verification failed", std::memory_order_release); return false;
     }

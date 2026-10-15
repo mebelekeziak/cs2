@@ -1,6 +1,7 @@
 # Installed native world-material evidence
 
-Read-only local binary investigation on October 14, 2026; client-side world
+Read-only local binary investigation on October 14, reverified October 15,
+2026 for client 1.41.9.1 / 2000932, Steam build25947352 / Source11131657; client-side world
 draw generation, AMD64, Microsoft x64 ABI. No game process was launched or
 loaded during this investigation. Installed game files were only read.
 
@@ -9,9 +10,25 @@ Installed files below share directory
 
 | DLL | SHA-256 | PE timestamp | Image size |
 | --- | --- | --- | --- |
-| scenesystem.dll | bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831 | 0x6AC7FF95 | 0x978000 |
-| worldrenderer.dll | e026fdb32408d1ac3062ab15beee7f87cc6072ee0c4c9b0910c423e0549512e9 | 0x6AC7FF6F | checked by full hash |
-| materialsystem2.dll | 336abe089468bd5b218f773f09da3942fa9346b7f49f24d9e3591722fc54c5e6 | 0x6ABD5B1E | 0x186000 |
+| scenesystem.dll | 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5 | 0x6ACFCD4F | 0x978000 |
+| worldrenderer.dll | f9eeff50acb10a89ab78c98d2726d3e5e6b5adf7a8b11be2a41cb5ebded11dac | 0x6ACFCCF2 | 0x26B000 |
+| materialsystem2.dll | b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6 | 0x6ACFCC60 | 0x186000 |
+
+Before changing these identity pins, a separate read-only audit applied all
+21 existing frozen instruction checks, callback prefix, all12 frozen source
+layout/global operands, flat-material name/binding and world descriptor lookup
+to the new DLLs. All matched. Native callback arguments, material tuple stores,
+stream selection and the DrawArray consumer at0x425E2/0x42601 were then
+re-disassembled. The callback remains the sole pointer at vtable5E4538+20,
+with RTTI `CAggregateSceneObjectDesc`. No runtime offset, layout or behavior
+changed for this recertification; only the verified DLL identity pins changed.
+Audit/disassembly artifacts are under `logs/research/*20261015*`.
+
+The verifier additionally freezes the material2 virtual dispatch at
+CMaterial2 vtable0x129AD0+0x30 ->0xBA30, its call to0xB8D0 reading the view
+selector from RDX, and its two return paths. A selected variant supplies its
++0x28 material pointer; absent a selected variant, the original RCX material
+is returned. This preserves the two-argument native ABI used below.
 
 The worldrenderer PE timestamp is informational; its full hash freezes the
 descriptor lookup below. Run the standard-library verifier before building:

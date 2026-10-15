@@ -13,9 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64')
 HASHES = {
-    'scenesystem.dll': 'bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831',
-    'worldrenderer.dll': 'e026fdb32408d1ac3062ab15beee7f87cc6072ee0c4c9b0910c423e0549512e9',
-    'materialsystem2.dll': '336abe089468bd5b218f773f09da3942fa9346b7f49f24d9e3591722fc54c5e6',
+    'scenesystem.dll': '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5',
+    'worldrenderer.dll': 'f9eeff50acb10a89ab78c98d2726d3e5e6b5adf7a8b11be2a41cb5ebded11dac',
+    'materialsystem2.dll': 'b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6',
 }
 
 def mapped(path):
@@ -110,7 +110,25 @@ def main():
     target = 0x1E96D+struct.unpack_from('<i',world,0x1E969)[0]
     if bytes(world[target:world.find(0,target)]) != b'AggregateSceneObjectDesc':
         raise SystemExit('World descriptor name differs')
+    # Independently check the invoked material virtual's two-argument ABI and
+    # selected-variant return. These were re-disassembled before repinning the
+    # 1.41.9.1 DLLs; no offsets or layouts changed in this update.
+    _,material,material_base,_ = modules['materialsystem2.dll']
+    if struct.unpack_from('<Q',material,0x129AD0+0x30)[0]-material_base != 0xBA30:
+        raise SystemExit('CMaterial2 native variant virtual differs')
+    material_checks = {
+        0xBA30:'40534883ec20488bd9e892feffff4885c07509488bc34883c4205bc3488b40284883c4205bc3',
+        0xB8D0:'48895c2418574883ec308b02488bd939055b791500488b0ddcea1300',
+        0xBA0C:'498d0409488b5c24504883c4305fc3',
+        0xBA1B:'488b5c2450488bc14883c4305fc3',
+    }
+    for site,encoded in material_checks.items():
+        expected=bytes.fromhex(encoded)
+        if bytes(material[site:site+len(expected)]) != expected:
+            raise SystemExit(f'Material variant ABI evidence differs: {site:#x}')
     print(json.dumps({'verified':True,'hashes':HASHES,'decoded_source_fields':
-        {k:hex(v) for k,v in fields.items()},'flat_material':name},indent=2))
+        {k:hex(v) for k,v in fields.items()},'flat_material':name,
+        'frozen_scene_instruction_checks':len(checks),
+        'frozen_material_variant_abi_checks':len(material_checks)},indent=2))
 
 if __name__ == '__main__': main()

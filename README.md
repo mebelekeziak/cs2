@@ -4,90 +4,102 @@ x64 client overlay with movement assistance, player ESP and an explicit manual m
 
 ## World visuals
 
-**Follow-up paused October 14, 2026:** sky tint/brightness are user-confirmed.
-The initial surface/flat controls had no observed effect. Material fixes and new
-native lighting controls are in progress; the current follow-up has not passed
-full integration verification, and surface tint remains unfinished. See
-[resume checkpoint](RESUME.md) before building or loading this revision. The
-feature descriptions below record the prior baseline until the follow-up finishes.
+The **World** and **Lighting** tabs provide independent controls, disabled by
+default. Settings last for the current run and continue applying with the menu
+hidden. **Reset world visuals** resets all world controls; **Reset lighting**
+resets only lighting. The previous world implementation was committed as
+`70c0544` before this follow-up; `6ef58ef` preserves the paused implementation.
 
-The public menu's **World** tab provides independent controls, all disabled by
-default. Existing movement changes were committed as `664ab24` before this work.
-Settings last for the current run; **Reset world visuals** disables overrides
-and returns their values to neutral. World controls keep running with the menu
-hidden.
+**Sky:** RGB tint, sky probe/reflections tint and brightness (0–4) adjust the
+existing sky. Each native sky draw receives a fresh copied shader parameter;
+entity fields and sky resource handles remain unchanged. Probe/reflections tint
+applies when the engine refreshes those views. It does not replace scene lighting
+or baked illumination, and no external sky texture loader is provided.
 
-**Sky:** change the existing sky's RGB tint, its separate lighting representation's
-tint, and brightness (0–4). Brightness zero blacks out the sky representation.
-The verified sky render path supplies a fresh shader color parameter for each
-view. The override multiplies that copied parameter on the render callback;
-it does not depend on the engine rescheduling a sky entity update. Entity fields, sky resource
-handles, sun direction and installed textures are not changed. This adjusts the
-current sky; it does not load a different cubemap or replace baked map lighting.
+**World surfaces:** one **Flat world textures** checkbox selects the existing
+`materials/dev/reflectivity_90.vmat` through the native material-mode path.
+Overrides affect newly appended static-world aggregate draw records, with native
+mode and vertex-stream compatibility checks. Separate props, decals and animated
+player/weapon paths are outside this implementation. Unavailable or incompatible
+flat materials leave the original draw unchanged.
 
-**World surfaces:** RGB tint and **Flat world textures**, using the game's existing
-`materials/dev/reflectivity_90.vmat` material. The verified static-world aggregate
-callback emits new draw records; overrides apply only to those newly appended
-records for that world object in the ordinary world render view. Animated player
-and weapon descriptor callbacks are not hooked. Separate props/material paths
-are outside this first implementation. Flat mode changes the material used for
-the draw, not files or shared engine variables. Material variants and required
-vertex streams come from the same native debug-material path. If the native flat
-material is unavailable, the original material remains in use. This option is
-not an arbitrary external texture loader.
+The previous flat path incorrectly treated material-selection view bits as a
+camera-view filter. That restriction has been removed. Detailed bounded counters
+now identify early exits, material binding and mode failures. The user's prior
+log contained callbacks but no changed packets; its incomplete counters cannot
+identify the exact guard that blocked that run. The repaired path still needs
+an offline visual check.
+
+The old **Surface tint** slider has been removed: aggregate world draws do not
+read the packet RGB field it changed. Actual albedo tint requires shader-specific
+authored-material constants and a verified resource-lifetime implementation.
+It is currently unsupported; see [surface tint evidence](tools/CS2_SURFACE_TINT_EVIDENCE.md).
+
+**Lighting:** enable the separate lighting master to adjust:
+
+- Local-light RGB tint and brightness (0–8), covering native point, spot,
+  orthographic, area and barn-light contributions.
+- Disable local lights, following the native gather routines' disabled path.
+- Sun RGB tint and brightness (0–8).
+- Directional lightmaps: **Game value**, **Enabled** or **Disabled**.
+
+These controls change generated radiance, current-view GPU records or freshly
+constructed frame-stack constants on their native callbacks. They do not write
+persistent scene entities, shared cvars or installed game files. Disabling local
+lights leaves baked illumination intact; directional-lightmap mode follows the
+engine switch and does not disable all baked lighting or recompute shadows.
 
 **Screen color:** exposure (−3 to +3 EV), contrast, saturation, gamma, RGB tint,
-vignette and sharpening. This D3D11 pass processes the game image **including its
-HUD**, before this project's ESP/menu, so the overlay remains legible. Exposure
-and gamma adjust the displayed lighting appearance. They do not change individual
-map lights. Sharpening changes screen detail, not material assets. Neutral or
-disabled grading performs no GPU pass. Active grading adds a texture copy/resolve
-and one fullscreen draw; live GPU cost has not been measured.
+vignette and sharpening process the game image, including its HUD, before this
+project's ESP/menu. These change the displayed image rather than individual map
+lights or material assets. Neutral or disabled grading performs no GPU pass.
+Active grading adds a texture copy/resolve and one fullscreen draw; live GPU cost
+has not been measured.
 
-The color pass saves/restores the complete D3D11.1 context state, preserves alpha,
-uses a separate source texture, and retains no swap-chain back-buffer references
-between frames. It rebuilds independent resources on size/format/device changes
-and releases them before resizing/stopping. It requires a D3D11.1 immediate context;
-unsupported resources leave the frame unchanged. sRGB follows the actual RTV/SRV
-format; HDR/PQ display transfer functions are not inferred.
+The screen pass saves/restores D3D11.1 context state, preserves alpha, uses a
+separate source texture and retains no swap-chain back-buffer references between
+frames. Resources rebuild on size/format/device changes and release before
+resize/stop. Unsupported resources leave the frame unchanged. sRGB follows the
+actual RTV/SRV format; HDR/PQ transfer functions are not inferred.
 
-Sky/material changes are disarmed cooperatively. The resident hooks continue
-calling their original render routines; subsequent draws use baseline parameters
-and records. Stop drains our parameter/packet changes without changing shared
-engine scene state. Stopped code remains resident until normal process exit.
+Engine changes disarm cooperatively and drain active parameter/packet changes.
+Resident hooks continue forwarding native calls; stopped code remains resident
+until normal process exit. No session-detection or server prerequisites were added.
 
-Installed-client code and storage evidence:
-[sky verifier](tools/inspect_world.py) and
-[world evidence](tools/CS2_WORLD_EVIDENCE.md), plus
-[sky draw evidence](tools/CS2_SKY_DRAW_EVIDENCE.md) and
-[material evidence](tools/CS2_MATERIAL_EVIDENCE.md). Build changes require fresh evidence;
-engine controls fail closed when their checked build/code does not match. No
-session-detection or server prerequisites were added.
+**Verification, October 15, 2026:** public and diagnostic x64 Release builds
+succeeded, with **16/16 CTest suites passing in each**. Coverage includes native
+lighting packet scope, shutdown, setting bounds, resets, real mouse-driven UI
+controls and software-GPU screen output/state/resource checks. World and Lighting
+menu previews were inspected. The five installed-binary verifiers passed for
+patch **1.41.9.1**, client/server **2000932**, Steam build **25947352**. They compare
+frozen code fingerprints and decoded operands, rather than substituting offsets
+automatically. Evidence: [world](tools/CS2_WORLD_EVIDENCE.md),
+[sky](tools/CS2_SKY_DRAW_EVIDENCE.md), [materials](tools/CS2_MATERIAL_EVIDENCE.md),
+[local lights](tools/CS2_LIGHTING_EVIDENCE.md),
+[light switches](tools/CS2_ENV_LIGHT_EVIDENCE.md) and
+[sun/directional lightmaps](tools/CS2_BAKED_LIGHT_EVIDENCE.md).
 
-The existing public/diagnostic build commands below build these features and run
-their CTest checks. Standalone World menu previews use the same software-D3D11
-preview executable, with optional category and scroll position:
+**Compatibility:** this update recertifies only the world/sky/lighting paths.
+Shared ESP and movement offsets remain pinned to 1.41.9.0 and reject the newly
+installed client; they need a separate update. Passing standalone tests does not
+establish their compatibility with 1.41.9.1.
+
+The user confirmed sky tint/brightness on the previous build. No client was
+launched during this follow-up, so repaired flat textures, new lighting controls
+and current-build sky appearance have not been observed live. Testing remains
+limited to the disconnected menu, offline mode or a user-controlled private
+session under the repository instructions.
+
+The existing public/diagnostic build commands below include these features.
+Standalone previews accept a tab (World=2, Lighting=3), scroll position and
+optional viewport width/height:
 
 ```powershell
 .\build\Release\public_menu_preview.exe .\logs\world-menu.bmp 2
-.\build\Release\public_menu_preview.exe .\logs\world-surfaces.bmp 2 195
-.\build\Release\public_menu_preview.exe .\logs\world-colors.bmp 2 335
+.\build\Release\public_menu_preview.exe .\logs\lighting-menu.bmp 3
+.\build\Release\public_menu_preview.exe .\logs\lighting-narrow.bmp 3 0 180 150
 python tools/inspect_world.py
-python tools/verify_sky_draw.py
-python tools/verify_world_materials.py
 ```
-
-Standalone checks verify actual software-GPU color output, alpha, state restoration,
-MSAA resolution and resource lifetime without launching CS2. Sky hook verification
-is based on the inspected installed build and standalone checks. October 14, 2026:
-both public and diagnostic x64 Release builds succeeded; all 13 CTest suites passed
-in each build, including sky scope/shutdown and native material packet checks.
-The combined installed-binary verifier passed and the rendered World menu was
-visually inspected. The public DLL remains AMD64 with zero static TLS and delay
-import directories. Live appearance
-still requires observation in an authorized disconnected/offline/private client;
-no world-visuals client run has been performed.
-
 
 ## Player ESP
 

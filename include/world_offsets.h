@@ -1,11 +1,17 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-// Installed scenesystem.dll SHA256 bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831.
+// Recertified October 15, 2026 for installed patch 1.41.9.1 / client 2000932.
+// scenesystem.dll SHA256 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
+// client.dll SHA256 659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0.
 // See tools/verify_sky_draw.py and CS2_SKY_DRAW_EVIDENCE.md.
 namespace world_offsets {
-inline constexpr std::uint32_t SceneTimestamp = 0x6AC7FF95;
+inline constexpr std::uint32_t SceneTimestamp = 0x6ACFCD4F;
 inline constexpr std::uint32_t SceneImageSize = 0x978000;
+// Only the sky lighting-kind producer was recertified in client.dll. These
+// scoped identities do not enable unverified ESP or movement layouts.
+inline constexpr std::uint32_t ClientTimestamp = 0x6AD01314;
+inline constexpr std::uint32_t ClientImageSize = 0x299D000;
 inline constexpr std::ptrdiff_t SkyDescriptorVtable = 0x5F64D8;
 inline constexpr std::ptrdiff_t SkyRender = 0x154FB0;
 inline constexpr std::ptrdiff_t SetFloat4 = 0x4DA70;
@@ -15,7 +21,7 @@ inline constexpr std::ptrdiff_t DrawSource = 0x18;
 inline constexpr std::ptrdiff_t SceneKind = 0xC4;
 inline constexpr std::uint32_t VisibleKind = 0xE5FD3C88;
 inline constexpr std::uint32_t LightingKind = 0x0881EE9E;
-inline constexpr std::ptrdiff_t LightingProducer = 0x28232E;
+inline constexpr std::ptrdiff_t LightingProducer = 0x28269E;
 inline constexpr std::uint32_t SkyTintKey = 0x99E6002A;
 inline constexpr unsigned char SkyRenderBytes[]{
     0x45,0x85,0xc9,0x0f,0x8e,0x1f,0x07,0x00,0x00,0x4c,0x8b,0xdc,

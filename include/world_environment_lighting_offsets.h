@@ -4,8 +4,9 @@
 
 // Read-only installed evidence: tools/verify_environment_lighting.py and
 // tools/CS2_BAKED_LIGHT_EVIDENCE.md. Never guess or auto-update operands.
+// CS2 1.41.9.1 recertification: unchanged operands and ABI, October 15, 2026.
 namespace world_environment_lighting_offsets {
-inline constexpr std::uint32_t Timestamp = 0x6AC7FF95;
+inline constexpr std::uint32_t Timestamp = 0x6ACFCD4F;
 inline constexpr std::uint32_t ImageSize = 0x978000;
 inline constexpr std::uintptr_t CopyBuffer = 0x569120;
 inline constexpr std::uintptr_t CopyReturn = 0x1B0CD1;

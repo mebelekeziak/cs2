@@ -97,3 +97,39 @@ Research-only Python `zstandard` is installed under
 
 The probe creates workspace diagnostics only. Shader metadata and static
 disassembly prove the parameter source and consumer, not live appearance.
+
+## October 15 bounded continuation
+
+The installed-shader probe passed again after resuming from commit `6ef58ef`;
+both frozen shader hashes, metadata mappings, and original generic DXBC color
+multiply still match. No surface-tint runtime backend was added.
+
+The installed `materialsystem2.dll` now hashes to
+`b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6`, rather than
+the previous `336abe089468bd5b218f773f09da3942fa9346b7f49f24d9e3591722fc54c5e6`.
+Native binary identity must be reverified before using previous runtime evidence.
+
+One bounded review eliminated misleading candidate packer helpers: the block
+at `0x163C1` through the `int3` at `0x16500` is an error/reporting path.
+Its `0x1F6E0` helper checks the resource type token `0x74616D76` (`vmat`), and
+`0x1FBE0` builds a resource name/string for that report. These helpers are not
+artist tint constant packers. Saved read-only output:
+`logs/research/surface-packer-bounded.txt`.
+
+The feasible stage recommendation is to retain the separately repaired flat
+material path and disable unsupported surface-tint controls until a dedicated
+constant-packing/upload implementation can establish:
+
+- Which exact ordinary world shader variant consumes the copied color slots.
+- How the source artist constant becomes frame-owned CPU/GPU data.
+- How a changed tint updates the native material binding cache.
+- When queued native consumers finish using any replacement storage.
+
+A public D3D11 buffer-copy/compute-patch backend still needs shader identity and
+actual GPU-draw scope. Native aggregate callbacks can record work for later
+renderer execution; a CPU callback's thread-local scope is not proof that the
+later D3D draw belongs to that scope. Capturing only future CreatePixelShader
+calls does not identify shader objects already cached before hook installation.
+The current overlay discovers Present/ResizeBuffers, with no verified shader
+identity registry or ordinary-world D3D draw interception. Adding a general
+CB0 offset edit without those prerequisites would claim unsupported coverage.

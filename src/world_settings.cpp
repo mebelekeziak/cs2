@@ -21,7 +21,6 @@ WorldSettings WorldSanitizeSettings(const WorldSettings& settings) noexcept {
         result.tint[channel] = Clamp(result.tint[channel], 0.0f, 1.0f, 1.0f);
         result.skyTint[channel] = Clamp(result.skyTint[channel], 0.0f, 1.0f, 1.0f);
         result.skyLightingTint[channel] = Clamp(result.skyLightingTint[channel], 0.0f, 1.0f, 1.0f);
-        result.worldTint[channel] = Clamp(result.worldTint[channel], 0.0f, 1.0f, 1.0f);
         result.localLightTint[channel] = Clamp(result.localLightTint[channel], 0.0f, 1.0f, 1.0f);
         result.sunLightTint[channel] = Clamp(result.sunLightTint[channel], 0.0f, 1.0f, 1.0f);
     }

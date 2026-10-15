@@ -1,13 +1,18 @@
 # Installed-client world/sky evidence
 
-Inspected October 14, 2026, without launching or opening a client process.
+Sky path recertified October 15, 2026, without launching or opening a client
+process. Historical native-update research below remains from October 14.
 
 The local client installation is
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
-`csgo/steam.inf` reports patch 1.41.9.0, client/server 2000930, source revision
-11106093, version date October 8, 2026. `client.dll` is AMD64 PE32+, timestamp
-`0x6AC7FFFA`, image size `0x2994000`, SHA-256
-`44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008`.
+`csgo/steam.inf` reports patch 1.41.9.1, client/server 2000932, source revision
+11131657, version date October 14, 2026 (Steam build 25947352). `client.dll` is
+AMD64 PE32+, timestamp `0x6AD01314`, image size `0x299D000`, SHA-256
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`.
+`scenesystem.dll` is AMD64 PE32+, timestamp `0x6ACFCD4F`, image size `0x978000`,
+SHA-256 `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`.
+The bounded sky recertification uses separate client identity constants; shared
+ESP/movement headers were not changed or implicitly validated.
 The existing overlay verifies actual D3D11 objects in its callbacks; no current
 client run or visible world-modification observation was performed here.
 
@@ -21,19 +26,34 @@ native rendering callbacks and retain no engine pointer across callbacks.
 | Option | Verified mechanism | Limit |
 | --- | --- | --- |
 | Sky color/brightness | Copied sky draw shader parameter | Existing sky texture remains |
-| Sky lighting tint | Distinct native lighting-sky draw kind | Only views the engine refreshes; baked lighting remains |
-| Surface tint | New aggregate world primitive RGB | Separate props/decals/grass paths not asserted |
+| Sky probe/reflections tint | Distinct native lighting-sky draw kind | Only views the engine refreshes; baked lighting remains |
+| Surface tint (unsupported, removed from UI) | Aggregate DrawArray/DrawPrimitive does not consume packet RGB | Requires a separate authored-material constant implementation |
 | Flat world textures | Engine-owned reflectivity material and verified native mode | Built-in flat appearance; no arbitrary texture loading |
+| Local-light color/brightness | Generated point/spot/orthographic radiance and area/barn GPU records | Corresponding native light contributions only |
+| Disable local lights | Native point/spot and area gather early returns | Baked map lighting remains |
+| Sun color/brightness; directional lightmaps | Fresh frame-stack view constants before native copy | No baked lightmap recomputation |
 | Exposure/contrast/saturation/gamma | D3D11 final-image pass | Also changes the game HUD |
 
 Detailed frozen machine evidence is in
 [CS2_SKY_DRAW_EVIDENCE.md](CS2_SKY_DRAW_EVIDENCE.md) and
 [CS2_MATERIAL_EVIDENCE.md](CS2_MATERIAL_EVIDENCE.md).
-`python tools/inspect_world.py` invokes both final standard-library verifiers,
+Lighting evidence is in [CS2_LIGHTING_EVIDENCE.md](CS2_LIGHTING_EVIDENCE.md),
+[CS2_ENV_LIGHT_EVIDENCE.md](CS2_ENV_LIGHT_EVIDENCE.md) and
+[CS2_BAKED_LIGHT_EVIDENCE.md](CS2_BAKED_LIGHT_EVIDENCE.md).
+The unsupported tint path is explained in
+[CS2_SURFACE_TINT_EVIDENCE.md](CS2_SURFACE_TINT_EVIDENCE.md).
+`python tools/inspect_world.py` invokes all five final standard-library verifiers,
 which compare runtime constants against independently decoded local operands.
 There is no source-header generation or automatic offset substitution.
 
 ## Native sky construction and update research
+
+The RVAs in this historical section and the two following research sections
+describe client 1.41.9.0 with SHA-256
+`44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008`.
+They are not runtime offsets for the newly installed client. Current sky
+runtime evidence and the relocated lighting-kind producer are documented in
+[CS2_SKY_DRAW_EVIDENCE.md](CS2_SKY_DRAW_EVIDENCE.md).
 
 The prior local schema dump under `logs/research/cs2-dumper/generated` associates
 the `C_EnvSky` class with the following fields:
@@ -106,7 +126,9 @@ frame, manipulate scheduler recurrence, or write source scene tint.
 
 `python tools/inspect_world.py --legacy-update` retains this read-only research
 as independent historical machine checks. It does not compare the abandoned
-offsets with the final runtime header.
+offsets with the final runtime header and intentionally rejects the updated
+client. Running that historical mode requires the original binary under the
+selected `--game` root; current default verification uses the final verifiers.
 
 ## Selected recurring sky draw
 

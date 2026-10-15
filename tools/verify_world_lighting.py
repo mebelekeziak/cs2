@@ -17,8 +17,15 @@ def main():
     args=parser.parse_args()
     raw,image,base,nt=mapped(args.game/'bin/win64/scenesystem.dll')
     digest=hashlib.sha256(raw).hexdigest()
-    if digest!='bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831':
+    if digest!='040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
         raise SystemExit('Changed scenesystem.dll: investigate before changing lighting.')
+    scopes={
+        'generator':(0x4A3CE0,0x4A4C8F,'f5bd3634615d09da402e7a8e8cdc2b475e035fe1201838e0aede79d354f0ae95'),
+        'area_pack':(0x1B0FB0,0x1B1461,'282ac6c2001659af1fec0b4661bb4bc5ab586f155555665560453454d622d5a3'),
+    }
+    for label,(start,end,expected) in scopes.items():
+        if hashlib.sha256(image[start:end]).hexdigest()!=expected:
+            raise SystemExit(f'Changed complete {label} function scope')
     checks={
         'generator_entry':(0x4A3CE0,'488bc44488482055488da868f7ffff4881ec90090000'),
         'fifth_float':(0x4A3D43,'f30f598dc0080000'),
@@ -65,7 +72,8 @@ def main():
         'MaxSubLights':struct.unpack_from('<I',image,0x4A4C7F)[0],
         'PackAreaLight':0x1B0060+struct.unpack_from('<i',image,0x1B005C)[0],
         'AreaReturnA':0x1B0060,'AreaReturnB':0x1B00DB,
-        'AreaStride':0x90,'AreaRadiance':image[0x1B1320],
+        'AreaStride':(1+(1<<(image[0x1B004E]>>6)))*(1<<image[0x1B0052]),
+        'AreaRadiance':image[0x1B1320],
         'Omni':1,'Directional':2,'Spot':3,'Ortho':4,
     }
     source=re.sub(r'//[^\n]*|/\*.*?\*/','',args.header.read_text(),flags=re.S)
@@ -78,6 +86,6 @@ def main():
         match=re.search(rf'\b{name}\[\]\s*\{{([^}}]+)\}}',source)
         blob=bytes(int(v,0) for v in re.findall(r'0[xX][0-9a-fA-F]+|\d+',match[1])) if match else b''
         if not blob or image[address:address+len(blob)]!=blob: raise SystemExit(f'Header bytes {name} differ')
-    print(json.dumps({'sha256':digest,'verified':list(checks),'constants':{k:hex(v) for k,v in observed.items()},'live_visual_observation':False},indent=2))
+    print(json.dumps({'sha256':digest,'verified_function_scopes':list(scopes),'verified':list(checks),'constants':{k:hex(v) for k,v in observed.items()},'live_visual_observation':False},indent=2))
 
 if __name__=='__main__':main()

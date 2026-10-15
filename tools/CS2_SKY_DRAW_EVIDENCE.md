@@ -1,16 +1,31 @@
 # Installed CS2 sky draw evidence
 
-Read-only investigation of the installed Windows x64 client, version 1.41.9.0.
+Recertified October 15, 2026 against installed Windows x64 patch 1.41.9.1,
+client/server 2000932, source revision 11131657, Steam build 25947352,
+version date October 14, 2026, 16:57:53. Original investigation used 1.41.9.0.
 All addresses below are RVAs of the named module. Run `python tools/verify_sky_draw.py`
 to verify the specific binary fingerprints and machine instructions. No process
 was opened, injected, launched, or changed during this investigation.
 
-`scenesystem.dll` SHA-256:
-`bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831`.
+Installation root:
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+
+| Module under installation root | SHA-256 | PE timestamp | Image size |
+| --- | --- | --- | --- |
+| `bin/win64/scenesystem.dll` | `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5` | `0x6ACFCD4F` | `0x978000` |
+| `csgo/bin/win64/client.dll` | `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0` | `0x6AD01314` | `0x299D000` |
+
+Both modules were verified as AMD64 PE32+. This recertification covers only the
+sky draw and lighting-kind producer. The sky now uses its own scoped client PE
+identity in `world_offsets.h`; it does not update or enable shared ESP/movement
+offsets.
 
 ## Recurring sky draw path
 
 MSVC RTTI `.?AVCSkyBoxObjectDesc@@` resolves its descriptor vtable to `0x5F64D8`.
+The current type descriptor is `0x680DF8`, primary complete-object locator
+`0x60C720`. The verifier derives the primary vtable from those RTTI links and
+then reads its method slots; it does not accept an assumed vtable location.
 Slot `+0x20` points to primitive generation `0x36C00`; it emits one `0x70` byte
 packet with source scene at `+0x18` and packed draw RGBA initialized white at
 `+0x50`. Primitive generation does **not** read source tint `+0xE8`, so packet
@@ -47,8 +62,13 @@ pins both complete SHA-256 fingerprints and derives each header operand.
 
 Sky scene allocation at `0x1557EE` requests `0x110` bytes. Default construction
 sets scene `+0xC4` to `0xE5FD3C88` at `0x155908`.
-The client original sky update at `client.dll + 0x28232E` explicitly changes
+The current client original sky update at `0x282390`, at instruction
+`client.dll + 0x28269E`, explicitly changes
 the lighting scene's `+0xC4` to `0x0881EE9E` immediately after creation.
+The new producer was independently located as the unique matching kind store,
+then its surrounding material-handle `+0x10A0`, native creation slot `+0x138`,
+and lighting output `+0x10F0` flow were checked. Its former instruction RVA
+`0x28232E` is obsolete; it was not moved by applying an assumed image delta.
 This is a direct local-binary distinction; no cached entity-to-scene mapping
 is necessary during a draw. Source tint is already linear and includes the
 native brightness factor before shader upload.
@@ -68,3 +88,15 @@ This identifies an integration path; this document does not claim live visual
 verification. Effects on reflection/environment lighting depend on which
 lighting-sky views the native renderer actually refreshes. Baked lighting is
 outside this verified draw path.
+
+## October 15 recertification
+
+All thirteen previously frozen scene-render, ABI, data-field and copy checks
+matched the new scenesystem binary. Additional current checks cover primitive
+scene/RGBA initialization, parameter submission/destruction, current client sky
+updater entry, and the lighting material creation/output flow. The verifier pins
+both new full hashes and compares every runtime header constant and hook/producer
+byte array with the independently decoded evidence. Runtime changes are limited
+to scoped build identities and the relocated client producer; the accepted
+per-view TLS/callsite/key behavior is unchanged. No live client launch or visual
+validation was performed for this recertification.

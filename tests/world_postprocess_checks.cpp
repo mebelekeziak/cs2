@@ -116,7 +116,6 @@ void SettingsChecks() {
     s.tint[0] = -1; s.tint[1] = 2; s.tint[2] = std::numeric_limits<float>::quiet_NaN();
     s.vignette = 2; s.sharpening = -1; s.skyBrightness = 0;
     s.skyTint[0] = 2; s.skyLightingTint[1] = -2;
-    s.worldTint[0] = -2; s.worldTint[1] = 2; s.worldTint[2] = std::numeric_limits<float>::quiet_NaN();
     WorldSetSettings(s);
     s = WorldGetSettings();
     Check(s.exposureEv == 3 && s.contrast == 0.5f && s.saturation == 2 && s.gamma == 0.5f,
@@ -125,7 +124,6 @@ void SettingsChecks() {
     Check(s.vignette == 1 && s.sharpening == 0 && s.skyBrightness == 0,
         "detail/sky clamps");
     Check(s.skyTint[0] == 1 && s.skyLightingTint[1] == 0, "sky tint clamps");
-    Check(s.worldTint[0] == 0 && s.worldTint[1] == 1 && s.worldTint[2] == 1, "material tint finite clamps");
     s.exposureEv = std::numeric_limits<float>::infinity();
     s.gamma = std::numeric_limits<float>::quiet_NaN();
     Check(WorldSanitizeSettings(s).exposureEv == 0 && WorldSanitizeSettings(s).gamma == 1,
@@ -133,7 +131,7 @@ void SettingsChecks() {
     WorldSettings neutral;
     neutral.enabled = true; neutral.skyEnabled = true; neutral.skyBrightness = 4;
     Check(!WorldPostprocessIsActive(neutral), "sky settings cannot activate screen pass");
-    neutral.worldMaterialEnabled = neutral.flatTextures = true; neutral.worldTint[0] = 0;
+    neutral.worldMaterialEnabled = neutral.flatTextures = true;
     Check(!WorldPostprocessIsActive(neutral), "material settings cannot activate screen pass");
     Check(WorldPostprocessRender(nullptr, nullptr, nullptr, nullptr, neutral), "neutral uses no device");
     neutral.enabled = false; neutral.exposureEv = 1;

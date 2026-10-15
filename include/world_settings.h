@@ -16,7 +16,6 @@ struct WorldSettings {
     float skyLightingTint[3]{1.0f, 1.0f, 1.0f};
     float skyBrightness = 1.0f;
     bool worldMaterialEnabled = false;
-    float worldTint[3]{1.0f, 1.0f, 1.0f};
     bool flatTextures = false;
     // Native lighting controls, independent of sky and screen grading.
     bool lightingEnabled = false;

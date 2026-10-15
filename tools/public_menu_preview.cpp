@@ -27,8 +27,8 @@ bool Check(HRESULT result, const char* action) {
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc < 2 || argc > 4) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting] [scroll pixels]\n");
+    if (argc < 2 || argc > 6 || argc == 5) {
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
@@ -37,12 +37,22 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "Tab must be 0, 1, 2 or 3.\n");
         return 1;
     }
-    const long scroll = argc == 4 ? std::wcstol(argv[3], &end, 10) : 0;
-    if (scroll < 0 || scroll > 100000 || (argc == 4 && (end == argv[3] || *end))) {
+    const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
+    if (scroll < 0 || scroll > 100000 || (argc >= 4 && (end == argv[3] || *end))) {
         std::fprintf(stderr, "Scroll must be between 0 and 100000 pixels.\n");
         return 1;
     }
-    constexpr UINT width = 418, height = 388;
+    const long requestedWidth = argc == 6 ? std::wcstol(argv[4], &end, 10) : 418;
+    if (requestedWidth < 180 || requestedWidth > 4096 || (argc == 6 && (end == argv[4] || *end))) {
+        std::fprintf(stderr, "Width must be between 180 and 4096 pixels.\n");
+        return 1;
+    }
+    const long requestedHeight = argc == 6 ? std::wcstol(argv[5], &end, 10) : 388;
+    if (requestedHeight < 150 || requestedHeight > 4096 || (argc == 6 && (end == argv[5] || *end))) {
+        std::fprintf(stderr, "Height must be between 150 and 4096 pixels.\n");
+        return 1;
+    }
+    const UINT width = static_cast<UINT>(requestedWidth), height = static_cast<UINT>(requestedHeight);
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     if (!Check(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,

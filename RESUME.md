@@ -1,68 +1,54 @@
-# World materials and lighting checkpoint — October 14, 2026
+# World visuals continuation — October 15, 2026
 
-The user requested a pause to conserve usage. Do not treat this checkpoint as a
-finished or live-verified fix. All investigators stopped; no game was launched.
+The bounded implementation and standalone verification are complete. No game
+was launched or injected during this follow-up. See README for current controls,
+compatibility and limitations.
 
-## Saved baseline and observed behavior
+## Saved state
 
-- `70c0544` commits the previous world visuals before this follow-up.
-- User confirms sky tint and brightness work. Surface override/flat textures have
-  no visible effect; the prior sky lighting control did not deliver the desired
-  scene lighting changes.
-- `logs/overlay-40608-134364575022549814.log` shows 9,160,911 material callbacks,
-  zero changed packets and zero recorded rejects. Old counters omitted early
-  exits, so this does not identify which guard blocked the run.
+- `70c0544`: baseline committed before this follow-up, as requested.
+- `6ef58ef`: paused work from October 14, before full integration verification.
+- User previously confirmed sky color/brightness; flat materials had no visible
+  effect. Old counters logged 9,160,911 callbacks and no changed packets, but
+  omitted early exits and cannot identify the precise blocking guard.
 
-## Implemented follow-up, still requiring integration verification
+## Completed
 
-- Materials: removed unsupported bit24/bit32 view classification; native material
-  mode resolution determines compatibility. Added bounded counters for every
-  early exit and flat binding/mode failures. Removed unused packet RGB writes.
-- **Surface tint remains unfinished.** Aggregate draws do not read packet RGB.
-  Actual `g_vColorTint` is an authored material constant consumed at shader CB0
-  byte32; injecting a generic draw parameter is insufficient. See
-  `tools/CS2_SURFACE_TINT_EVIDENCE.md` and `tools/inspect_surface_tint.py`.
-  Resume native material Bind/constant packing and GPU lifetime analysis before
-  implementing a real tint override. Do not claim the existing tint slider works.
-- Native local light color/brightness: point/spot/orthographic generated radiance,
-  plus the latest area/barn GPU-record extension. Native source geometry updates
-  are preserved. Area extension is written and binary-verified, **not built/tested**.
-- Local-light disable: mirrors native point/spot and area gather early returns.
-- Sun color/brightness and Game/Enabled/Disabled directional lightmaps: changes
-  freshly generated, verified current-thread stack view constants, no scene/cvar
-  writes. Directional mode Enabled maps to native float0; Disabled to float1.
-- Shared settings and fourth **Lighting** tab are integrated in source. Working
-  sky backend is unchanged. Reset lighting preserves the other world settings.
-- New modules are wired into CMake and overlay preparation/activation/stop/logging.
+- Removed the unjustified flat-material view-bit filter and added bounded
+  stage/failure telemetry. One Flat world textures checkbox controls the feature.
+- Removed unsupported surface tint UI/settings: aggregate draws never consume
+  its old packet RGB writes. A real material-constant implementation remains
+  future work, documented in tools/CS2_SURFACE_TINT_EVIDENCE.md.
+- Lighting tab exposes local-light color/brightness and removal, sun
+  color/brightness, and native directional-lightmap mode. Defaults are neutral
+  and disabled. Lighting reset preserves other world settings.
+- Native modules are integrated into preparation, activation, stop and logging.
+  Partial activation and resident cooperative stop were independently reviewed.
+- Menu checks now use real mouse input at submitted item bounds. World/Lighting
+  previews, including narrow tabs, were inspected.
+- Full public and diagnostic x64 Release builds succeed; all 16 CTest suites
+  pass in each. Five combined installed-binary verifiers pass; report is
+  logs/world-verification-20261015.log.
 
-## Checks actually completed
+## Version and next observation
 
-- Material revision: 27 standalone checks and frozen binary verifier pass.
-- Local-light switches: Release target built; 8 checks pass.
-- Sun/directional backend: Release target built and its CTest passed.
-- Public menu/preview targets built. **public_menu_checks currently fails two
-  new checks:** disabled lighting master blocks local-light control; local-light
-  checkbox publishes native suppression setting. These use synthetic
-  `ActivateItemByID`; investigate with real mouse input and correct item geometry.
-- Last targeted CTest: material, switches, sun passed; menu failed (3/4 passed).
-- No complete public/diagnostic follow-up build, full CTest pass, or live test.
-  The existing overlay DLL may still be the previous baseline. Build and validate
-  before loading this revision; stopped code remains resident until normal exit.
+Installed CS2 updated to patch 1.41.9.1, client/server 2000932, source revision
+11131657, Steam build 25947352. World/sky/lighting code fingerprints, operands and
+metadata were recertified from installed binaries. Shared ESP/movement offsets
+remain at 1.41.9.0 and will reject the new client; update these separately with
+fresh evidence before expecting those features to run.
 
-## Resume order
+Repaired flat materials and new lighting still need an authorized offline/private
+visual observation. Inspect the new material-stage counters if flat mode remains
+unchanged. Native controls affect their corresponding light contributions;
+baked illumination/shadows are not recomputed. Stopped code remains resident
+until process exit.
 
-1. Repair the two menu checks and inspect the fourth-tab preview. Cover sun/mode
-   reset and native settings bounds. Update local-light scope label for area support.
-2. Build/test latest `world_lighting_checks` area extension; fix any failures.
-3. Complete safe surface tint binding, or explicitly disable/remove its unsupported
-   UI until implemented. Keep flat-material fixes and detailed runtime telemetry.
-4. Run public/diagnostic Release builds and all 16 current CTest suites; run
-   `verify_world_materials.py`, `verify_world_lighting.py`,
-   `verify_lighting_switches.py`, `verify_environment_lighting.py`, and sky verifier.
-5. Update README to the final supported behavior and actual results. Observe an
-   authorized disconnected/offline/private run and inspect new stage counters.
+## Optional later work
 
-Research reports: `CS2_LIGHTING_EVIDENCE.md`, `CS2_ENV_LIGHT_EVIDENCE.md`,
-`CS2_BAKED_LIGHT_EVIDENCE.md`, and `CS2_SURFACE_TINT_EVIDENCE.md` under `tools/`.
-Official ValveResourceFormat20.0 investigation tools, license and extracted
-shader evidence remain under ignored `logs/research/vrf20` and related log paths.
+Surface tint requires shader-specific authored-material constant handling and
+verified GPU resource/cache lifetime. Generic artist g_vColorTint is CB0 byte32;
+lightmapped shaders use different layered fields. A generic frame parameter or
+packet RGB write does not implement it. Reproducible shader investigation is
+in tools/inspect_surface_tint.py; official ValveResourceFormat20.0 tooling,
+license and extracted evidence remain in ignored logs/research paths.

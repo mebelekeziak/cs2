@@ -11,7 +11,9 @@ import struct
 from inspect_world import load_image
 
 DEFAULT_GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game")
-EXPECTED_SCENE = "bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831"
+# October 15, 2026: all frozen sites and full historical callback/copy/upload
+# disassemblies compared unchanged before accepting the 1.41.9.1 PE metadata.
+EXPECTED_SCENE = "040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5"
 CHECKS = {
     "baked_cvar_registration": (0x8799, "488d1560675e00488d0d71a59100"),
     "baked_cvar_consumer": (0x5499B, "488b057ee38c0040387058750b"),

@@ -1,5 +1,28 @@
 # Installed native sunlight and directional lightmap evidence
 
+Recertified October 15, 2026 for CS2 **1.41.9.1**, client **2000932**, Steam
+build **25947352**, Source revision **11131657**. Current `scenesystem.dll`
+SHA-256 is `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`,
+AMD64 timestamp `0x6ACFCD4F`, image size `0x978000`.
+
+Before changing either runtime metadata or verifier pins, all 15 frozen static
+lighting checks and six runtime byte arrays matched the new installation.
+Full historical instruction bytes also matched unchanged: pure memory-copy
+investigation (356 instructions), buffer variant construction/upload (276),
+sun selection (210), and per-view buffer preparation (467). The additional
+complete light-gather comparison is recorded in `CS2_ENV_LIGHT_EVIDENCE.md`.
+The independently decoded copy target/return remain `0x569120`/`0x1B0CD1`,
+buffer size `0x7DE0`, sun RGB `0x79A0`, directionality float `0x40`, and upload
+vtable slot `+0xF8`. Every mechanism below remains unchanged. No live process
+was accessed during recertification.
+
+The recertified frozen verifier and static-lighting inspection both passed.
+The targeted MSVC x64 Release environment-lighting check executable rebuilt
+successfully and passed CTest. Its callback/data checks do not establish live
+appearance; no game launch or full DLL build was performed in this subtask.
+
+## Original investigation
+
 Read-only investigation on October 14, 2026, for the AMD64 CS2 client
 installation documented in [CS2_WORLD_EVIDENCE.md](CS2_WORLD_EVIDENCE.md).
 No client was launched, opened, injected or changed. `scenesystem.dll` SHA-256:

@@ -10,7 +10,7 @@ import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_SHA256 = "44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008"
+LEGACY_CLIENT_SHA256 = "44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008"
 DEFAULT_CLIENT = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll")
 
 def load_image(path):
@@ -36,8 +36,8 @@ def legacy_update_main():
     args = parser.parse_args()
     raw, image, base, nt, functions = load_image(args.client)
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != EXPECTED_SHA256:
-        raise SystemExit("Client changed: independently investigate the new sky callback before using these offsets.")
+    if digest != LEGACY_CLIENT_SHA256:
+        raise SystemExit("Historical --legacy-update requires the original 1.41.9.0 client binary; use default verification for the current per-view sky implementation.")
     checks = {
         "sky_update": (0x282020, "48895c241048897424185557415441554157488bec4883ec70"),
         "visible_color_source": (0x282066, "488d91ac100000"),
@@ -84,7 +84,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, default=DEFAULT_CLIENT.parents[3])
     parser.add_argument("--legacy-update", action="store_true",
-                        help="Inspect the historical transient entity-update path; it is not hooked by the feature")
+                        help="Inspect the original 1.41.9.0 transient-update research; requires that historical binary and is not used by the feature")
     args = parser.parse_args()
     saved = sys.argv
     try:
@@ -96,10 +96,16 @@ def main():
         # against independently decoded local machine operands.
         from verify_sky_draw import main as sky_main
         from verify_world_materials import main as material_main
+        from verify_world_lighting import main as lighting_main
+        from verify_lighting_switches import main as switches_main
+        from verify_environment_lighting import main as environment_main
         sys.argv = [saved[0], "--game", str(args.game)]
         sky_main()
         sys.argv = [saved[0], "--installation", str(args.game / "bin/win64")]
         material_main()
+        for verify in (lighting_main, switches_main, environment_main):
+            sys.argv = [saved[0], "--game", str(args.game)]
+            verify()
     finally:
         sys.argv = saved
 

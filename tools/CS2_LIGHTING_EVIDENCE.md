@@ -1,12 +1,12 @@
-# Native local-light radiance, installed CS2 1.41.9.0
+# Native local-light radiance, installed CS2 1.41.9.1
 
 Read-only local-binary research. Module RVAs throughout. Canonical verifier:
 `python tools/verify_world_lighting.py`. No process launch, injection, or game
 file changes were used for research or synthetic checks.
 
 `scenesystem.dll` SHA256:
-`bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831`;
-AMD64 PE timestamp `0x6AC7FF95`, image size `0x978000`.
+`040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`;
+AMD64 PE timestamp `0x6ACFCD4F`, image size `0x978000`.
 
 The light creation switch `0xCFF50` reads the source light-data type DWORD.
 Its jump table `0xD058C` maps 1 to the constructor path labelled `OmniLight`,
@@ -54,13 +54,12 @@ native. Repeated views rebuild their radiance baseline without accumulation.
 
 Stop disarms first and drains only short output writes using an SRW barrier.
 Original native generation runs outside that barrier. Stopped forwarding code
-remains resident; queued rendering may complete after stop. This work does not
-claim baked-lightmap changes, probe ambient changes, barn/area-light tinting,
-or live visual validation. The separate area extension below supersedes the
-earlier barn/area limitation. The lighting controls supplement the working
+remains resident; queued rendering may complete after stop. This backend does
+not claim baked-lightmap changes, probe ambient changes, or live visual
+validation. The implemented area extension is described below. These controls supplement the working
 visible-sky controls; lighting-sky tint does not replace native light radiance.
 
-## Area/barn extension and paused checkpoint
+## Area/barn extension
 
 The area extension is implemented in `src/world_lighting.cpp`, with constants
 in `include/world_lighting_offsets.h` and synthetic cases in
@@ -88,10 +87,31 @@ were inspected from the installed local binary. The area source/store,
 caller/prolog, and stride checks are included in `verify_world_lighting.py`;
 final upload checks can be added on resume if needed.
 
-Checkpoint at the user's request to stop and resume later: all owned files
-are saved and frozen. The standalone stdlib verifier passed after adding the
-area extension. Synthetic tests for both native paths are written, but the
-latest area extension has **not** been built or run. Remaining work is final
-integration build/test, any resulting repairs, and accurate reporting. No
-live client test, injection, public session, or observed lighting result is
+## Validation after resume, October 15, 2026
+
+The x64 Release `world_lighting_checks` target builds successfully and passes
+all 29 synthetic checks, including both area callers, RGB-only byte changes,
+full area return-register preservation, baseline regeneration, disabling,
+zero brightness, and stopping while either native original is busy. The code
+review found no source-ownership, forwarding, or stop-barrier repair necessary.
+
+The original 1.41.9.0 evidence used SHA256
+`bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831`
+and timestamp `0x6AC7FF95`. On resume, verification correctly rejected the
+new installed module before recertification. All 31 frozen instruction
+checks still match in 1.41.9.1. Both entire native functions were decoded
+from entry through their final return: 716 instructions in generator
+`0x4A3CE0..0x4A4C8F` and 269 instructions in area pack
+`0x1B0FB0..0x1B1461` (exclusive end addresses). This confirmed the original
+five-argument generator ABI, three-argument area ABI, output ownership,
+RGB consumers, and native return behavior. Header operands were independently
+decoded again, including the area stride's LEA scale and shift immediate.
+
+The runtime timestamp and verifier fingerprint now pin the recertified
+1.41.9.1 identity above. RVAs, layouts, and runtime behavior did not change.
+The verifier additionally pins SHA256 fingerprints for both complete native
+function scopes. This recertification applies only to this local-light
+backend; other subsystems require their own current-build verification.
+
+No live client test, injection, public session, or observed lighting result is
 claimed. Existing sky files were preserved throughout this lighting work.

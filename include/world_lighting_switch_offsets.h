@@ -2,10 +2,11 @@
 #include <cstdint>
 
 // Installed scenesystem.dll, SHA256
-// bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831.
+// 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
+// CS2 1.41.9.1: gates, ABI and lifecycle recertified October 15, 2026.
 // See tools/verify_lighting_switches.py and CS2_ENV_LIGHT_EVIDENCE.md.
 namespace world_lighting_switch_offsets {
-inline constexpr std::uint32_t Timestamp = 0x6AC7FF95;
+inline constexpr std::uint32_t Timestamp = 0x6ACFCD4F;
 inline constexpr std::uint32_t ImageSize = 0x978000;
 inline constexpr std::uintptr_t GatherPointSpot = 0x19F300;
 inline constexpr std::uintptr_t GatherArea = 0x19FE30;

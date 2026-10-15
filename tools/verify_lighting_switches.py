@@ -18,7 +18,9 @@ def main():
     args = parser.parse_args()
     raw, image, _, nt = mapped(args.game / 'bin/win64/scenesystem.dll')
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != 'bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831':
+    # 1.41.9.1 recertification compared every frozen site and the complete
+    # historical gather disassembly before changing this pin.
+    if digest != '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
         raise SystemExit('Changed scenesystem.dll: repeat complete light-gather ABI and lifecycle investigation.')
     checks = {
         'named_registration': (0xe840, '488d15c9cb5e00488d0dc24f9100'),

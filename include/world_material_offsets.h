@@ -2,14 +2,15 @@
 #include <cstdint>
 #include <cstddef>
 
-// Locally verified installed binaries, October 14, 2026.
-// scenesystem.dll SHA256 bd770af13a0b1352d87de26cbcfef9e36ef809771ae6a2e5314d7bc6b341f831.
-// worldrenderer.dll SHA256 e026fdb32408d1ac3062ab15beee7f87cc6072ee0c4c9b0910c423e0549512e9.
+// Locally reverified installed binaries, October 15, 2026; client 1.41.9.1.
+// scenesystem.dll SHA256 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
+// worldrenderer.dll SHA256 f9eeff50acb10a89ab78c98d2726d3e5e6b5adf7a8b11be2a41cb5ebded11dac.
+// materialsystem2.dll SHA256 b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6.
 // tools/verify_world_materials.py independently resolves the consumers.
 namespace world_material_offsets {
-inline constexpr std::uint32_t Timestamp = 0x6AC7FF95;
+inline constexpr std::uint32_t Timestamp = 0x6ACFCD4F;
 inline constexpr std::uint32_t ImageSize = 0x978000;
-inline constexpr std::uint32_t MaterialTimestamp = 0x6ABD5B1E;
+inline constexpr std::uint32_t MaterialTimestamp = 0x6ACFCC60;
 inline constexpr std::uint32_t MaterialImageSize = 0x186000;
 inline constexpr std::uintptr_t AggregateCallback = 0x41F30;
 inline constexpr std::uintptr_t AggregateVtable = 0x5E4538;

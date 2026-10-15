@@ -128,8 +128,11 @@ void DrawPublicMenu() {
         // Store the selected category in this window's context-owned state.
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
         int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
+        const float available = ImGui::GetContentRegionAvail().x;
+        const float minimumTabWidth = ImGui::CalcTextSize("Movement").x + ImGui::GetStyle().FramePadding.x * 2;
+        const int columns = available >= minimumTabWidth * 4 + ImGui::GetStyle().ItemSpacing.x * 3 ? 4 : 2;
         const float tabWidth = std::min(100.0f, std::max(1.0f,
-            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 3) / 4));
+            (available - ImGui::GetStyle().ItemSpacing.x * (columns - 1)) / columns));
         const auto tab = [&](const char* label, int index) {
             const bool selected = selectedTab == index;
             ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{ 0.12f, 0.18f, 0.23f, 1 }
@@ -144,7 +147,7 @@ void DrawPublicMenu() {
         tab("Visuals", 0);
         ImGui::SameLine();
         tab("Movement", 1);
-        ImGui::SameLine();
+        if (columns == 4) ImGui::SameLine();
         tab("World", 2);
         ImGui::SameLine();
         tab("Lighting", 3);
@@ -194,7 +197,8 @@ void DrawPublicMenu() {
                 ImGui::TextUnformatted("Sky tint");
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::ColorEdit3("##SkyTint", settings.skyTint, ImGuiColorEditFlags_NoInputs);
-                ImGui::TextUnformatted("Sky lighting tint");
+                ImGui::TextUnformatted("Sky probe/reflections tint");
+                ImGui::SetItemTooltip("Updates only when the engine refreshes sky probe/reflection views. Use Lighting for sunlight and local lights.");
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::ColorEdit3("##SkyLightingTint", settings.skyLightingTint, ImGuiColorEditFlags_NoInputs);
                 ImGui::TextUnformatted("Sky brightness");
@@ -203,16 +207,13 @@ void DrawPublicMenu() {
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::TextUnformatted("World surfaces");
-                changed |= FeatureCheckbox("World material override", settings.worldMaterialEnabled);
-                ImGui::BeginDisabled(!settings.worldMaterialEnabled);
-                ImGui::TextUnformatted("Surface tint");
-                ImGui::SetNextItemWidth(-1);
-                changed |= ImGui::ColorEdit3("##SurfaceTint", settings.worldTint, ImGuiColorEditFlags_NoInputs);
-                changed |= FeatureCheckbox("Flat world textures", settings.flatTextures);
+                if (FeatureCheckbox("Flat world textures", settings.flatTextures)) {
+                    settings.worldMaterialEnabled = settings.flatTextures;
+                    changed = true;
+                }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::TextWrapped("Replaces surface textures with a built-in flat material.");
+                ImGui::TextWrapped("Uses a built-in flat material for static world surfaces.");
                 ImGui::PopStyleColor();
-                ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::TextUnformatted("Screen color");
                 changed |= FeatureCheckbox("Enable color grading", settings.enabled);
@@ -250,7 +251,7 @@ void DrawPublicMenu() {
                 changed |= FeatureCheckbox("Override lighting", settings.lightingEnabled);
                 ImGui::Separator();
                 ImGui::TextUnformatted("Local lights");
-                ImGui::TextDisabled("Point, spot and orthographic color");
+                ImGui::TextDisabled("Point, spot, orthographic and area lights");
                 ImGui::BeginDisabled(!settings.lightingEnabled);
                 changed |= FeatureCheckbox("Disable local lights", settings.disableLocalLights);
                 ImGui::BeginDisabled(settings.disableLocalLights);

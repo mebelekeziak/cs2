@@ -38,7 +38,6 @@ void Reset() {
 }
 WorldSettings Settings() {
     WorldSettings settings{}; settings.worldMaterialEnabled=true; settings.flatTextures=true;
-    settings.worldTint[0]=0.5f; settings.worldTint[1]=0.25f; settings.worldTint[2]=0;
     return settings;
 }
 void Original(void*,void*,void*,void* pointer) {

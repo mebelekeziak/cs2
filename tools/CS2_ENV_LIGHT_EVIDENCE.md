@@ -1,5 +1,26 @@
 # Installed environment and scene-light switch evidence
 
+Recertified October 15, 2026 for CS2 **1.41.9.1**, client **2000932**, Steam
+build **25947352**, Source revision **11131657**. Current `scenesystem.dll`
+SHA-256 is `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`,
+AMD64 timestamp `0x6ACFCD4F`, image size `0x978000`.
+
+Before metadata updates, all ten frozen registration/gate/return/clear/caller
+checks and all five runtime byte arrays matched the new binary. Additionally,
+every one of the 1,091 instruction records in the complete historical gather
+disassembly matched byte-for-byte. Independently re-decoded the named wrapper
+and value slot `0x923818`, and both native disabled-branch targets
+`0x19F564` / `0x1A0F6F`. The three-pointer void ABI, clean no-output returns,
+per-view clear, and original-call forwarding contracts below are unchanged.
+The sunlight/buffer investigation adds 1,309 matching instruction records,
+documented in `CS2_BAKED_LIGHT_EVIDENCE.md`. No live process was accessed.
+
+The recertified frozen verifier passed, the targeted MSVC x64 Release switch
+check executable rebuilt successfully, and its CTest suite passed. No live
+game launch or full DLL build was performed in this subtask.
+
+## Original investigation
+
 October 14, 2026. This is static, read-only evidence from the installed AMD64
 CS2 1.41.9.0 client using D3D11. No client was launched, opened or injected for
 this investigation; live output remains unobserved.
