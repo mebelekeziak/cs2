@@ -1,6 +1,7 @@
 #include "public_menu.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
+#include "silent_aim_settings.h"
 #include "world_settings.h"
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -56,7 +57,7 @@ ImVec2 TabPosition(int index) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const float contentWidth = Menu()->Size.x - style.WindowPadding.x * 2;
     const float tabWidth = std::fmin(100.0f, std::fmax(1.0f,
-        (contentWidth - style.ItemSpacing.x * 3) / 4));
+        (contentWidth - style.ItemSpacing.x * 4) / 5));
     return { start.x + tabWidth * 0.5f + static_cast<float>(index) * (tabWidth + style.ItemSpacing.x),
              start.y + 8 + style.ItemSpacing.y + 12.5f };
 }
@@ -211,7 +212,7 @@ void NativeSettingsBounds() {
 }
 void CheckTabsFit(const char* message) {
     bool fit = true;
-    for (const char* label : { "Visuals", "Movement", "World", "Lighting" }) {
+    for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim" }) {
         const ImRect rectangle = ControlRect(label, Menu());
         fit &= rectangle.Min.x >= Menu()->Pos.x && rectangle.Max.x <= Menu()->Pos.x + Menu()->Size.x;
         fit &= rectangle.GetWidth() >= ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
@@ -290,6 +291,25 @@ int main() {
            "movement controls display activation and direction help without diagnostics");
     ImGui::LogFinish();
     ImGui::Render();
+    Click(TabPosition(4));
+    Frame();
+    Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
+           "Aim tab opens with silent aim disabled");
+    ClickControl("##AimFov", 0.8f);
+    Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
+    ClickControl("Enable silent aim");
+    ClickControl("##AimFov", 0.5f);
+    Expect(SilentAimGetSettings().enabled && SilentAimGetSettings().fov > 10,
+           "silent aim master and FOV respond to mouse input");
+    for (const auto hitbox : { AimHitbox::Head, AimHitbox::Stomach, AimHitbox::Pelvis, AimHitbox::Chest }) {
+        const char* name = hitbox == AimHitbox::Head ? "Head" : hitbox == AimHitbox::Stomach ? "Stomach" :
+            hitbox == AimHitbox::Pelvis ? "Pelvis" : "Chest";
+        SelectEspCombo("##AimHitbox", name, static_cast<int>(hitbox));
+        Expect(SilentAimGetSettings().hitbox == hitbox, "hitbox selector publishes selected body region");
+    }
+    ClickControl("Enable silent aim");
+    Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
+           "silent aim changes preserve independent ESP settings");
     Click(TabPosition(0));
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##VisualSettings") &&
@@ -495,7 +515,9 @@ int main() {
     Expect(Menu()->Pos.x >= 0 && Menu()->Pos.y >= 0 &&
            Menu()->Pos.x + Menu()->Size.x <= 180 && Menu()->Pos.y + Menu()->Size.y <= 150,
            "menu clamps position and size after viewport shrink");
-    CheckTabsFit("four tabs wrap with readable labels after viewport shrink");
+    const auto categoryRect = ControlRect("##Category", Menu());
+    Expect(categoryRect.Min.x >= Menu()->Pos.x && categoryRect.Max.x <= Menu()->Pos.x + Menu()->Size.x,
+           "short viewport uses a compact category selector to leave settings accessible");
     Expect(Body()->ScrollMax.y > 0, "ESP appearance remains reachable by scrolling in a narrow viewport");
 
     io.DisplaySize = { 1000, 800 };

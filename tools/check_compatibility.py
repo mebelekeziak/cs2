@@ -46,6 +46,9 @@ def component_commands(game):
     return (
         ("esp", "inspect_cs2.py", ["--client", client]),
         ("movement", "inspect_movement.py", ["--client", client]),
+        ("silent_aim", "inspect_silent_aim.py", ["--client", client]),
+        ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
+        ("aim_hitboxes", "inspect_silent_aim_hitboxes.py", ["--client", client]),
         ("sky", "verify_sky_draw.py", ["--game", str(game)]),
         ("materials", "verify_world_materials.py", ["--installation", str(game / "bin/win64")]),
         ("local_lighting", "verify_world_lighting.py", ["--game", str(game)]),

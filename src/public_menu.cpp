@@ -1,6 +1,7 @@
 #include "public_menu.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
+#include "silent_aim_settings.h"
 #include "world_settings.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -129,9 +130,15 @@ void DrawPublicMenu() {
         // Store the selected category in this window's context-owned state.
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
         int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
+        const bool compactCategories = viewport.WorkSize.y < 240;
+        if (compactCategories) {
+            constexpr const char* categories[]{"Visuals", "Movement", "World", "Lighting", "Aim"};
+            ImGui::SetNextItemWidth(-1);
+            ImGui::Combo("##Category", &selectedTab, categories, 5);
+        } else {
         const float available = ImGui::GetContentRegionAvail().x;
         const float minimumTabWidth = ImGui::CalcTextSize("Movement").x + ImGui::GetStyle().FramePadding.x * 2;
-        const int columns = available >= minimumTabWidth * 4 + ImGui::GetStyle().ItemSpacing.x * 3 ? 4 : 2;
+        const int columns = available >= minimumTabWidth * 5 + ImGui::GetStyle().ItemSpacing.x * 4 ? 5 : 2;
         const float tabWidth = std::min(100.0f, std::max(1.0f,
             (available - ImGui::GetStyle().ItemSpacing.x * (columns - 1)) / columns));
         const auto tab = [&](const char* label, int index) {
@@ -148,10 +155,13 @@ void DrawPublicMenu() {
         tab("Visuals", 0);
         ImGui::SameLine();
         tab("Movement", 1);
-        if (columns == 4) ImGui::SameLine();
+        if (columns == 5) ImGui::SameLine();
         tab("World", 2);
         ImGui::SameLine();
         tab("Lighting", 3);
+        if (columns == 5) ImGui::SameLine();
+        tab("Aim", 4);
+        }
         ImGui::GetStateStorage()->SetInt(tabId, selectedTab);
         ImGui::Separator();
 
@@ -325,6 +335,30 @@ void DrawPublicMenu() {
             ImGui::EndChild();
             if (reset) WorldResetSettings();
             else if (changed) WorldSetSettings(settings);
+        } else if (selectedTab == 4) {
+            auto settings = SilentAimGetSettings();
+            bool changed = false;
+            if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
+                ImGui::BeginDisabled(!settings.enabled);
+                ImGui::TextUnformatted("Hitbox");
+                constexpr const char* hitboxes[]{"Head", "Chest", "Stomach", "Pelvis"};
+                int hitbox = static_cast<int>(settings.hitbox);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::Combo("##AimHitbox", &hitbox, hitboxes, 4)) {
+                    settings.hitbox = static_cast<AimHitbox>(hitbox); changed = true;
+                }
+                ImGui::TextUnformatted("Aim FOV");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderFloat("##AimFov", &settings.fov, 0.1f, 30, "%.1f degrees");
+                ImGui::EndDisabled();
+                ImGui::Separator();
+                ImGui::TextWrapped("Fire normally. Selects the enemy closest to your aim within the FOV.");
+                ImGui::TextWrapped("Walls, recoil and weapon spread can prevent a hit.");
+                ImGui::TextDisabled("F10  Silent aim");
+            }
+            ImGui::EndChild();
+            if (changed) SilentAimSetSettings(settings);
         } else {
             WorldSettings settings = WorldGetSettings();
             bool changed = false;

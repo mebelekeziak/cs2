@@ -129,6 +129,36 @@ and their relative order. See [movement_command.h](../include/movement_command.h
 before changing these contracts. Ingestion observation is not proof of final
 collision response or server receipt.
 
+## Silent aim: client.dll
+
+The three additional verifiers are part of `check_compatibility.py`:
+[shot history](../tools/inspect_silent_aim.py),
+[eye offset](../tools/inspect_silent_aim_targets.py), and
+[named animated points](../tools/inspect_silent_aim_hitboxes.py).
+Detailed evidence: [history](../tools/CS2_SILENT_AIM_EVIDENCE.md),
+[eye/entity](../tools/CS2_SILENT_AIM_TARGET_EVIDENCE.md),
+[bones](../tools/CS2_SILENT_AIM_HITBOX_EVIDENCE.md).
+
+| Symbol / owning header | Value / kind | Rediscovery anchor |
+| --- | --- | --- |
+| `silent_aim_offsets::HistoryBuilder`, `HistorySlot` | `0xD02130`, function RVA; `25`, vtable slot | Input producer dispatch `0xB66A36..0xB66A43`; `(input*, int slot, command*)`, call original first |
+| `command::HistorySize`, `HistoryCapacity`, `HistoryRep`, `Attack1Index` | `0x30`, `0x34`, `0x38`, `0x4C`, command members | Native append and independent weapon consumer `0x80D85C`, `0x80D955` |
+| `history::Angles`; `angle::Pitch`, `Yaw`, `Roll` | `0x18`; `0x18`, `0x1C`, `0x20`, members | Producer `0xCFA725..0xCFA77D`, native attack converter `0x803810` |
+| `silent_aim_target_offsets::ViewOffset` | `0xF60`, pawn member | Exact `C_BaseModelEntity::m_vecViewOffset` schema; contiguous live float3 in native eye transform |
+| `silent_aim_hitbox_offsets::LookupBone` | `0x952940`, function RVA | `(pawn*, const char*) -> int`; native named-pelvis caller `0xC7C507`, no animation refresh |
+| `SkeletonVtable`, `SkeletonQuerySlot`, `SkeletonQuery` | `0x1C41CE0`, vtable RVA; `0x68`, byte slot; `0x1C9E70`, function RVA | `CSkeletonInstance` RTTI; supported query returns scene itself |
+| `ModelState`, `ModelHandle`, `BoneArray`, `BoneCount`, `BoneStride` | `0x140`, `0xA0`, `0x1C0`, `0x178`, `0x20`, members/stride | Named skeleton/model-state schema; model lookup/count helpers and world-transform consumer |
+
+History construction occurs after the existing movement finalizer. Primary taps
+use the native attack index; held attack also needs all existing history angle
+messages because the weapon retains/interpolates previous entries and can fall
+back to the first current entry. Never synthesize attack indices, rewrite the
+retained ring or alter base/camera angles. Missing/invalid history is a no-op.
+Bone names resolve per model and callback; no cached numerical indices or forced
+animation refresh. Missing selected bones/pose data skip the player. These are
+animated landmarks, not authored hitbox-volume centers. No visibility trace,
+recoil/spread correction, penetration or damage system is provided.
+
 ## Sky: scenesystem.dll plus one client.dll producer
 
 Header: [world_offsets.h](../include/world_offsets.h), namespace `world_offsets`.

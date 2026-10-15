@@ -1,9 +1,9 @@
-# CS2 world visuals, movement assistance, player ESP and D3D11 overlay
+# CS2 silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing workspace work was preserved before ESP in commit `db1d345`, and before movement in commit `ec3c181`.
+x64 client overlay with basic silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all seven
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all ten
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -173,6 +173,72 @@ gameplay observation. Successful builds and standalone checks do not establish
 that ESP draws players or autobhop executes in a match on this build. Use the
 rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
 
+## Basic silent aim
+
+The **Aim** tab has an **Enable silent aim** checkbox, a **Hitbox** selector
+(**Head**, **Chest**, **Stomach**, **Pelvis**) and an angular **Aim FOV** slider
+(0.1–30 degrees). It starts **disabled**, with Chest and 5 degrees selected.
+**F10** toggles it while the client is foreground. Fire normally; it never
+presses attack. Menu visibility and ESP settings do not control aim acquisition.
+
+The command callback selects the alive, non-dormant enemy whose selected point
+is closest to the shot's native view direction within the FOV. Each selected
+body region resolves its animated bone by name on the current model: `head_0`,
+`spine_3`, `spine_2`, `pelvis`. These are bone landmarks, not authored hitbox
+volume centers. Missing names, unsupported skeletons or unavailable cached poses
+skip that player. There are no fixed bone indices or collision-hull fallbacks.
+The reader uses the latest cached world pose and copied live eye offset; it
+does not force animation refresh, mirror native eye interpolation or add lag
+compensation. It retains no engine entity/model pointers across callbacks.
+
+A separate verified input-history hook calls the original builder first, then
+updates existing history angle messages for primary-fire input. A native attack
+index handles short taps; held primary fire also updates the history consumed
+by CS2's retained/interpolated continuation path. Native attack indices, button
+states, timestamps, base/camera angles, movement and movement CRC stay unchanged.
+No history messages or attacks are synthesized, and secondary fire is outside
+this implementation. Previously retained native history can affect boundary
+shots when enabling, disabling, stopping or changing targets; it is not
+rewritten retroactively.
+
+No hitchance, damage/minimum-damage, autowall, penetration, visibility tracing,
+recoil compensation, spread correction, automatic shooting or rage systems are
+included. An enemy behind a wall can be selected; walls, spread, recoil and the
+server's timing/rules can prevent a hit.
+
+The existing build and **Load Overlay.cmd** workflows include this feature.
+Restart CS2 normally before loading if an older DLL remains resident. End and
+the existing stop command drain aim mutations cooperatively; forwarding hooks
+remain resident until process exit. **Stopped and resident is not physically
+unloaded.** No loader/session gates or server prerequisites were added.
+
+**Verification, October 15, 2026:** public and diagnostic x64 Release builds
+succeed, and all **17/17 CTest suites pass in each**. Synthetic command tests
+cover taps, held fire, exact preservation of camera/base/buttons/CRC/metadata,
+invalid and read-only history, changed snapshots and base-message aliasing.
+Target tests cover region selection with dynamic indices, FOV, enemy filtering,
+missing poses/bones, ownership/model/skeleton changes and dead local players.
+Mouse-driven menu checks exercise enable, FOV and all four region choices.
+All ten installed-file compatibility checks pass; the three new verifiers
+freeze history producer/consumer, eye and named-bone evidence. This is static
+and standalone verification: no live client shot, camera behavior, hit
+registration or full-auto burst has been observed in this pass.
+
+```powershell
+python tools/inspect_silent_aim.py
+python tools/inspect_silent_aim_targets.py
+python tools/inspect_silent_aim_hitboxes.py
+.\build\Release\public_menu_preview.exe .\logs\aim-menu.bmp 4
+```
+
+Evidence: [shot history](tools/CS2_SILENT_AIM_EVIDENCE.md),
+[eye/entity acquisition](tools/CS2_SILENT_AIM_TARGET_EVIDENCE.md),
+[named animated points](tools/CS2_SILENT_AIM_HITBOX_EVIDENCE.md).
+`AIM_BUILD_VERIFIED` records compatibility, `AIM_HISTORY` samples applied history
+changes through the existing telemetry queue and `AIM_STOPPED_RESIDENT` records
+mutation shutdown. These logs do not prove a hit. Runtime testing remains
+limited to the repository's authorized disconnected/offline/private environment.
+
 ## Player ESP
 
 Names, outlined player boxes, distance labels, health bars/text, optional armor
@@ -221,6 +287,7 @@ checks; no new live client appearance observation is claimed.
 | F7 | Toggle armor text |
 | F8 | Toggle auto bunnyhop |
 | F9 | Toggle aggressive autostrafe |
+| F10 | Toggle silent aim |
 | Insert | Toggle the selected menu; ESP and acquisition keep running |
 | End | Cooperative stop |
 

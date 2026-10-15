@@ -25,7 +25,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all seven existing frozen verifiers independently, so
+rewrite offsets. It runs all ten frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -35,10 +35,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Seven component JSON files: exact command, exit code, stdout and stderr.
+- Ten component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all seven static checks passed; **1** means one or more
+Exit code **0** means all ten static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -98,13 +98,16 @@ prefix is a candidate, not sufficient ABI/layout proof.
 
 ## Local tools and evidence
 
-All seven frozen verifiers use standard-library Python. Their entry points are
+All ten frozen verifiers use standard-library Python. Their entry points are
 listed below; the combined runner supplies the correct installation arguments.
 
 | Component | Frozen verifier | Detailed evidence |
 | --- | --- | --- |
 | ESP/shared entities | [inspect_cs2.py](../tools/inspect_cs2.py) | [entity evidence](../tools/CS2_ENTITY_EVIDENCE.md) |
 | Jump/steering/input | [inspect_movement.py](../tools/inspect_movement.py) | [movement evidence](../tools/CS2_MOVEMENT_EVIDENCE.md) |
+| Silent aim history | [inspect_silent_aim.py](../tools/inspect_silent_aim.py) | [history evidence](../tools/CS2_SILENT_AIM_EVIDENCE.md) |
+| Aim eye/entity source | [inspect_silent_aim_targets.py](../tools/inspect_silent_aim_targets.py) | [eye evidence](../tools/CS2_SILENT_AIM_TARGET_EVIDENCE.md) |
+| Aim named bone points | [inspect_silent_aim_hitboxes.py](../tools/inspect_silent_aim_hitboxes.py) | [bone evidence](../tools/CS2_SILENT_AIM_HITBOX_EVIDENCE.md) |
 | Sky | [verify_sky_draw.py](../tools/verify_sky_draw.py) | [sky evidence](../tools/CS2_SKY_DRAW_EVIDENCE.md) |
 | Flat world material | [verify_world_materials.py](../tools/verify_world_materials.py) | [material evidence](../tools/CS2_MATERIAL_EVIDENCE.md) |
 | Local-light radiance | [verify_world_lighting.py](../tools/verify_world_lighting.py) | [local-light evidence](../tools/CS2_LIGHTING_EVIDENCE.md) |

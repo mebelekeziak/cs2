@@ -23,6 +23,8 @@
 #include "esp_draw.h"
 #include "player_reader.h"
 #include "movement.h"
+#include "silent_aim.h"
+#include "silent_aim_settings.h"
 #include "world_settings.h"
 #include "world_postprocess.h"
 #include "world_sky.h"
@@ -224,6 +226,7 @@ void ReleaseRendererOnOwner(const char* reason) {
 
 void CleanupOnRenderThread(const char* reason) {
     MovementStop(reason);
+    SilentAimStop(reason);
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
     WorldLightingSwitchesStop(reason);
@@ -411,6 +414,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     const bool foreground = GetForegroundWindow() == selectedWindow;
     EspPollControls(foreground);
     MovementPollControls(foreground);
+    SilentAimPollControls(foreground);
     const bool insertNow = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
     const bool endNow = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     if (foreground && insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
@@ -448,6 +452,8 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Frame: %llu", static_cast<unsigned long long>(frameCount + 1));
         ImGui::Text("Reader: %s", PlayerReaderStatus());
         ImGui::Text("Movement: %s", MovementStatus());
+        ImGui::Text("Silent aim: %s", SilentAimStatus());
+        ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
         ImGui::Text("Local light switches: %s", WorldLightingSwitchesStatus());
@@ -549,6 +555,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             }
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
             MovementStop("stopped before selecting render chain");
+            SilentAimStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
             WorldLightingSwitchesStop("stopped before selecting render chain");
@@ -629,6 +636,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
+    const bool aimPrepared = SilentAimPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
@@ -639,6 +647,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_ApplyQueued();
     if (status != MH_OK) {
         MovementStop("partial hook activation failure");
+        SilentAimStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
         WorldLightingSwitchesStop("partial hook activation failure");
@@ -649,6 +658,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         startState.store(-1); return 6;
     }
     if (movementPrepared) MovementActivate();
+    if (aimPrepared) SilentAimActivate();
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
     if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
@@ -662,6 +672,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
     MovementStop("explicit overlay stop request");
+    SilentAimStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
     WorldLightingSwitchesStop("explicit overlay stop request");
