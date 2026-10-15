@@ -2,6 +2,15 @@
 
 x64 client overlay with movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing workspace work was preserved before ESP in commit `db1d345`, and before movement in commit `ec3c181`.
 
+For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all seven
+components independently and saves build identities, source hashes and detailed
+reports under `logs/compatibility/`:
+
+```powershell
+python tools/check_compatibility.py
+```
+
 ## World visuals
 
 The **World** and **Lighting** tabs provide independent controls, disabled by
@@ -79,16 +88,13 @@ automatically. Evidence: [world](tools/CS2_WORLD_EVIDENCE.md),
 [light switches](tools/CS2_ENV_LIGHT_EVIDENCE.md) and
 [sun/directional lightmaps](tools/CS2_BAKED_LIGHT_EVIDENCE.md).
 
-**Compatibility:** this update recertifies only the world/sky/lighting paths.
-Shared ESP and movement offsets remain pinned to 1.41.9.0 and reject the newly
-installed client; they need a separate update. Passing standalone tests does not
-establish their compatibility with 1.41.9.1.
+**Compatibility:** see the current ESP/movement compatibility update below.
 
-The user confirmed sky tint/brightness on the previous build. No client was
-launched during this follow-up, so repaired flat textures, new lighting controls
-and current-build sky appearance have not been observed live. Testing remains
-limited to the disconnected menu, offline mode or a user-controlled private
-session under the repository instructions.
+The user confirmed that the world and lighting options work on 1.41.9.1. The
+latest supplied run is `logs/overlay-26684-134365408103402107.log`: native world
+callbacks execute, while the old ESP and movement build checks reject the client.
+Testing remains limited to the disconnected menu, offline mode or a
+user-controlled private session under the repository instructions.
 
 The existing public/diagnostic build commands below include these features.
 Standalone previews accept a tab (World=2, Lighting=3), scroll position and
@@ -100,6 +106,41 @@ optional viewport width/height:
 .\build\Release\public_menu_preview.exe .\logs\lighting-narrow.bmp 3 0 180 150
 python tools/inspect_world.py
 ```
+
+## ESP and movement compatibility — October 15, 2026
+
+Checkpoint `d69477f` preserves the project before this update. The latest
+runtime log confirms that the old client identity rejected ESP and movement on
+1.41.9.1. The shared header now targets the installed AMD64 client timestamp
+`0x6AD01314`, image size `0x299D000`, with recertified entity, local-player and
+view-matrix globals. Static schema metadata also moves pawn armor from
+`0x1ECC` to `0x1EC8`; the remaining consumed player fields retain their layouts.
+
+Movement now uses the current input object/vtable, command finalizer, ingestion,
+subtick allocation/append, jump helper, speed helper, Cvar wrappers and physics
+constant addresses. Command layouts and consumed movement fields were checked
+against the installed metadata/code. The jump and steering algorithms are
+unchanged. Existing world and lighting behavior is preserved.
+
+Both public and diagnostic x64 Release builds succeed, and **16/16 CTest suites
+pass in each**. The ESP, movement and five world binary verifiers pass. Temporary
+header mutations confirm rejection of all 43 ESP constants and 70 movement
+constants/fingerprints; reports are in `logs/compat-*-20261015.json`.
+Recheck everything with `python tools/check_compatibility.py`, or run the
+individual tools while investigating:
+
+```powershell
+python tools/inspect_cs2.py
+python tools/inspect_movement.py
+python tools/inspect_world.py
+```
+
+These tools read installed files without launching or injecting into CS2. Their
+frozen evidence rejects a changed build; it does not apply guessed replacement
+offsets. Current entity/movement evidence is static, with no new live dump or
+gameplay observation. Successful builds and standalone checks do not establish
+that ESP draws players or autobhop executes in a match on this build. Use the
+rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
 
 ## Player ESP
 
@@ -398,8 +439,9 @@ identity backreferences, changed pawn links and changed source/scene identities.
 This is a best-effort copied snapshot, not an engine-synchronized transaction.
 All state is discarded when its module/render source changes or the overlay stops.
 
-Offsets were generated from this installed client and independently checked
-against its machine code and live memory. The DLL checks client PE architecture,
+Current offsets are verified against the installed client's machine code and
+embedded schema metadata. Historical offsets also had live-memory evidence;
+that observation does not carry over to a new build. The DLL checks client PE architecture,
 timestamp and image size before applying them. This is a build compatibility check,
 not a session gate. Never substitute online pre-generated offsets. See
 [entity evidence](tools/CS2_ENTITY_EVIDENCE.md) and
@@ -473,9 +515,22 @@ Computer UI control was stopped with Escape; the active DLL is independent of it
 
 Client: `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe`.
 
-On October 13, 2026, the installed executable and engine/client/render-system modules were AMD64 PE32+. `game/csgo/steam.inf` reported patch 1.41.9.0, client/server 2000930, source revision 11106093, version date October 8, 2026. Steam appmanifest build ID: 25815307. Executable SHA-256: `BB25389A10B381B0B50C984087F34E6B30F2919108751A0FDD97CF0DFC142C7B`.
+On October 15, 2026, `game/csgo/steam.inf` reports patch **1.41.9.1**,
+client/server **2000932**, source revision **11131657**, version date October 14,
+2026. Steam appmanifest build ID: **25947352**. Steam's UpToDateCheck API reports
+client version 2000932 as current. Executable SHA-256:
+`8614097AAA2761B0A7157C0045861713E769FB1E8235F50FC68F411294DD60CF`;
+client DLL SHA-256:
+`659940C1DB362ED981D1DF10637CEC8C2A3D99409B77FC3B73E435E4649E36B0`.
+Installation hashes and the API response are recorded in
+`logs/compat-installation-20261015.json` and `logs/compat-steam-version-20261015.json`.
 
 Both D3D11 and Vulkan renderers exist. The launched client (PID 5980) loaded `rendersystemdx11.dll`, `d3d11.dll`, `dxgi.dll`, and the game-local `D3DCOMPILER_47.dll`. This establishes D3D11 for that run. Live graphics objects are verified in DLL callbacks rather than inferred from installed DLL names. Loaded MSVC runtime modules included VCRUNTIME140 version 14.51.36247.0 and Windows UCRT; this does not identify the compiler used to build all game modules.
+
+The October 15 executable/client/engine/D3D11 PE inventory also confirms AMD64
+PE32+ (`logs/compat-pe-20261015.json`). The user's latest PID 26684 log records
+an actual D3D11 device, feature level 11.1, on the NVIDIA GeForce RTX 3060 Laptop
+GPU at 1920x1080. No new process was launched for the compatibility update.
 
 ## Build (PowerShell)
 

@@ -79,14 +79,14 @@ bool ModuleReady() {
         SetStatus("invalid client PE headers"); return false;
     }
     if (nt.FileHeader.TimeDateStamp != off::ClientTimestamp || nt.OptionalHeader.SizeOfImage != off::ClientImageSize) {
-        SetStatus("client build differs; regenerate offsets");
+        SetStatus("client build differs; reverify offsets");
         Log("ESP_BUILD_MISMATCH timestamp=0x%lx image_size=0x%lx expected=0x%lx/0x%lx",
             nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage,
             static_cast<unsigned long>(off::ClientTimestamp), static_cast<unsigned long>(off::ClientImageSize));
         return false;
     }
     verified = true;
-    Log("ESP_BUILD_VERIFIED client=%p timestamp=0x%lx image_size=0x%lx identity_stride=0x%zx; offsets from installed-client dump",
+    Log("ESP_BUILD_VERIFIED client=%p timestamp=0x%lx image_size=0x%lx identity_stride=0x%zx; offsets verified against installed-client static schema/code",
         reinterpret_cast<void*>(client), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage, off::entity_layout::IdentityStride);
     return true;
 }

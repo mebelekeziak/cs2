@@ -1,4 +1,36 @@
-# World visuals continuation — October 15, 2026
+# CS2 compatibility continuation — October 15, 2026
+
+For subsequent updates, start with `docs/CS2_UPDATE_GUIDE.md` and
+`docs/RE_ADDRESS_INDEX.md`. `python tools/check_compatibility.py` runs all seven
+frozen checks independently, recording installation/module identities, source
+hashes and per-component diagnostics in a dated `logs/compatibility/` bundle.
+It reads installed files without opening a game process or changing offsets.
+
+User requested current-build ESP/autobhop compatibility and a commit before
+changes. Checkpoint **`d69477f`** preserves the clean project at `d69e168`.
+The installed client is 1.41.9.1 / 2000932 / Steam build 25947352; Steam's
+UpToDateCheck API reports it current. The user's latest run
+`logs/overlay-26684-134365408103402107.log` confirms the old ESP/movement identity
+checks rejected the new client. The user confirms world and lighting work.
+
+Current changes recertify ESP globals/schema/entity layout and movement input,
+helpers, Cvar wrappers, constants and consumed layouts from local installed PE
+files. Armor changed from 0x1ECC to 0x1EC8. Other consumed player/schema field
+offsets remain unchanged. Both x64 Release variants build and pass 16/16 CTest
+suites. `tools/inspect_cs2.py` now verifies static evidence and source headers;
+its `--header` option verifies an alternate header, rather than generating one
+from the historical dump. `tools/inspect_movement.py` verifies current movement
+constants against frozen machine evidence. See their evidence documents.
+
+No client launch, injection or server interaction was performed for this update.
+ESP output and actual hops on 1.41.9.1 still need an offline/private observation.
+Use **Load Overlay.cmd** with the rebuilt public DLL, with F9 off first to isolate
+autobhop. Keep stopped code resident until normal exit as documented in README.
+
+The world follow-up below is historical; its ESP/movement warning is superseded
+by the compatibility work above.
+
+## Earlier world visuals continuation
 
 The bounded implementation and standalone verification are complete. No game
 was launched or injected during this follow-up. See README for current controls,

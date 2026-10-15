@@ -1,7 +1,114 @@
 # Installed-client entity layout evidence
 
-This records read-only investigation on October 13, 2026. It concerns the CS2
-client, not a dedicated server/plugin. No installed game files were modified.
+## Current static recertification, October 15, 2026
+
+This concerns the Windows AMD64 CS2 client. The installed game now reports patch
+`1.41.9.1`, client/server `2000932`, Steam build `25947352`. Its `client.dll`
+SHA-256 is `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,
+PE timestamp `0x6AD01314`, SizeOfImage `0x299D000`. The installation path below
+is unchanged. This update used **on-disk PE data and machine code**, without
+launching/opening a game process, injecting, or modifying installed game files.
+It did not produce a new live schema dump or observe ESP output.
+
+The old ESP header rejected this client before acquisition because its PE build
+identity still described `1.41.9.0`. Simply changing that identity is insufficient:
+the four global pointer/matrix addresses moved, and pawn armor moved by four bytes.
+
+| Header constant | Previous | Current |
+| --- | --- | --- |
+| `dwEntityList` / `dwGameEntitySystem` | `0x2711598` | `0x271A908` |
+| `dwLocalPlayerController` | `0x25338A8` | `0x253CB78` |
+| `dwLocalPlayerPawn` | `0x255C3C8` | `0x2565718` |
+| `dwViewMatrix` | `0x2561CD0` | `0x256B020` |
+| `C_CSPlayerPawn::m_ArmorValue` | `0x1ECC` | `0x1EC8` |
+
+Every other schema field in `include/cs2_offsets.h` was independently decoded
+from this installed image and remains unchanged. No upstream generated offsets
+or presumed relocation delta supplied the new values.
+
+### Static schema templates
+
+The installed PE contains schema registration templates before runtime binding:
+class-name pointer at `+0`, class size at `+0x18`, field count (`uint16`) at
+`+0x1C`, field-array pointer at `+0x28`. Each field record is `0x20` bytes, with
+field-name pointer at `+0` and member byte offset (`uint32`) at `+0x10`. These
+are **on-disk registration templates**, distinct from the dumper's runtime
+`SchemaClassInfoData` layout, which contains an additional leading base pointer.
+
+The verifier checks each class name, field count and array address, walks that
+class's records and finds requested members by exact field name. A matching
+field-name string elsewhere in the image is insufficient.
+
+| Class | Template RVA | Field-array RVA | Fields |
+| --- | --- | --- | --- |
+| `CEntityInstance` | `0x226AEF8` | `0x226AE90` | 3 |
+| `CEntityIdentity` | `0x226B2C8` | `0x226B140` | 12 |
+| `C_BaseEntity` | `0x21F4BE8` | `0x21F32C0` | 82 |
+| `CBasePlayerController` | `0x2223A38` | `0x2223800` | 17 |
+| `CCSPlayerController` | `0x2220498` | `0x221F810` | 70 |
+| `CGameSceneNode` | `0x21FB988` | `0x21FB540` | 34 |
+| `CCollisionProperty` | `0x21CC828` | `0x21CC4D0` | 17 |
+| `C_CSPlayerPawn` | `0x2239A68` | `0x2238D10` | 105 |
+| `C_BasePlayerPawn` | `0x21F4588` | `0x21F41F0` | 28 |
+
+### Decoded globals and identity table
+
+Entity-system store at `0x15BCD49` and load at `0xA17AFB` independently reference
+`0x271A908`. Controller load at `0x933E80` references `0x253CB78`.
+Prediction-address getter `0xBF7240` gives `0x2565620`; the pawn-pointer compare
+and store at `0xBD0625` use `+0xF8`, giving pawn global `0x2565718`.
+Matrix getter `0xC14173` uses `LEA RCX,[RIP+...]` to address `0x256B020`, then
+scales its selected matrix index by 64 bytes.
+
+The entity-system setter stores RCX, then jumps to initializer `0x15B8CF0`,
+which copies RCX to RBX at `0x15B8D04`. At `0x15B8D6F` it forms RBX+`0x10`
+and stores that address into table global `0x236FA70` at `0x15B8D84` (or null
+when RBX is null). This independently establishes the table embedded at
+system+`0x10` without relying on an old process address.
+
+Current handle lookup at `0x39B8E0` loads this same table global. At `0x39B903`
+it masks the index with `0x7FFF`, shifts by 9 for the bucket, masks the slot with
+`0x1FF`, multiplies by identity stride `0x70`, and compares the complete handle
+at identity+`0x10`. At `0x39B93E`, `MOV RCX,[RDX]` reads the object pointer with
+no displacement. These operands imply 64 buckets of 512 slots. The identity
+schema class size independently equals the machine-code stride `0x70`.
+The diagnostic index operand at `0x9F7D2D` is still `0x2120`; it remains excluded
+from runtime enumeration bounds due to the earlier live counterexample below.
+
+### Reproduce and limits
+
+```powershell
+python tools/inspect_cs2.py > logs/research/esp-recert-20261015.json
+python tools/inspect_cs2.py --header include/cs2_offsets.h
+```
+
+The default command now verifies every frozen constant in the real source
+header against independently decoded static evidence. `--header PATH` selects
+the header to **verify**, not a generated output destination. The verifier
+requires the exact installed DLL hash, PE architecture, frozen machine-code
+fingerprints and schema associations. It never rewrites source or silently
+adapts to a new build. It requires no old dump JSON and uses standard-library
+Python only. Optional `--pid`/`--modules` remain read-only capture facilities;
+they were not used for this recertification.
+
+Verification passed for the installed image and final source header. An
+exhaustive negative check changed each of the header's 43 numeric constants
+individually in temporary copies; all 43 mismatches were rejected. Root
+integration also passed both public and diagnostic Release builds with 16/16
+CTest suites in each. Current verification records are
+`logs/compat-esp-20261015.json` and `logs/compat-esp-negative-20261015.json`.
+
+The source retains the previously observed pawn designer label and geometry
+policy. This work establishes current addresses/layout, not fresh gameplay,
+visibility or projection observations. The historical live evidence below
+belongs to `1.41.9.0`; a new authorized offline run is still needed to confirm
+visible ESP behavior for `1.41.9.1`.
+
+## Historical live investigation, October 13, 2026
+
+The remainder records the previous `1.41.9.0` investigation. Its binary hashes,
+addresses and old header-generation commands are historical, not the current
+verifier contract. No installed game files were modified.
 
 ## Installation and generation
 
@@ -39,7 +146,7 @@ Local JSON content hashes:
 * `offsets.json`: `d8f824a6007381d3c484914ba6450e226a17483e5f2c83880115f2f4c059f2b6`
 * `client_dll.json`: `8916976681b167a052160289fc37de99ced6beef3fbf2f63b02f0f251e33c4c7`
 
-`tools/inspect_cs2.py` extracts the minimal schema/global header and captures
+The historical `tools/inspect_cs2.py` extracted the minimal schema/global header and captured
 read-only entity evidence using Windows `OpenProcess(PROCESS_VM_READ)` and
 `ReadProcessMemory`. It uses standard-library Python only. `--pid` additionally
 requires a module inventory captured for that exact process:
@@ -53,9 +160,9 @@ python tools/inspect_cs2.py --pid 14532 > logs/research/installed-client.json
 python tools/inspect_cs2.py --header include/cs2_offsets.h > logs/research/header-provenance.json
 ```
 
-The tool refuses header generation/entity reads when the installed DLL or input
-dump changes. A new game build requires a new live schema/global dump and new
-binary-layout verification before updating those evidence hashes/constants.
+That historical tool refused header generation/entity reads when the installed
+DLL or input dump changed. Current verification instead uses the independently
+decoded static registrations/operands documented above.
 
 ## Entity identities and serialized handles
 

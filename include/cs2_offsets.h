@@ -2,21 +2,20 @@
 #include <cstddef>
 #include <cstdint>
 
-// Generated from the locally running installed CS2 client, October 13, 2026.
-// a2x/cs2-dumper release 0.1.3; source reference 4116de000e085d62bbd42334c67b35bda37bda4f.
-// Dumper SHA256: 501368ffb8f252b3cfb70fee6177b6ab4bbb21cad480724af17720d74ce44bbb.
-// client.dll SHA256: 44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008
-// Entity layout separately verified in installed-client disassembly; see logs/research.
+// Verified against the locally installed CS2 1.41.9.1 PE, October 15, 2026.
+// Static schema templates and decoded machine operands; no new live dump.
+// client.dll SHA256: 659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0
+// Frozen read-only verifier: tools/inspect_cs2.py; tools/CS2_ENTITY_EVIDENCE.md.
 namespace cs2_offsets {
-inline constexpr std::uint32_t ClientTimestamp = 0x6AC7FFFA;
-inline constexpr std::uint32_t ClientImageSize = 0x2994000;
+inline constexpr std::uint32_t ClientTimestamp = 0x6AD01314;
+inline constexpr std::uint32_t ClientImageSize = 0x299D000;
 namespace globals {
-inline constexpr std::ptrdiff_t dwEntityList = 0x2711598;
-inline constexpr std::ptrdiff_t dwGameEntitySystem = 0x2711598;
+inline constexpr std::ptrdiff_t dwEntityList = 0x271A908;
+inline constexpr std::ptrdiff_t dwGameEntitySystem = 0x271A908;
 inline constexpr std::ptrdiff_t dwGameEntitySystem_highestEntityIndex = 0x2120;
-inline constexpr std::ptrdiff_t dwLocalPlayerController = 0x25338A8;
-inline constexpr std::ptrdiff_t dwLocalPlayerPawn = 0x255C3C8;
-inline constexpr std::ptrdiff_t dwViewMatrix = 0x2561CD0;
+inline constexpr std::ptrdiff_t dwLocalPlayerController = 0x253CB78;
+inline constexpr std::ptrdiff_t dwLocalPlayerPawn = 0x2565718;
+inline constexpr std::ptrdiff_t dwViewMatrix = 0x256B020;
 }
 namespace entity_layout {
 inline constexpr std::ptrdiff_t TableOffset = 0x10;
@@ -67,7 +66,7 @@ inline constexpr std::ptrdiff_t m_vecMins = 0x40;
 inline constexpr std::ptrdiff_t m_vecMaxs = 0x4C;
 }
 namespace C_CSPlayerPawn {
-inline constexpr std::ptrdiff_t m_ArmorValue = 0x1ECC;
+inline constexpr std::ptrdiff_t m_ArmorValue = 0x1EC8;
 }
 namespace C_BasePlayerPawn {
 inline constexpr std::ptrdiff_t m_hController = 0x14BC;

@@ -908,7 +908,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=8 legacy_wrapper=0x2529200 reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=timed8");
+    Log("MOVE_IMPLEMENTATION revision=8 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=timed8", static_cast<unsigned long long>(off::LegacyJump));
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

@@ -1,5 +1,123 @@
 # Movement evidence for the installed client
 
+## October 15, 2026 compatibility update: 1.41.9.1
+
+Current installation: `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive`,
+`game/csgo/bin/win64/client.dll`; AMD64, PE timestamp `0x6AD01314`, image size
+`0x299D000`, SHA256
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`.
+`steam.inf` reports client/server **2000932**, patch **1.41.9.1**, source revision
+**11131657**, version date October 14, 2026. The previous movement RVAs belonged
+to 1.41.9.0, so the existing build checks correctly rejected this client.
+
+This update renews the client movement addresses and their verification. It
+retains the existing jump/steering policy. No client/server process was started,
+opened or modified during this investigation; all evidence came from installed
+files and earlier local disassembly. Live jumping and steering remain unobserved
+on this build.
+
+| Runtime target | Current RVA | Independent local evidence |
+| --- | --- | --- |
+| Embedded input object | `0x257B640` | Constructor LEA RCX at `0xEE574`, vtable write at `0xEE59A` |
+| Input vtable | `0x1C9DB20` | Constructor LEA RAX at `0xEE58C`; RTTI below |
+| Finalizer | `0xCECF90` | Input slot 6; RCX=input, RDX=command call at `0xB66968` |
+| Modern jump | `0x8C34F0` | Services+`0x6C8` receiver LEA and call at `0x8DF74B`/`0x8DF752` |
+| Effective maximum speed | `0x8CDEF0` | Pawn argument and XMM0 result at `0x8A2131..0x8A214A` |
+| Command ingestion | `0xA77390` | Forwarding thunk `0x8E9510`; copied historical axes below |
+| Arena subtick allocator | `0x4F74A0` | Producer call `0xB6661C`, RCX=arena |
+| Repeated subtick append | `0x1233010` | Producer call `0xB66627`, RCX=repeated, RDX=step |
+| Surface manager | `0x254E100` | Row helper MOV RCX at `0x9E3564` |
+| Tick quantum / stamina scale | `0x1AC6064` / `0x1AC6098` | MULSS at `0xA55F99` / DIVSS at `0x8C46DA` |
+
+`CCSGOInput` RTTI type descriptor is `0x23283D0`, complete-object locator
+`0x1F236C8`, vtable `0x1C9DB20`; its producer slot 5 is `0xB65DE0`.
+Input remains an embedded object. Callbacks retain the existing x64 contracts.
+All six runtime function-entry fingerprints are unchanged, checked both against
+the installed bytes and independently frozen verifier fingerprints.
+
+Current cvar wrappers, independently decoded from registration LEA RCX and
+matched to their registration names:
+
+| Source constant | Cvar | Wrapper start |
+| --- | --- | --- |
+| AirCap | `sv_air_max_wishspeed` | `0x25325B0` |
+| AirAccelerate | `sv_airaccelerate` | `0x2564E90` |
+| AutoBunnyhop | `sv_autobunnyhopping` | `0x2532758` |
+| JumpPenalty | `sv_jump_spam_penalty_time` | `0x25325A0` |
+| JumpPrecision | `sv_jump_precision_enable` | `0x2532640` |
+| LegacyJump | `sv_legacy_jump` | `0x2532670` |
+| BhopWindow | `sv_bhop_time_window` | `0x25324B0` |
+
+Getter `0x160B10` still reads wrapper+8 then storage+`0x58`. Both legacy
+selectors (`0x8DF72D` and `0x8C0336`) directly load slot `0x2532678`.
+The movement source receives wrapper **start** `0x2532670`, and the diagnostic
+now formats that actual source constant instead of printing an obsolete literal.
+
+### Current layout evidence
+
+Nine consumed schema fields are read from installed, on-disk registration
+templates and compared with the source: pawn flags/absolute velocity/actual move
+type/water level, pawn movement services, controller tick base, services maximum
+speed, friction and stamina. Class templates are `0x21F4BE8`, `0x21F4588`,
+`0x2223A38`, `0x222AD38`, `0x222B2D8` and `0x2221E88`. Field arrays have a
+32-byte stride, field-name pointer at +0 and offset uint32 at +`0x10`.
+The verifier checks class names, field-array pointers, field counts and the named
+fields. Their consumed offsets are unchanged from the historical section below.
+
+Command sequence assignment `0xB66113` still writes command+8. The command's
+inline protobuf starts at +`0x10`, with presence another +`0x10` (`0xB66121`,
+`0xB6612A`), yielding command+`0x20`. The finalizer reads base at command+`0x40`,
+angles at base+`0x40` and native buttons at command+`0x60` (`0xCECFB1`,
+`0xCECFCA`, `0xCED0A7`). Base presence at +`0x10` is initialized by constructor
+`0x4F8260`. Producer OR masks at `0xB662A1` and `0xB66338` establish forward
+presence `0x40` and left presence `0x80`, paired with base+`0x58`/`0x5C` writes.
+
+Producer `0xB665F7..0xB6662F` establishes base subtick representation+`0x28`,
+repeated-object start+`0x18`, repeated size+8, and representation allocated count+0
+with pointers+8. Append `0x1233010` compares repeated capacity+`0xC`. Therefore
+base size/capacity remain +`0x20`/`0x24`. Constructors `0x4F8260` and `0x4F8580`
+and the producer's digital/analog/camera payload stores preserve the prior
+protobuf layouts. The verifier freezes these code windows and decodes the
+corresponding member operands; it does not infer layouts from protobuf names alone.
+
+Modern state LEA `0x8DF74B` gives services+`0x6C8`; actual, usable and landing
+members at `0x8C3591`, `0x8C3619` and `0x8C362A` supply relative +`0x10`,
++`0x18`, +`0x20`, yielding services+`0x6D8`, +`0x6E0`, +`0x6E8`.
+Ingestion `0xA7762A..0xA77658` continues copying base forward/left axes to
+services+`0x1A0`/`0x1A4`. Those historical effective axes intentionally differ
+from schema `m_flForwardMove`/`m_flLeftMove` at +`0x1C0`/`0x1C4`.
+Surface pointer services+`0x278`, surface row lookup and stamina division retain
+the previous semantics; their current operands and code windows are checked.
+
+A separate comparison against retained October 13 local disassembly found
+**1,802 instructions unchanged after masking only relative branch/call addresses
+and RIP-relative displacement bytes**, across air acceleration, AirMove,
+SetupMove, simulation tick runner, historical input handling, command dispatch,
+button setter, finalizer and base protobuf constructor/copy. This is supporting
+compatibility research, not proof of observed gameplay. Records and scripts are
+in `logs/movement-compat-20261015/`.
+
+### Verification
+
+`python tools/inspect_movement.py` passes against this installed client. It uses
+only the Python standard library and checks the complete binary hash/PE identity,
+44 frozen machine-code windows, input RTTI/vtable/constructor, seven cvar
+registrations and getter/selector operands, 11 decoded globals/helper targets,
+35 member/presence constants, six source function-entry fingerprints and nine
+named installed schema fields. It reads no game process and changes no game files.
+
+Seven separately mutated header copies were rejected: mistaken legacy pointer
+slot, old input RVA, old jump target, wrong friction offset, wrong native button
+offset, wrong subtick capacity and altered finalizer fingerprint. Results are
+`logs/movement-compat-20261015/verification.json` and `negative.json`.
+Build and CTest integration results are recorded in the main README. Static
+compatibility checks and standalone tests do not establish actual jump success,
+server consumption, collision response or offline steering performance.
+
+---
+
+# Historical movement investigation: 1.41.9.0
+
 Inspected October 13, 2026. Client AMD64, PE timestamp `0x6AC7FFFA`, image size
 `0x2994000`, SHA256
 `44af2aa0d2c64f90d273444cb393b8b679094f0b02136dbdb89d4ec82a560008`.

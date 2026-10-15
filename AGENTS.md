@@ -13,6 +13,9 @@ These instructions apply to this repository and future Counter-Strike 2
 - Discover the relevant installation path, executable, version, architecture,
   runtime, and graphics API before relying on them. Do not guess APIs,
   signatures, offsets, or metadata tokens.
+- For CS2 update passes, start with `docs/CS2_UPDATE_GUIDE.md` and
+  `docs/RE_ADDRESS_INDEX.md`. Run `python tools/check_compatibility.py` for a
+  per-component static verification bundle before investigating changed paths.
 
 ## Collaboration
 

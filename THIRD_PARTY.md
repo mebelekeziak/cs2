@@ -5,13 +5,15 @@ Dependencies are fetched without modification at these immutable commits:
 
 Original licenses remain in build/_deps and are copied beside the built DLL in licenses/.
 
-The build-specific entity/schema constants were generated locally with
+The initial build-specific entity/schema constants were generated locally with
 [a2x/cs2-dumper 0.1.3](https://github.com/a2x/cs2-dumper/releases/tag/0.1.3)
 (MIT; copyright 2024 a2x). Its license is preserved in
 `third_party/cs2-dumper-LICENSE.txt` and copied beside the built DLL. The dumper
 is an investigation tool, not a DLL runtime dependency. Exact binary hashes,
 source reference, dump provenance and installed-client disassembly evidence
-are documented in `tools/CS2_ENTITY_EVIDENCE.md`.
+are documented in `tools/CS2_ENTITY_EVIDENCE.md`. Current 1.41.9.1 constants
+were independently recertified from installed PE schema templates and machine
+operands without a new dumper run; the historical provenance/license is retained.
 
 The Euler rotation uses the conventional pitch/yaw/roll mathematical formula,
 cross-checked against Valve's Source SDK `AngleMatrix`. No SDK source code is
