@@ -220,7 +220,7 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
         (patch.editedView.roll != 0 ? 4u : 0u);
     float forward = (patch.originalPresence & mo::base::ForwardPresent) ? patch.originalForward : 0;
     float left = (patch.originalPresence & mo::base::LeftPresent) ? patch.originalLeft : 0;
-    auto corrected = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, forward, left);
+    auto corrected = AntiAimCorrectBackwardsMovement(patch.originalView, forward, left);
     if (!corrected.valid) return fail("walk_basis");
     patch.editedPresence = patch.originalPresence;
     // The fixed backwards transform is a signed permutation throughout this

@@ -57,7 +57,7 @@ bool Same(const Fixture& f, const Fixture& before) { return std::memcmp(&f, &bef
 void Transactions() {
     Fixture f; const Fixture before = f; AntiAimCommandPatch p{};
     Expect(AntiAimApplyCommand(Address(f.command), p), "valid native command transforms");
-    Expect(p.sequence == 42 && p.valid && Near(p.editedView.pitch, 0) && Near(p.editedView.yaw, -145), "outgoing base faces backwards at zero pitch");
+    Expect(p.sequence == 42 && p.valid && Near(p.editedView.pitch, 89) && Near(p.editedView.yaw, -145), "outgoing base faces backwards with downward pitch");
     Expect(Near(p.editedForward, -0.8f) && Near(p.editedLeft, -0.2f), "base movement is corrected in positive-left basis");
     Expect((p.editedButtons.down & mo::Directions) == (mo::Back | mo::Right) &&
            (p.editedButtons.down & ~mo::Directions) == 3 && (p.editedButtons.changed & ~mo::Directions) == 2,
@@ -187,7 +187,7 @@ void SparseAngles() {
         const bool applied = AntiAimApplyCommand(Address(f.command), p, &reason, &d);
         Expect(applied && std::strcmp(reason, "applied") == 0 && std::strcmp(d.reason, "applied") == 0 &&
                d.anglePresence == (0x8000u | mask) && d.commandPresence == 0x8001 && d.basePresence == 0x80C4 &&
-               d.count == 2 && d.capacity == 2 && d.allocated == 2 && p.editedAnglePresence == 0x8002 &&
+               d.count == 2 && d.capacity == 2 && d.allocated == 2 && p.editedAnglePresence == 0x8003 &&
                Get<std::uint32_t>(Address(f.angles) + so::angle::Presence) == p.editedAnglePresence,
                "all eight zero-compatible component masks apply with native outgoing presence and diagnostics");
         if (!applied) continue;
@@ -219,7 +219,7 @@ void SparseAngles() {
         Put(Address(f.angles) + so::angle::Pitch, AimAngles{0, kind ? 0.0f : 180.0f, 0});
         const Fixture before = f;
         Expect(AntiAimApplyCommand(Address(f.command), p) && p.editedView.yaw == (kind ? -180.0f : 0.0f) &&
-               p.editedAnglePresence == (kind ? 0x8002u : 0x8000u) &&
+               p.editedView.pitch == 89 && p.editedAnglePresence == (kind ? 0x8003u : 0x8001u) &&
                Get<std::uint32_t>(Address(f.angles) + so::angle::Presence) == p.editedAnglePresence &&
                AntiAimRestoreCommand(p) && Same(f, before),
                "yaw 180 to zero clears presence and zero to minus 180 sets it, restoring original bytes");

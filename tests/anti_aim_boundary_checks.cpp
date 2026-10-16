@@ -1,6 +1,7 @@
 #include "anti_aim_boundary.h"
 #include "anti_aim_math.h"
 #include "anti_aim_command.h"
+#include "anti_aim_history.h"
 #include "silent_aim_offsets.h"
 #include "movement_offsets.h"
 #include <Windows.h>
@@ -181,7 +182,8 @@ int main() {
         f.steps[0].presence = 0x1c; f.steps[0].button = 0; f.steps[0].pressed = false;
         f.steps[0].forwardDelta = 0.5f; f.steps[0].leftDelta = -0.25f;
         const auto originals = f.steps;
-        bool integrated = AntiAimApplyCommand(Address(f.command), command) && Apply(f, boundary) &&
+        bool integrated = AntiAimApplyCommand(Address(f.command), command) &&
+            Near(command.editedView.pitch, 89) && command.editedAnglePresence == 3 && Apply(f, boundary) &&
             AntiAimRebindCommandContainer(boundary, command) && command.rep == Address(f.grown) &&
             command.count == 2 && command.capacity == 8 && command.allocated == 3 &&
             AntiAimRestoreBoundary(boundary) && AntiAimRestoreCommand(command) && OriginalOrder(f) &&
@@ -224,6 +226,89 @@ int main() {
             previousEdited = currentEdited;
         }
         Expect(chain, "9000 chained enable/on/disable/action basis changes plus owned desired-minus-history events preserve physical wish");
+    }
+    {
+        // Exercise the actual serialized transaction and pointer-independent
+        // publication reader, then apply the native historical+delta model.
+        AntiAimHistoryState history{};
+        AntiAimHistoryCommand previous{};
+        float previousPhysicalF = 0, previousPhysicalL = 0;
+        float historicalF = 0, historicalL = 0;
+        bool pipeline = true, noRepeatedHandoff = true;
+        unsigned recognizedEdits = 0;
+        constexpr std::array<std::array<float, 2>, 9> inputs{{
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}, {0, 0}}};
+        for (int tick = 0; tick < 1000 && pipeline; ++tick) {
+            Fixture current;
+            const auto& desired = inputs[tick < 128 ? 0 : static_cast<unsigned>(tick / 8) % inputs.size()];
+            const float forward = desired[0], left = desired[1];
+            const AimAngles physical{static_cast<float>(tick % 159 - 79), std::remainder(tick * 13.25f, 360.0f), 0};
+            Put(Address(current.command) + off::command::Sequence, tick + 1);
+            Put(Address(current.base) + off::base::Forward, forward);
+            Put(Address(current.base) + off::base::Left, left);
+            Put(Address(current.angles) + silent_aim_offsets::angle::Pitch, physical);
+            MovementButtons buttons{};
+            MovementEncodeStrafe(buttons, forward, left, 0);
+            Put(Address(current.command) + off::command::Buttons, buttons);
+            Put(Address(current.base) + off::base::SubtickSize, 1);
+            current.steps[0].presence = 0x1c; current.steps[0].button = 0; current.steps[0].pressed = false;
+            current.steps[0].when = 0.25f;
+            current.steps[0].forwardDelta = forward - previousPhysicalF;
+            current.steps[0].leftDelta = left - previousPhysicalL;
+            const bool edit = tick % 101 >= 9 && tick % 17 != 0; // enable/disable and action passthrough
+            AntiAimCommandPatch command{};
+            if (edit) pipeline &= AntiAimApplyCommand(Address(current.command), command);
+            auto physicalHistory = AntiAimMovement{historicalF, historicalL, 0, true};
+            if (previous.edited) physicalHistory = AntiAimCorrectBackwardsMovement(previous.physical, historicalF, historicalL);
+            const auto targetHistory = edit ? AntiAimCorrectBackwardsMovement(physical, physicalHistory.forward, physicalHistory.left) : physicalHistory;
+            const float deltaF = targetHistory.forward - historicalF, deltaL = targetHistory.left - historicalL;
+            const bool boundaryNeeded = deltaF != 0 || deltaL != 0;
+            if (previous.edited && edit) noRepeatedHandoff &= !boundaryNeeded;
+            AntiAimBoundaryPatch boundary{};
+            if (boundaryNeeded) pipeline &= Apply(current, boundary, deltaF, deltaL);
+            const auto outgoing = Get<AimAngles>(Address(current.angles) + silent_aim_offsets::angle::Pitch);
+            const auto worldMatches = [&](float f, float l, float expectedF, float expectedL) {
+                constexpr double radians = 0.01745329251994329577;
+                const double yaw = outgoing.yaw * radians, realYaw = physical.yaw * radians;
+                const double x = std::cos(yaw) * f - std::sin(yaw) * l;
+                const double y = std::sin(yaw) * f + std::cos(yaw) * l;
+                return std::abs(x - (std::cos(realYaw) * expectedF - std::sin(realYaw) * expectedL)) < 0.0001 &&
+                    std::abs(y - (std::sin(realYaw) * expectedF + std::cos(realYaw) * expectedL)) < 0.0001;
+            };
+            float simulatedF = historicalF, simulatedL = historicalL;
+            bool sawPhysicalEvent = false;
+            for (int i = 0; i < current.Size(); ++i) {
+                const auto step = Get<MovementSubtick>(current.Step(i));
+                if (step.when > 0 && !sawPhysicalEvent) {
+                    pipeline &= worldMatches(simulatedF, simulatedL, previousPhysicalF, previousPhysicalL);
+                    sawPhysicalEvent = true;
+                }
+                if (step.presence & 8) simulatedF += step.forwardDelta;
+                if (step.presence & 0x10) simulatedL += step.leftDelta;
+            }
+            pipeline &= worldMatches(simulatedF, simulatedL, forward, left);
+            AntiAimHistoryCommand published{};
+            pipeline &= AntiAimHistoryReadCommand(Address(current.command), 7, published);
+            published.physical = physical; published.edited = edit;
+            pipeline &= AntiAimHistoryPublish(history, published);
+            Fixture cloned = current;
+            Put(Address(cloned.command) + off::command::Base, Address(cloned.base));
+            Put(Address(cloned.base) + off::base::Angles, Address(cloned.angles));
+            Put(Address(cloned.base) + off::base::Presence, Get<std::uint32_t>(Address(cloned.base) + off::base::Presence) | 1u);
+            command = {}; // restoration ownership is gone before cloned ingestion
+            AntiAimHistoryCommand observed{}, matched{};
+            pipeline &= AntiAimHistoryReadCommand(Address(cloned.command), 7, observed) &&
+                AntiAimHistoryMatch(history, observed, matched) && matched.edited == edit;
+            if (matched.edited) ++recognizedEdits;
+            previous = matched;
+            historicalF = (observed.directions & (off::Forward | off::Back)) ? observed.forward : 0;
+            historicalL = (observed.directions & (off::Left | off::Right)) ? observed.left : 0;
+            previousPhysicalF = forward; previousPhysicalL = left;
+        }
+        Expect(pipeline && recognizedEdits > 500,
+            "1000 actual corrected/cloned commands retain full WASD/diagonal world wish through prediction and action handoffs");
+        Expect(noRepeatedHandoff,
+            "held edited commands do not add a repeated plus-two movement reversal after copied ingestion");
     }
     return failures ? 1 : 0;
 }

@@ -181,7 +181,14 @@ historical movement at basis handoffs; native allocator/append ownership and
 stable original event order are retained. The verifier freezes the historical
 SetupMove, zero-time decoder/integrator and AirMove flattened-basis consumers.
 Do not replace WALK with a full-3D movement model or infer other move modes.
-Runtime and server results remain unobserved.
+Native clone `0xB5E310` copies protobuf fields and the native sequence; command
+publication history must use copied values and source/sequence, independently
+of exact-pointer mutation restoration. The verifier freezes that clone body
+and relevant dispatch sites. Revision 3 uses a +89-degree ground-facing pitch;
+`cl_pitchdown`/`cl_pitchup` constructors reference float 89 at `0x1C66258` and
+native pitch clamp `0xB63B70` consumes their live values. These are ordinary
+defaults, rather than immutable bounds. The user confirmed local view for
+revision 2; revision 3 movement and server results remain unobserved.
 
 ## Sky: scenesystem.dll plus one client.dll producer
 

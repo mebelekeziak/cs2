@@ -38,8 +38,10 @@ Base upmove is `+0x60`, presence mask `0x100`, independently established by
 `0xB663D0..0xB663DB`; ingestion copies it to services `+0x1A8` at `0xA77658`.
 Named native input enum records independently establish `IN_ATTACK=1`
 (`0x1B28D10`), `IN_USE=0x20` (`0x1B28DB0`), and `IN_ATTACK2=0x800`
-(`0x1B28E50`). Action passthrough must also account for intra-command subtick
-presses instead of checking only final held buttons.
+(`0x1B28E50`). Primary-attack/use passthrough also accounts for intra-command
+subtick presses instead of checking only final held buttons. Secondary attack
+intentionally keeps anti aim active across held buttons, attack indices and
+subtick presses.
 
 ## Historical movement and command boundaries
 
@@ -192,6 +194,58 @@ at `0x123884A` or `0x1238857`. Thus the decoded base size path refreshes nested
 angle sizes instead of trusting their previous values. The complete later
 network-send caller chain was not separately traced in this repair; no cache
 invalidation writes or new cache-layout dependencies were introduced.
+
+## Revision 3: copied ingestion history and downward pitch
+
+Checkpoint `b6c6137` preserves revision 2. The user confirms normal local view
+but reports very slow/reversed movement. The supplied revision-2 run
+`logs/overlay-39816-134366368765959678.log` shows edits and identical angle
+values at ingestion while both `edited_ingests` and `overwritten_ingests`
+remain zero. Both counters were behind exact command-address matching, with
+further base/angle-address checks afterward. Restoration entries were also
+discarded on native same-sequence rebuilds.
+
+Native clone `0xB5E310` calls generated protobuf copy `0x7B4DE0` for command
+`+0x10`, then explicitly copies native sequence `+8` at `0xB5E33F..0xB5E345`.
+Producer call `0xB65F5F` exercises this clone for a stack backup. This proves
+native command copying preserves consumed values and sequence; that one call
+alone does not establish the complete later prediction-copy chain. Dispatcher
+`0xA7102C` and `0xA711BE` pass its current command to SetupMove and ingestion.
+These sites and the full clone body are frozen by the verifier.
+
+Historical axes are raw final base values: ingestion copies base forward/left
+at `0xA77638/0xA7763B` and `0xA7764F/0xA77652`, irrespective of scalar presence.
+The native producer stores zero before clearing absent axis bits. Digital
+subtick events add signed unit values at `0xA65EBA..0xA65F20`; analog events
+add their deltas directly. Parameter preprocessing at `0x8C4AEB..0x8C4B12`
+multiplies normalized slice axes by effective maximum speed. No independent
+extra scaling factor was found.
+
+The old held-W failure follows directly: base +1 becomes corrected -1; native
+history stores -1; unrecognized ingestion treats that as physical input and
+appends +2, yielding +1 under backwards yaw, hence backwards world movement.
+Recognized history instead converts -1 to physical +1, then to outgoing -1,
+requiring no additional delta. Revision 3 matches copied source/sequence,
+scalar angle presence and values, raw axes and direction-down bits in bounded
+publication history. It retains same-sequence variants independently of pointer
+restoration. A cache miss is explicit, rather than guessed to be edited.
+
+For this fixed yaw offset, correction is an exact signed-axis permutation.
+Ordinary pitch uses (-forward, -left); upside-down pitch uses
+(forward, -left). The same physical view defines the inverse. This preserves
+small inputs and avoids tiny trigonometric residues generating boundary steps.
+The standalone pipeline test copies actual command/base/angle buffers to new
+addresses and runs 1,000 corrected/physical command transitions through the
+historical-plus-delta model, including held WASD, diagonals and action handoffs.
+It does not simulate authoritative server physics or establish observed speed.
+
+The clarified look uses pitch +89. AngleVectors `0x1742AF0` obtains pitch sine
+through `tier0!V_sincosf`, negates it at `0x1742BA3` and stores forward Z at
+`0x1742BAF`: positive pitch points down. Constructors `0xCE9E0` and `0xCEB20`
+register `cl_pitchdown`/`cl_pitchup` with default 89 (`0x1C66258`). Native clamp
+`0xB63B70` reads those live cvars, negates the upward limit and clamps pitch
+inclusively. These are ordinary defaults; custom cvars can differ. No cvars or
+installed game files are changed by this implementation.
 
 `python tools/inspect_anti_aim.py` reads installed files only. It freezes the
 input RTTI/vtable, native reset call graph, base physical-view producer, history

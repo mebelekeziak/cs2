@@ -6,9 +6,21 @@ struct AntiAimMovement {
     bool valid = false;
 };
 
-// Copied values only; no local camera writes. Output yaw is in [-180,180).
+// Copied command value; native positive pitch points down. Kept inside the
+// installed client's ordinary pitch bounds, away from the vertical singularity.
+inline constexpr float AntiAimDownPitch = 89.0f;
+
+// Copied values only; no local camera writes. Output yaw is in [-180,180),
+// pitch looks down at AntiAimDownPitch, and roll is zero.
 // Failure leaves command unchanged.
 bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept;
+
+// Exact WALK signed-axis permutation for AntiAimBackwards' fixed view change.
+// Pass the physical view in either direction: this transform is its own inverse.
+// No trig residue, axis mixing, clipping, or drift; rejects the same unsupported
+// physical bases as AntiAimCorrectWalkMovement and rejects nonfinite axes.
+AntiAimMovement AntiAimCorrectBackwardsMovement(const AimAngles& physical,
+                                                 float forward, float left) noexcept;
 
 // WALK uses individually flattened, normalized forward/positive-left vectors.
 // Preserves world wish vector and analog length without per-axis clipping.

@@ -210,7 +210,8 @@ rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
 
 Under **Aim**, enable **Enable anti aim**. It starts disabled and is saved with
 configs. Outgoing base angles use **your view yaw + 180 degrees**, wrapped to
-the normal yaw range, and **pitch 0**. The yaw is an offset from your view,
+the normal yaw range, and **pitch +89 degrees** (looking down). The yaw is an
+offset from your view,
 so turning the mouse keeps the character facing backwards relative to you.
 
 The physical mouse view and native shot-history source remain independent.
@@ -227,8 +228,9 @@ deltas. Pitch subtick deltas become zero; yaw deltas continue following the
 physical turn. A native arena-owned time-zero analog event repairs the historical
 movement basis when enabling, disabling, stopping or passing through actions.
 No attack, jump, timestamp, history-angle or movement-physics override is added.
-Primary/secondary attack and use, including short subtick taps, pass through
-with physical angles. Existing silent aim retains its own shot-history stage.
+Primary attack and use, including short subtick taps, pass through with physical
+angles. Secondary attack (right-click) keeps anti aim active. Existing silent aim
+retains its own shot-history stage.
 
 The runtime targets ordinary walking/air movement, including arbitrary wrapped
 yaw and upside-down pitch within a fixed horizontal-basis hemisphere. Exactly
@@ -285,6 +287,39 @@ frozen sparse-angle producer branches, pass in
 `logs/compatibility/20261016T150659692451Z/`. Both DLLs retain zero static TLS
 and delay-import directories. Build identities and the original failure summary
 are under `logs/anti-aim-repair/`.
+
+**Movement and pitch follow-up, October 16:** checkpoint `b6c6137` preserves
+revision 2 before this repair. The user confirmed that local view works, but
+reported reversed, very slow WASD movement. In
+`logs/overlay-39816-134366368765959678.log`, commands are edited and their angles
+reach native ingestion, while `edited_ingests` remains zero. The old history
+recognition required the original command/base/angle addresses and a live
+restoration-cache entry. Native copying and same-sequence rebuilds do not retain
+that identity. Consequently a held forward input repeatedly received an
+incorrect time-zero reversal instead of retaining its corrected history.
+
+Revision 3 publishes copied command values independently of mutation ownership.
+It recognizes local-source/sequence, exact angle/analog/direction values, and
+keeps up to eight rebuild variants for each of 256 sequence slots. Source
+changes invalidate this history; unknown or expired variants use physical
+passthrough until history is recognized. Steady corrected input now uses exact
+sign changes, so it adds no repeated handoff and retains tiny analog values.
+Native movement simulation, speed caps and local view handling are unchanged.
+
+The requested ground-facing look is now **+89 degrees**; **0 degrees is level**.
+Native direction math and the installed ordinary pitch defaults were checked.
+The Aim menu describes downward pitch. `ANTI_AIM revision=3` diagnostics report
+recognized edited/physical ingests, unknown ingests and boundary-event counts.
+No post-repair gameplay result is claimed.
+
+**Revision 3 verification:** public and diagnostic x64 Release builds succeed,
+with **23/23 CTest suites passing in each**. Coverage includes actual command
+copies with distinct protobuf addresses, same-sequence variants, source changes,
+1,000 complete movement handoffs, exact tiny-input correction and downward
+pitch. All eleven binary checks pass in
+`logs/compatibility/20261016T152438007018Z/`. No game was launched, injected or
+controlled during this repair. Restart CS2 normally before loading the rebuilt
+DLL through **Load Overlay.cmd**.
 
 ## Basic silent aim
 

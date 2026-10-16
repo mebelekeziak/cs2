@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <random>
 
@@ -56,9 +57,20 @@ bool Check3D(const AimAngles& from, const AimAngles& to, float forward, float le
 int main() {
     const AimAngles local{53, 25, 0};
     AimAngles command{};
-    Expect(AntiAimBackwards(local, command) && command.pitch == 0 && command.yaw == -155 && command.roll == 0 &&
+    Expect(AntiAimBackwards(local, command) && command.pitch == 89 && command.yaw == -155 && command.roll == 0 &&
            local.pitch == 53 && local.yaw == 25 && local.roll == 0,
-           "backwards command is local yaw plus 180 with zero pitch; local view remains untouched");
+           "backwards command is local yaw plus 180 with downward pitch; local view remains untouched");
+    Expect(Rotate3D(command, 1, 0, 0)[2] < -0.999,
+           "fixed positive pitch points almost straight down in the native angle convention");
+    bool downWalk = true;
+    for (float pitch : {-89.999f, -89.0f, -45.0f, 0.0f, 45.0f, 89.0f, 89.999f})
+        for (float yaw : {-180.0f, -90.0f, 0.0f, 90.0f, 179.99f})
+            for (const auto axes : {std::array<float, 2>{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}}) {
+                const AimAngles physical{pitch, yaw, 0};
+                downWalk &= AntiAimBackwards(physical, command) && command.pitch == 89 &&
+                    CheckWalk(physical, command, axes[0], axes[1]);
+            }
+    Expect(downWalk, "downward outgoing pitch preserves WASD and diagonal world wish at full analog magnitude");
     bool backwards = true;
     for (float yaw : {-1080.0f, -540.0f, -360.0f, -180.0f, -0.0f, 0.0f, 179.999f, 180.0f, 360.0f, 540.0f, 1080.0f}) {
         backwards &= AntiAimBackwards({89, yaw, 0}, command) && command.yaw >= -180 && command.yaw < 180;
@@ -78,6 +90,32 @@ int main() {
             dense &= CheckWalk({oldPitch, static_cast<float>(yaw), 0}, {newPitch, static_cast<float>(71 - yaw), 0}, 1, 1);
         }
     Expect(dense, "dense independent horizontal world projection covers wrapped, upside-down and near-vertical pitch");
+    bool exactProjection = true, exactAxes = true, exactInverse = true;
+    for (float pitch : pitches) for (float yaw : {-1080.0f, -179.999f, -51.37f, 0.0f, 179.999f, 1080.0f}) {
+        const AimAngles physical{pitch, yaw, 0};
+        AimAngles outgoing{};
+        exactProjection &= AntiAimBackwards(physical, outgoing);
+        for (const auto axes : {std::array<float, 2>{1, 0}, {0, 1}, {1e-10f, 0}, {0, 1e-10f},
+                               {-1e-10f, 1}, {1, -1e-10f}, {-0.0f, 0.0f}, {0.37f, -0.81f}}) {
+            const auto fixed = AntiAimCorrectBackwardsMovement(physical, axes[0], axes[1]);
+            const auto generic = AntiAimCorrectWalkMovement(physical, outgoing, axes[0], axes[1]);
+            exactProjection &= fixed.valid && generic.valid && fixed.up == 0 &&
+                Near(fixed.forward, generic.forward) && Near(fixed.left, generic.left) &&
+                Same(WalkWish(physical, axes[0], axes[1]), WalkWish(outgoing, fixed.forward, fixed.left));
+            const float expectedF = std::abs(Reduce(pitch)) < 90 ? -axes[0] : axes[0];
+            const float expectedL = -axes[1];
+            exactAxes &= std::memcmp(&fixed.forward, &expectedF, sizeof(float)) == 0 &&
+                std::memcmp(&fixed.left, &expectedL, sizeof(float)) == 0;
+            auto restored = fixed;
+            for (int repeat = 0; repeat < 101; ++repeat)
+                restored = AntiAimCorrectBackwardsMovement(physical, restored.forward, restored.left);
+            exactInverse &= restored.valid && std::memcmp(&restored.forward, &axes[0], sizeof(float)) == 0 &&
+                std::memcmp(&restored.left, &axes[1], sizeof(float)) == 0;
+        }
+    }
+    Expect(exactProjection, "fixed backwards permutation agrees with generic correction and independent world projection");
+    Expect(exactAxes, "fixed correction preserves exact tiny axes and signed zero without orthogonal-axis residue");
+    Expect(exactInverse, "102 fixed signed-axis permutations restore every input bit without accumulated drift");
     const float maximum = std::numeric_limits<float>::max();
     bool huge = true;
     for (float yaw : {maximum, -maximum, 1.0e20f, -1.0e20f, 1.0e10f, -1.0e10f}) {
@@ -104,12 +142,15 @@ int main() {
     Expect(random3D && roundtrip, "100000 independent 3D world projections and inverse transforms preserve all axes and magnitude");
     bool vertical = true;
     for (float pitch : {-450.0f, -270.0f, -90.0f, 90.0f, 270.0f, 450.0f}) {
+        vertical &= !AntiAimCorrectBackwardsMovement({pitch, 25, 0}, 1, 0).valid;
         vertical &= !AntiAimCorrectWalkMovement({pitch, 25, 0}, {}, 1, 0).valid;
         vertical &= !AntiAimCorrectWalkMovement({}, {pitch, -179, 0}, 1, 0).valid;
         vertical &= Check3D({pitch, 25, 73}, {-pitch, -179, -15}, 0.75f, -0.3f, 1);
     }
     Expect(vertical, "3D math handles exact vertical views; planar WALK explicitly refuses its degenerate horizontal basis");
     Expect(!AntiAimCorrectWalkMovement({0, 25, 1}, {}, 1, 0).valid &&
+           !AntiAimCorrectBackwardsMovement({0, 25, 1}, 1, 0).valid &&
+           AntiAimCorrectBackwardsMovement({31, 25, 360}, 1, 0).valid &&
            !AntiAimCorrectWalkMovement({}, {0, 25, 90}, 1, 0).valid &&
            CheckWalk({31, 25, 360}, {-45, 70, -720}, 0.25f, -0.9f),
            "WALK rejects nonzero roll but accepts equivalent complete rotations");
@@ -120,9 +161,11 @@ int main() {
             command = {1, 2, 3};
             invalid &= !AntiAimBackwards(bad, command) && command.pitch == 1 && command.yaw == 2 && command.roll == 3;
             invalid &= !AntiAimCorrectWalkMovement(bad, {}, 1, 0).valid && !AntiAimCorrectWalkMovement({}, bad, 1, 0).valid;
+            invalid &= !AntiAimCorrectBackwardsMovement(bad, 1, 0).valid;
             invalid &= !AntiAimCorrectMovement3D(bad, {}, 1, 0, 0).valid && !AntiAimCorrectMovement3D({}, bad, 1, 0, 0).valid;
         }
         invalid &= !AntiAimCorrectWalkMovement({}, {}, value, 0).valid && !AntiAimCorrectWalkMovement({}, {}, 0, value).valid;
+        invalid &= !AntiAimCorrectBackwardsMovement({}, value, 0).valid && !AntiAimCorrectBackwardsMovement({}, 0, value).valid;
         invalid &= !AntiAimCorrectMovement3D({}, {}, value, 0, 0).valid &&
                    !AntiAimCorrectMovement3D({}, {}, 0, value, 0).valid && !AntiAimCorrectMovement3D({}, {}, 0, 0, value).valid;
     }

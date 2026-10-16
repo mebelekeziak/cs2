@@ -30,13 +30,18 @@ Basis AngleBasis(const AimAngles& angles) noexcept {
             {sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp},
             {cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp}};
 }
-bool WalkBasis(const AimAngles& angles, Basis& basis) noexcept {
+bool WalkForwardSign(const AimAngles& angles, double& sign) noexcept {
     if (!Finite(angles) || Wrap(angles.roll) != 0.0) return false;
     const double pitch = Wrap(angles.pitch);
     // At vertical pitch the horizontal forward is mathematically zero.
     // Do not let platform-specific trig residue choose a movement direction.
     if (std::abs(pitch) == 90.0) return false;
-    const double sign = std::abs(pitch) > 90.0 ? -1.0 : 1.0;
+    sign = std::abs(pitch) > 90.0 ? -1.0 : 1.0;
+    return true;
+}
+bool WalkBasis(const AimAngles& angles, Basis& basis) noexcept {
+    double sign = 0;
+    if (!WalkForwardSign(angles, sign)) return false;
     const double yaw = Wrap(angles.yaw) * radians, cy = std::cos(yaw), sy = std::sin(yaw);
     basis = {{sign * cy, sign * sy, 0}, {-sy, cy, 0}, {0, 0, 1}};
     return true;
@@ -57,8 +62,18 @@ AntiAimMovement Transform(const Basis& from, const Basis& to, float forward, flo
 
 bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept {
     if (!Finite(local)) return false;
-    command = {0, static_cast<float>(Wrap(Wrap(local.yaw) + 180.0)), 0};
+    command = {AntiAimDownPitch, static_cast<float>(Wrap(Wrap(local.yaw) + 180.0)), 0};
     return true;
+}
+
+AntiAimMovement AntiAimCorrectBackwardsMovement(const AimAngles& physical,
+                                                 float forward, float left) noexcept {
+    if (!std::isfinite(forward) || !std::isfinite(left)) return {};
+    double sign = 0;
+    if (!WalkForwardSign(physical, sign)) return {};
+    // The outgoing pitch is below vertical; yaw +180 negates both horizontal
+    // axes. An upside-down physical pitch already negates its forward axis.
+    return {sign > 0 ? -forward : forward, -left, 0, true};
 }
 
 AntiAimMovement AntiAimCorrectWalkMovement(const AimAngles& from, const AimAngles& to,

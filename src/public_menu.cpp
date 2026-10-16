@@ -415,7 +415,7 @@ void DrawPublicMenu() {
                 ImGui::TextDisabled("F10  Silent aim");
                 ImGui::Separator();
                 antiAimChanged = FeatureCheckbox("Enable anti aim", antiAim.enabled);
-                ImGui::TextWrapped("Backwards yaw, level pitch. Local view stays normal.");
+                ImGui::TextWrapped("Backwards yaw, downward pitch. Local view stays normal.");
             }
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);

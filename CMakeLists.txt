@@ -23,7 +23,7 @@ add_library(imgui_dx11 STATIC
 target_include_directories(imgui_dx11 PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
 add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp
-  src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim.cpp
+  src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim_history.cpp src/anti_aim.cpp
   src/silent_aim.cpp src/silent_aim_settings.cpp src/silent_aim_math.cpp src/silent_aim_command.cpp src/silent_aim_target.cpp
   src/movement_settings.cpp src/movement_math.cpp src/movement.cpp src/movement_command.cpp
   src/movement_jump.cpp src/movement_steering.cpp src/movement_telemetry.cpp src/movement_jump_trace.cpp
@@ -94,11 +94,16 @@ if(BUILD_TESTING)
   target_compile_definitions(anti_aim_view_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_options(anti_aim_view_checks PRIVATE /W4)
   add_test(NAME anti_aim_view_checks COMMAND anti_aim_view_checks)
-  add_executable(anti_aim_boundary_checks tests/anti_aim_boundary_checks.cpp src/anti_aim_boundary.cpp src/anti_aim_command.cpp src/anti_aim_math.cpp src/movement_command.cpp)
+  add_executable(anti_aim_boundary_checks tests/anti_aim_boundary_checks.cpp src/anti_aim_boundary.cpp src/anti_aim_command.cpp src/anti_aim_math.cpp src/anti_aim_history.cpp src/movement_command.cpp)
   target_include_directories(anti_aim_boundary_checks PRIVATE include)
   target_compile_definitions(anti_aim_boundary_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_options(anti_aim_boundary_checks PRIVATE /W4)
   add_test(NAME anti_aim_boundary_checks COMMAND anti_aim_boundary_checks)
+  add_executable(anti_aim_history_checks tests/anti_aim_history_checks.cpp src/anti_aim_history.cpp src/anti_aim_math.cpp)
+  target_include_directories(anti_aim_history_checks PRIVATE include)
+  target_compile_definitions(anti_aim_history_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(anti_aim_history_checks PRIVATE /W4)
+  add_test(NAME anti_aim_history_checks COMMAND anti_aim_history_checks)
   add_executable(movement_checks tests/movement_checks.cpp src/movement_math.cpp src/movement_command.cpp)
   target_include_directories(movement_checks PRIVATE include)
   target_compile_options(movement_checks PRIVATE /W4)
