@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
+#include "third_person_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #include <imgui.h>
@@ -213,6 +214,44 @@ void NativeSettingsBounds() {
     Expect(fallback.localLightBrightness == 1 && fallback.sunLightBrightness == 1 && fallback.directionalLightmapsMode == 2,
            "invalid brightness uses neutral values and directional mode stays in range");
 }
+void CameraControls() {
+    const EspSettings savedEsp = EspGetSettings();
+    ClickControl("Enable ESP");
+    Expect(!EspGetSettings().enabled, "camera test starts with ESP disabled");
+    ClickControl("Camera");
+    Expect(ThirdPersonGetSettings() == ThirdPersonSettings{}, "camera opens at safe defaults");
+    ClickControl("##CameraDistance", 0.8f);
+    ClickControl("##CameraShoulder", 0.8f);
+    ClickControl("##CameraHeight", 0.8f);
+    ClickControl("Camera collision");
+    Expect(ThirdPersonGetSettings() == ThirdPersonSettings{}, "disabled camera master blocks sliders and collision checkbox");
+    ClickControl("Enable third person");
+    ClickControl("##CameraDistance", 0.7f);
+    ClickControl("##CameraShoulder", 0.2f);
+    ClickControl("##CameraHeight", 0.8f);
+    ClickControl("Camera collision");
+    const auto edited = ThirdPersonGetSettings();
+    Expect(edited.enabled && edited.distance > 180 && edited.shoulder < -20 && edited.height > 20 && !edited.collision,
+           "camera master, distance, shoulder, height and collision publish through mouse input while ESP is disabled");
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const char* labels = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    Expect(std::strstr(labels, "F6  Toggle third person"), "camera presents its runtime toggle key");
+    ImGui::LogFinish();
+    ImGui::Render();
+    ClickControl("Enable third person");
+    ClickControl("Reset camera");
+    Expect(ThirdPersonGetSettings() == ThirdPersonSettings{}, "camera reset works with its master disabled");
+    ClickControl("Camera");
+    ClickControl("Enable ESP");
+    Expect(EspGetSettings() == savedEsp && MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe &&
+           !WorldGetSettings().enabled, "camera edits preserve independent visuals, movement and world controls");
+    // Leave non-default camera values so the Configs mouse-flow checks persistence.
+    ThirdPersonSetSettings(edited);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void CheckTabsFit(const char* message) {
     bool fit = true;
     for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs" }) {
@@ -244,6 +283,7 @@ int main() {
     MovementSetSettings(MovementSettings{});
     WorldResetSettings();
     AntiAimSetSettings({});
+    ThirdPersonResetSettings();
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -269,6 +309,7 @@ int main() {
     Expect(EspGetSettings().armor && EspGetSettings().health && EspGetSettings().teammates,
            "armor click preserves other visible feature settings");
     EspAppearanceControls();
+    CameraControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -529,15 +570,17 @@ int main() {
     io.AddInputCharactersUTF8(testName.c_str());
     Frame();
     const auto savedEsp = EspGetSettings();
+    const auto savedCamera = ThirdPersonGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
     Expect(std::filesystem::exists(configPath), "Save button writes named preset");
     EspSetSettings(EspSettings{});
     AntiAimSetSettings({false});
+    ThirdPersonResetSettings();
     ClickControl("Load config");
-    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled,
-           "Load button restores saved appearance and anti aim toggle");
+    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera,
+           "Load button restores saved appearance, anti aim and camera settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -582,6 +625,7 @@ int main() {
     MovementSetSettings(MovementSettings{});
     WorldResetSettings();
     AntiAimSetSettings({});
+    ThirdPersonResetSettings();
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

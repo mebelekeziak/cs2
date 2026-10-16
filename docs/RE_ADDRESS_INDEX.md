@@ -190,6 +190,29 @@ native pitch clamp `0xB63B70` consumes their live values. These are ordinary
 defaults, rather than immutable bounds. The user confirmed local view for
 revision 2; revision 3 movement and server results remain unobserved.
 
+## Third-person camera: client.dll
+
+Header: [third_person_offsets.h](../include/third_person_offsets.h). Verifier:
+[inspect_third_person.py](../tools/inspect_third_person.py). Details:
+[native camera evidence](../tools/CS2_THIRD_PERSON_EVIDENCE.md).
+
+| Symbol | Current value / kind | Rediscovery anchor / contract |
+| --- | --- | --- |
+| `OverrideView`, `IsThirdPerson` | `0xB99250`, `0xB627A0`, function RVAs | `ClientModeShared` slot 16; three direct predicate callers; `void(mode*, view*)`, `int(input*, slot)` |
+| `ModeSharedVtable`, `ModeNormalVtable`, `ModeSlot` | `0x1C68368`, `0x1C9FC20`, vtables; `0x28`, member | Named mode RTTI, slot-32 getter `0xB96570` |
+| `ViewOrigin`, `ViewAngles`, `IsThirdPersonCameraReturn` | `0x4A0`, `0x4B8`, members; `0xB992A9`, return RVA | Base-view origin math and angle stores; exact native camera query return |
+| `TraceShape`, `TraceManager` | `0xA1A000`, function; `0x2227058`, pointer slot | Native camera thinker `0xB62A20` hull-sweep call `0xB636F1`, six arguments |
+| `InitializeShape`, `InitializeTrace`, `PopulateFilter` | `0x36DDB0`, `0x1779300`, `0xB722A0`, functions | Verified camera shape/result/filter producers; current-thread stack storage |
+| `ShapeSize`, `TraceSize`, `FilterSize`, `TraceFraction` | `0x30`, `0xC0`, `0x48`, sizes; `0xAC`, result member | Native stack layout, filter destructor allocation size, fraction consumer |
+
+Only slot-zero live local sources are overridden. A dynamic TLS scope keeps
+one base-view camera query native while the model visibility consumers see
+third person. After the base view returns, only its current origin is translated;
+angles/FOV and later game-specific effects remain native. Collision copies the
+native 9-unit camera hull/filter contract and validates the sweep fraction.
+Input flags, shared cvars and command angles are never written. Stop disarms
+queries and drains view edits; hooks remain resident and forward until exit.
+
 ## Sky: scenesystem.dll plus one client.dll producer
 
 Header: [world_offsets.h](../include/world_offsets.h), namespace `world_offsets`.

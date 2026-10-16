@@ -13,6 +13,7 @@
 #include <imgui_internal.h>
 #include <imgui_impl_dx11.h>
 #include "public_menu.h"
+#include "third_person_settings.h"
 #include <cstdio>
 #include <cwchar>
 
@@ -28,13 +29,13 @@ bool Check(HRESULT result, const char* action) {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 5 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 5.\n");
+    if (selectedTab < 0 || selectedTab > 6 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 6.\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -81,6 +82,7 @@ int wmain(int argc, wchar_t** argv) {
     io.DisplaySize = { static_cast<float>(width), static_cast<float>(height) };
     io.DeltaTime = 1.0f / 60.0f;
     ConfigurePublicMenuStyle();
+    if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (!ImGui_ImplDX11_Init(device.Get(), context.Get())) {
         ImGui::DestroyContext();
         return 1;
@@ -98,7 +100,14 @@ int wmain(int argc, wchar_t** argv) {
         ImGui::Render();
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
-            if (menu) menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), static_cast<int>(selectedTab));
+            if (menu) {
+                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab == 6 ? 0 : static_cast<int>(selectedTab));
+                if (selectedTab == 6 && !menu->DC.ChildWindows.empty()) {
+                    auto* child = menu->DC.ChildWindows[0];
+                    child->StateStorage.SetInt(child->GetID("Camera"), 1);
+                    child->StateStorage.SetInt(child->GetID("Live preview"), 0);
+                }
+            }
         }
         if (frame == 1 && scroll) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");

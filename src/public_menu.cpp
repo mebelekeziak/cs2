@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
+#include "third_person_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -317,6 +318,20 @@ void DrawPublicMenu() {
                     EspDrawPreview(std::max(1.0f, ImGui::GetContentRegionAvail().x), 170);
                 }
                 reset = ImGui::Button("Reset ESP appearance", { -1, 0 });
+                ImGui::Separator();
+                if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    ThirdPersonSettings camera = ThirdPersonGetSettings();
+                    bool cameraChanged = FeatureCheckbox("Enable third person", camera.enabled);
+                    ImGui::TextDisabled("F6  Toggle third person");
+                    ImGui::BeginDisabled(!camera.enabled);
+                    cameraChanged |= slider("Camera distance", "##CameraDistance", camera.distance, 30, 300, "%.0f units");
+                    cameraChanged |= slider("Shoulder offset", "##CameraShoulder", camera.shoulder, -60, 60, "%.0f units");
+                    cameraChanged |= slider("Height offset", "##CameraHeight", camera.height, -60, 60, "%.0f units");
+                    cameraChanged |= FeatureCheckbox("Camera collision", camera.collision);
+                    ImGui::EndDisabled();
+                    if (cameraChanged) ThirdPersonSetSettings(camera);
+                    if (ImGui::Button("Reset camera", { -1, 0 })) ThirdPersonResetSettings();
+                }
             }
             ImGui::EndChild();
             if (reset) EspResetStyle();

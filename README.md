@@ -1,9 +1,9 @@
-# CS2 anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
+# CS2 third person, anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
+x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all eleven
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twelve
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -11,10 +11,57 @@ reports under `logs/compatibility/`:
 python tools/check_compatibility.py
 ```
 
+## Third-person camera
+
+Under **Visuals**, scroll down and open **Camera**, then enable **Enable third
+person**, or press **F6** while CS2 has focus. Camera settings are independent
+of ESP and continue applying with the menu hidden. They start disabled and save
+with local configs; older presets restore camera defaults.
+
+- **Camera distance:** 30–300 units, initially 120.
+- **Shoulder offset:** −60 to +60 units, initially centered; positive moves right.
+- **Height offset:** −60 to +60 units along world Z, initially zero.
+- **Camera collision:** initially enabled. A native 9-unit hull sweep clips the
+  complete eye-to-camera displacement, including shoulder and height offsets.
+- **Reset camera:** disables third person and restores every camera default.
+
+The current local pawn must be alive with valid controller/entity ownership.
+Missing or stale state, death and other view slots use the native camera.
+Disabling or stopping restores native behavior on subsequent callbacks, without
+leaving camera input bytes or console variables changed. The implementation
+changes only the current view origin and the native local-player visibility
+query; command angles, current view angles and FOV are preserved. The normal
+game-specific camera effects still run afterward. No aim/parallax correction
+or camera smoothing is added.
+
+The native view, visibility query and collision contracts are documented in
+[camera evidence](tools/CS2_THIRD_PERSON_EVIDENCE.md). Recheck the installed files
+with `python tools/inspect_third_person.py` or the combined compatibility command.
+Use the existing build and **Load Overlay.cmd** workflow below. Restart CS2
+normally if an older DLL is resident: cooperative stop drains camera edits,
+but **stopped and resident is not physically unloaded**. Testing remains limited
+to the disconnected menu, offline mode or the designated private environment.
+
+**Verification, October 16, 2026:** public and diagnostic x64 Release builds
+succeed, with **24/24 CTest suites passing in each**. Camera regressions use
+standalone native-callback substitutes to check geometry, hull/filter arguments,
+origin-only edits, stale sources, visibility fallback, nested views and draining
+stop. Menu/config tests cover all controls, resets and persistence. The software
+D3D11 Camera preview was inspected; no live client appearance or wall-response
+observation is claimed. Both DLLs retain zero static TLS and delay imports.
+All twelve installed-file compatibility checks pass in
+`logs/compatibility/20261016T154931008163Z/`, for installed patch 1.41.9.1,
+client/server 2000933, Steam build 25966348. All 32 camera-header mutations were
+rejected. With the preview build enabled, reproduce the Camera image with:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\third-person-menu.bmp 6 100000
+```
+
 ## Local configs
 
 Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
-to save all current Visuals, Movement, World, Lighting and Aim settings. Select
+to save all current Visuals (including Camera), Movement, World, Lighting and Aim settings. Select
 a saved preset and click **Load config** to apply it. Type a different name to
 save another preset; **Refresh list** picks up files added outside the menu.
 Loading replaces current options, including feature enable switches. Presets
