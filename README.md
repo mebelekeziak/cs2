@@ -1,9 +1,9 @@
-# CS2 silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
+# CS2 anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with basic silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
+x64 client overlay with basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all ten
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all eleven
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -205,6 +205,86 @@ offsets. Current entity/movement evidence is static, with no new live dump or
 gameplay observation. Successful builds and standalone checks do not establish
 that ESP draws players or autobhop executes in a match on this build. Use the
 rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
+
+## Basic anti aim
+
+Under **Aim**, enable **Enable anti aim**. It starts disabled and is saved with
+configs. Outgoing base angles use **your view yaw + 180 degrees**, wrapped to
+the normal yaw range, and **pitch 0**. The yaw is an offset from your view,
+so turning the mouse keeps the character facing backwards relative to you.
+
+The physical mouse view and native shot-history source remain independent.
+The verified native command-replay callback otherwise copies outgoing angles
+back to the camera; its wrapper preserves the current physical input view
+across that reset. It captures a fresh view each time, rather than freezing the
+camera to an earlier command. View effects from ordinary game camera logic
+are retained. Model/animation state is not written.
+
+Movement correction runs after existing bunnyhop/autostrafe planning and before
+the original movement checksum finalizer. It transforms base forward/left,
+all three native direction-button words, subtick direction edges and analog
+deltas. Pitch subtick deltas become zero; yaw deltas continue following the
+physical turn. A native arena-owned time-zero analog event repairs the historical
+movement basis when enabling, disabling, stopping or passing through actions.
+No attack, jump, timestamp, history-angle or movement-physics override is added.
+Primary/secondary attack and use, including short subtick taps, pass through
+with physical angles. Existing silent aim retains its own shot-history stage.
+
+The runtime targets ordinary walking/air movement, including arbitrary wrapped
+yaw and upside-down pitch within a fixed horizontal-basis hemisphere. Exactly
+vertical pitch, nonzero roll, a subtick pitch crossing a vertical boundary,
+ladder/noclip/swimming and unavailable layouts pass through. Flattened WALK
+forward is singular at exactly vertical pitch; the separate full-3D math helper
+is not substituted for the game's WALK rules. There is no claim of support for
+every movement mode or observer camera.
+
+Restart CS2 normally before using the rebuilt **Load Overlay.cmd** workflow if
+an older DLL is resident. Keep testing at the disconnected menu, offline or in
+the designated private environment. End and explicit stop disarm new angle
+edits. Movement handoff and camera compensation for retained commands remain
+resident; **stopped and resident is not physically unloaded**.
+
+Installed-binary contracts and standalone checks are described in
+[anti aim evidence](tools/CS2_ANTI_AIM_EVIDENCE.md). No live camera smoothness,
+character facing, collision response or server consumption is established by
+these checks. No game launch, injection or server interaction was performed
+for this implementation.
+
+**Verification, October 16, 2026:** public and diagnostic x64 Release builds
+succeed; **22/22 CTest suites pass in each**. This includes dense/randomized
+angle-basis checks, 10,000 changing physical replay views, 9,000 movement-basis
+handoffs, native arena growth/reuse, pooled-command rebuild rejection, native
+CRC presence changes, tiny deltas and real menu/config interactions. All eleven
+installed-binary checks pass in `logs/compatibility/20261016T144820900361Z/`.
+The Aim menu preview was inspected. The consumed client DLL retains the verified
+hash; the installed version reports 1.41.9.1 / client-server 2000933 / Steam
+build 25966348. These are static and standalone results, without live gameplay.
+
+**Bot-match failure follow-up, October 16:** the supplied run
+`logs/overlay-21024-134366360999930010.log` loaded this feature and enabled it,
+but recorded **zero edits** and **7,879 rejected commands**. Native base-angle
+production clears each component's presence bit when its value is zero. The
+first validator incorrectly demanded all three bits, so ordinary zero-roll
+commands never reached mutation. Earlier fixtures explicitly set all three
+bits and missed this producer contract.
+
+Revision 2 accepts native sparse zero components and changes their presence
+bits together with angle values, restoring both on command rebuilds. Regression
+fixtures cover omitted zero pitch/yaw/roll, transitions into and out of zero,
+native arena growth and restoration. Render-owner `ANTI_AIM revision=2` reports
+now include the exact rejected stage and observed presence/container fields,
+callback counts, last outgoing angles, and whether native ingestion retained
+the edited angles. These counters distinguish mutation from subsequent native
+processing; they still do not establish character facing or server receipt.
+The corrected DLL requires a normal CS2 restart before reloading. No new live
+post-fix behavior is claimed.
+
+Both repaired public/diagnostic Release builds succeed and all **22/22 CTest
+suites pass in each**. All eleven installed-binary checks, including the newly
+frozen sparse-angle producer branches, pass in
+`logs/compatibility/20261016T150659692451Z/`. Both DLLs retain zero static TLS
+and delay-import directories. Build identities and the original failure summary
+are under `logs/anti-aim-repair/`.
 
 ## Basic silent aim
 

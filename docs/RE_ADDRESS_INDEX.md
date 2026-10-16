@@ -160,6 +160,29 @@ animation refresh. Missing selected bones/pose data skip the player. These are
 animated landmarks, not authored hitbox-volume centers. No visibility trace,
 recoil/spread correction, penetration or damage system is provided.
 
+## Anti aim: client.dll
+
+Header: [anti_aim_offsets.h](../include/anti_aim_offsets.h).
+Verifier: [inspect_anti_aim.py](../tools/inspect_anti_aim.py).
+Details: [command/view evidence](../tools/CS2_ANTI_AIM_EVIDENCE.md).
+
+| Symbol / owning header | Value / kind | Rediscovery anchor |
+| --- | --- | --- |
+| `anti_aim_offsets::Replay`, `ReplaySlot` | `0xCEA280`, function RVA; `8`, vtable slot | `CCSGOInput` RTTI/vtable; wrapper calls native reset `0xB6C980`, ABI `void(input*, int slot)` |
+| `InputAngles` | `0x688`, input member, inline float3 | Native reset stores at `0xB6CA5C/0xB6CA64`; producer uses input-slot state `+0x228/+0x460` |
+| `Attack`, `Attack2`, `Use` | `1`, `0x800`, `0x20`, uint64 button masks | Named `IN_ATTACK`, `IN_ATTACK2`, `IN_USE` native enum records |
+| `base::Up`, `UpPresent` | `0x60`, base member; `0x100`, presence mask | Native producer `0xB663D0`, ingestion `0xA77658` |
+
+Command changes run after movement planning and before the original movement
+finalizer. Physical input and shot history remain independent. The reset wrapper
+retains the current physical input view across native command replay, including
+retained commands after stopping edits. A time-zero analog event compensates
+historical movement at basis handoffs; native allocator/append ownership and
+stable original event order are retained. The verifier freezes the historical
+SetupMove, zero-time decoder/integrator and AirMove flattened-basis consumers.
+Do not replace WALK with a full-3D movement model or infer other move modes.
+Runtime and server results remain unobserved.
+
 ## Sky: scenesystem.dll plus one client.dll producer
 
 Header: [world_offsets.h](../include/world_offsets.h), namespace `world_offsets`.

@@ -24,6 +24,7 @@
 #include "player_reader.h"
 #include "movement.h"
 #include "silent_aim.h"
+#include "anti_aim.h"
 #include "silent_aim_settings.h"
 #include "world_settings.h"
 #include "world_postprocess.h"
@@ -233,6 +234,7 @@ void ReleaseRendererOnOwner(const char* reason) {
 void CleanupOnRenderThread(const char* reason) {
     MovementStop(reason);
     SilentAimStop(reason);
+    AntiAimStop(reason);
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
     WorldLightingSwitchesStop(reason);
@@ -450,6 +452,7 @@ void PollMenuKeyboard(bool foreground) {
 
 void DrawFrame(IDXGISwapChain* chain) {
     SilentAimFlushTelemetry();
+    AntiAimFlushTelemetry();
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();
@@ -508,6 +511,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Reader: %s", PlayerReaderStatus());
         ImGui::Text("Movement: %s", MovementStatus());
         ImGui::Text("Silent aim: %s", SilentAimStatus());
+        ImGui::Text("Anti aim: %s", AntiAimStatus());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
@@ -611,6 +615,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
             MovementStop("stopped before selecting render chain");
             SilentAimStop("stopped before selecting render chain");
+            AntiAimStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
             WorldLightingSwitchesStop("stopped before selecting render chain");
@@ -692,6 +697,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
     const bool aimPrepared = SilentAimPrepare(&EspLog);
+    const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
@@ -703,6 +709,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status != MH_OK) {
         MovementStop("partial hook activation failure");
         SilentAimStop("partial hook activation failure");
+        AntiAimStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
         WorldLightingSwitchesStop("partial hook activation failure");
@@ -714,6 +721,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     }
     if (movementPrepared) MovementActivate();
     if (aimPrepared) SilentAimActivate();
+    if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
     if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
@@ -728,6 +736,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
     MovementStop("explicit overlay stop request");
     SilentAimStop("explicit overlay stop request");
+    AntiAimStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
     WorldLightingSwitchesStop("explicit overlay stop request");

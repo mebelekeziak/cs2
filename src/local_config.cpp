@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "world_settings.h"
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -21,6 +22,7 @@ struct Snapshot {
     MovementSettings movement;
     WorldSettings world;
     SilentAimSettings aim;
+    AntiAimSettings anti_aim;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -44,6 +46,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     COLOR(world, sunLightTint); FIELD(world, sunLightBrightness); FIELD(world, ambientLightEnabled);
     COLOR(world, ambientLightTint); FIELD(world, ambientLightBrightness); FIELD(world, directionalLightmapsMode);
     FIELD(aim, enabled); FIELD(aim, fov); FIELD(aim, hitbox);
+    FIELD(anti_aim, enabled);
 #undef COLOR
 #undef FIELD
 }
@@ -135,7 +138,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
@@ -206,6 +209,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     MovementSetSettings(snapshot.movement);
     WorldSetSettings(snapshot.world);
     SilentAimSetSettings(snapshot.aim);
+    AntiAimSetSettings(snapshot.anti_aim);
     return true;
 }
 

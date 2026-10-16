@@ -1,4 +1,5 @@
 #include "movement.h"
+#include "anti_aim.h"
 #include "movement_math.h"
 #include "movement_jump.h"
 #include "movement_jump_trace.h"
@@ -466,6 +467,7 @@ bool ReadHistory(const Pawn& pawn, const Patch& patch, float& forward, float& le
         !Writable(patch.base + off::base::SubtickSize, sizeof(int))) return false;
     if (!(buttons.down & (off::Forward | off::Back))) forward = 0;
     if (!(buttons.down & (off::Left | off::Right))) left = 0;
+    AntiAimPhysicalHistory(pawn.services, forward, left);
     return true;
 }
 void RememberReplay(const Patch& patch, const MovementReplayContext& context,
@@ -793,7 +795,8 @@ void Process(void* input, void* commandPointer) noexcept {
     }
 }
 void HookFinalize(void* input, void* command) noexcept {
-    if (enabled.load(std::memory_order_acquire)) {
+    const bool commandReady = AntiAimBeginCommand(input, command);
+    if (commandReady && enabled.load(std::memory_order_acquire)) {
         LARGE_INTEGER begin{}, end{};
         QueryPerformanceCounter(&begin);
         AcquireSRWLockExclusive(&commandLock);
@@ -827,6 +830,21 @@ void HookFinalize(void* input, void* command) noexcept {
     }
     // Original rebuilds move_crc using the modified native buttons, then normal
     // command production copies those buttons to the network protobuf itself.
+    AntiAimFinishCommand(input, command);
+    // Requests are compared against native ingestion in outgoing command space.
+    int antiSequence = 0;
+    std::uintptr_t antiBase = 0;
+    if (Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Sequence, antiSequence) && antiSequence > 0 &&
+        Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Base, antiBase) && antiBase) {
+        AcquireSRWLockExclusive(&commandLock);
+        auto& request = requests[static_cast<unsigned>(antiSequence) % requests.size()];
+        if (request.sequence == antiSequence) {
+            Read(antiBase + off::base::Forward, request.forward);
+            Read(antiBase + off::base::Left, request.left);
+            Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Buttons, request.buttons);
+        }
+        ReleaseSRWLockExclusive(&commandLock);
+    }
     original(input, command);
 }
 void HookIngest(void* services, void* command) noexcept {
@@ -835,6 +853,7 @@ void HookIngest(void* services, void* command) noexcept {
         Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Buttons, incoming) &&
         Read(reinterpret_cast<std::uintptr_t>(services) + off::services::Buttons, before);
     originalIngest(services, command);
+    AntiAimObserveIngest(services, command);
     if (!enabled.load(std::memory_order_acquire)) return;
     AcquireSRWLockExclusive(&commandLock);
     const auto address = reinterpret_cast<std::uintptr_t>(services);

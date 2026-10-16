@@ -2,6 +2,7 @@
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -391,7 +392,9 @@ void DrawPublicMenu() {
             else if (changed) WorldSetSettings(settings);
         } else if (selectedTab == 4) {
             auto settings = SilentAimGetSettings();
+            auto antiAim = AntiAimGetSettings();
             bool changed = false;
+            bool antiAimChanged = false;
             if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
                 ImGui::BeginDisabled(!settings.enabled);
@@ -410,9 +413,13 @@ void DrawPublicMenu() {
                 ImGui::TextWrapped("Fire normally. Selects the enemy closest to your aim within the FOV.");
                 ImGui::TextWrapped("Walls, recoil and weapon spread can prevent a hit.");
                 ImGui::TextDisabled("F10  Silent aim");
+                ImGui::Separator();
+                antiAimChanged = FeatureCheckbox("Enable anti aim", antiAim.enabled);
+                ImGui::TextWrapped("Backwards yaw, level pitch. Local view stays normal.");
             }
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);
+            if (antiAimChanged) AntiAimSetSettings(antiAim);
         } else if (selectedTab == 5) {
             if (ImGui::BeginChild("##ConfigSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders))
                 DrawConfigs(lastTab != 5);

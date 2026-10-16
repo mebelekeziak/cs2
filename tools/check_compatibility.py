@@ -47,6 +47,7 @@ def component_commands(game):
         ("esp", "inspect_cs2.py", ["--client", client]),
         ("movement", "inspect_movement.py", ["--client", client]),
         ("silent_aim", "inspect_silent_aim.py", ["--client", client]),
+        ("anti_aim", "inspect_anti_aim.py", ["--client", client]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
         ("aim_hitboxes", "inspect_silent_aim_hitboxes.py", ["--client", client]),
         ("sky", "verify_sky_draw.py", ["--game", str(game)]),

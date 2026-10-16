@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "world_settings.h"
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -36,8 +37,10 @@ int main() {
     const auto secondPath = directory / (second + ".cfg");
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
+    Expect(!AntiAimGetSettings().enabled, "anti aim starts disabled");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
+    Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -63,12 +66,15 @@ int main() {
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
     SilentAimSetSettings({true, 12.34f, AimHitbox::Pelvis});
+    AntiAimSetSettings({true});
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
     Expect(custom != defaults, "separate presets retain different options");
+    Expect(custom.find("anti_aim.enabled=1\n") != std::string::npos, "custom preset saves enabled anti aim");
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
-        MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled,
+        MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
+        !AntiAimGetSettings().enabled,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
@@ -92,7 +98,8 @@ int main() {
     Expect(sameWorld, "all world fields and array channels roundtrip");
     Expect(!MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe &&
         SilentAimGetSettings().enabled && SilentAimGetSettings().fov == 12.34f &&
-        SilentAimGetSettings().hitbox == AimHitbox::Pelvis, "movement and aim roundtrip");
+        SilentAimGetSettings().hitbox == AimHitbox::Pelvis && AntiAimGetSettings().enabled,
+        "movement, silent aim and anti aim roundtrip");
     Expect(LocalConfigSave(second, error) && Read(secondPath) == custom, "atomic overwrite preserves exact float roundtrip");
     std::vector<std::string> names;
     Expect(LocalConfigList(names, error) && std::is_sorted(names.begin(), names.end()) &&
@@ -105,6 +112,7 @@ int main() {
         "version=2\n", "esp.enabled=1\n", "version=1\nversion=1\n", "version=1\nesp.enabled=true\n",
         "version=1\nesp.boxThickness=nan\n", "version=1\nworld.tint.1=0.5junk\n",
         "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n",
+        "version=1\nanti_aim.enabled=true\n", "version=1\nanti_aim.enabled=2\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -115,6 +123,7 @@ int main() {
         EspGetSettings().boxThickness == EspSanitizeSettings(EspSettings{.boxThickness = -99}).boxThickness &&
         SilentAimGetSettings().fov == 30 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
+    Expect(!AntiAimGetSettings().enabled, "older presets without anti aim explicitly restore disabled default");
     Expect(LocalConfigLoad(second, error), "restore saved preset after parse checks");
     std::filesystem::remove(badPath);
     std::filesystem::create_directory(badPath);

@@ -2,6 +2,7 @@
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #include <imgui.h>
@@ -242,6 +243,7 @@ int main() {
     EspSetSettings(EspSettings{});
     MovementSetSettings(MovementSettings{});
     WorldResetSettings();
+    AntiAimSetSettings({});
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -300,6 +302,7 @@ int main() {
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
            "Aim tab opens with silent aim disabled");
+    Expect(!AntiAimGetSettings().enabled, "Aim tab opens with anti aim disabled");
     ClickControl("##AimFov", 0.8f);
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
@@ -315,6 +318,13 @@ int main() {
     ClickControl("Enable silent aim");
     Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
            "silent aim changes preserve independent ESP settings");
+    ClickControl("Enable anti aim");
+    Expect(AntiAimGetSettings().enabled && !SilentAimGetSettings().enabled &&
+           MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "anti aim toggles on independently while silent aim is disabled");
+    ClickControl("Enable anti aim");
+    Expect(!AntiAimGetSettings().enabled, "anti aim checkbox disables the shared command setting");
+    ClickControl("Enable anti aim");
     Click(TabPosition(0));
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##VisualSettings") &&
@@ -524,8 +534,10 @@ int main() {
     ClickControl("Save / overwrite");
     Expect(std::filesystem::exists(configPath), "Save button writes named preset");
     EspSetSettings(EspSettings{});
+    AntiAimSetSettings({false});
     ClickControl("Load config");
-    Expect(EspGetSettings() == savedEsp, "Load button restores saved appearance and toggles");
+    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled,
+           "Load button restores saved appearance and anti aim toggle");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -569,6 +581,7 @@ int main() {
     EspSetSettings(EspSettings{});
     MovementSetSettings(MovementSettings{});
     WorldResetSettings();
+    AntiAimSetSettings({});
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }
