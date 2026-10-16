@@ -4,6 +4,7 @@
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
+#include "zoom_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -331,6 +332,17 @@ void DrawPublicMenu() {
                     ImGui::EndDisabled();
                     if (cameraChanged) ThirdPersonSetSettings(camera);
                     if (ImGui::Button("Reset camera", { -1, 0 })) ThirdPersonResetSettings();
+                }
+                if (ImGui::CollapsingHeader("Scoped zoom", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    ZoomSettings zoom = ZoomGetSettings();
+                    bool zoomChanged = FeatureCheckbox("Override scoped zoom", zoom.enabled);
+                    ImGui::BeginDisabled(!zoom.enabled);
+                    zoomChanged |= slider("Zoom 1", "##Zoom1", zoom.zoom1, 0, 200, "%.0f%%");
+                    zoomChanged |= slider("Zoom 2", "##Zoom2", zoom.zoom2, 0, 200, "%.0f%%");
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("0%%: no zoom. 100%%: weapon default. 200%%: stronger zoom.");
+                    if (zoomChanged) ZoomSetSettings(zoom);
+                    if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }
             }
             ImGui::EndChild();

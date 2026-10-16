@@ -318,6 +318,20 @@ reproduces consumers in twelve original installed shader variants. Its heavier
 shader research dependencies are documented in the evidence; the ordinary
 environment verifier checks the native producer/store and header constants.
 
+## Scoped weapon zoom: client.dll
+
+Header: [zoom_offsets.h](../include/zoom_offsets.h).
+Verifier: [inspect_zoom.py](../tools/inspect_zoom.py).
+Details: [scoped zoom evidence](../tools/CS2_ZOOM_EVIDENCE.md).
+
+The game-specific `ClientModeCSNormal` view override at `0xD02E30` (primary
+vtable slot 16) calls the shared third-person implementation before later
+camera effects. Apply scoped FOV after the game-specific override returns.
+The controller's native unscoped FOV getter at `0x93FC40` reads desired FOV
+and applies the engine default when zero. Recheck named schema fields,
+scoped-weapon RTTI ownership, the active weapon's full serialized handle,
+view-FOV stores and both native entries before adapting this feature.
+
 ## Overlay and final-image pass
 
 [overlay.cpp](../src/overlay.cpp) discovers Present and ResizeBuffers addresses

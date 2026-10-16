@@ -4,6 +4,7 @@
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
+#include "zoom_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #include <imgui.h>
@@ -252,6 +253,62 @@ void CameraControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void ZoomControls() {
+    const auto savedEsp = EspGetSettings();
+    const auto savedCamera = ThirdPersonGetSettings();
+    ClickControl("Enable ESP");
+    ThirdPersonSetSettings({});
+    ClickControl("Scoped zoom");
+    Expect(!EspGetSettings().enabled && !ThirdPersonGetSettings().enabled && ZoomGetSettings() == ZoomSettings{},
+           "scoped zoom opens at defaults independently of disabled ESP and camera");
+    ClickControl("##Zoom1", 0.1f);
+    ClickControl("##Zoom2", 0.9f);
+    Expect(ZoomGetSettings() == ZoomSettings{}, "disabled scoped zoom master blocks both sliders");
+    ClickControl("Override scoped zoom");
+    ClickControl("##Zoom1", 0.2f);
+    const float firstLevel = ZoomGetSettings().zoom1;
+    ClickControl("##Zoom2", 0.8f);
+    Expect(ZoomGetSettings().enabled && firstLevel < 60 && ZoomGetSettings().zoom1 == firstLevel &&
+           ZoomGetSettings().zoom2 > 140, "scoped zoom sliders independently publish first and second zoom levels");
+    const auto dragToEndpoint = [](const char* control, bool maximum) {
+        ClickControl(control); // Scroll the control fully into view first.
+        const auto rectangle = ControlRect(control);
+        Move(rectangle.GetCenter());
+        ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        Frame();
+        // The diagnostic outline extends beyond the slider's hit rectangle.
+        // Drag from inside the slider to its edge to exercise endpoint input.
+        Move({ maximum ? rectangle.Max.x + 8 : rectangle.Min.x - 8, rectangle.GetCenter().y });
+        ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        Frame();
+    };
+    dragToEndpoint("##Zoom1", false);
+    dragToEndpoint("##Zoom2", true);
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "scoped zoom slider endpoints reach no zoom and strongest zoom");
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const char* labels = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    Expect(std::strstr(labels, "Zoom 1") && std::strstr(labels, "Zoom 2") &&
+           std::strstr(labels, "0%: no zoom. 100%: weapon default. 200%: stronger zoom."),
+           "scoped zoom labels explain both levels and slider meanings");
+    ImGui::LogFinish();
+    ImGui::Render();
+    ClickControl("Reset ESP appearance");
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "ESP reset preserves scoped zoom controls");
+    ClickControl("Override scoped zoom");
+    ClickControl("Reset scoped zoom");
+    Expect(ZoomGetSettings() == ZoomSettings{}, "scoped zoom reset works while its master is disabled");
+    Expect(!ThirdPersonGetSettings().enabled && MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe &&
+           !WorldGetSettings().enabled, "scoped zoom edits preserve independent camera, movement and world settings");
+    ClickControl("Scoped zoom");
+    EspSetSettings(savedEsp);
+    ThirdPersonSetSettings(savedCamera);
+    // Keep both endpoint values for the Configs mouse-flow persistence check.
+    ZoomSetSettings({true, 0, 200});
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void CheckTabsFit(const char* message) {
     bool fit = true;
     for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs" }) {
@@ -284,6 +341,7 @@ int main() {
     WorldResetSettings();
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
+    ZoomResetSettings();
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -310,6 +368,7 @@ int main() {
            "armor click preserves other visible feature settings");
     EspAppearanceControls();
     CameraControls();
+    ZoomControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -571,6 +630,7 @@ int main() {
     Frame();
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
+    const auto savedZoom = ZoomGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -578,9 +638,11 @@ int main() {
     EspSetSettings(EspSettings{});
     AntiAimSetSettings({false});
     ThirdPersonResetSettings();
+    ZoomResetSettings();
     ClickControl("Load config");
-    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera,
-           "Load button restores saved appearance, anti aim and camera settings");
+    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera &&
+           ZoomGetSettings() == savedZoom,
+           "Load button restores saved appearance, anti aim, camera and scoped zoom settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -626,6 +688,7 @@ int main() {
     WorldResetSettings();
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
+    ZoomResetSettings();
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

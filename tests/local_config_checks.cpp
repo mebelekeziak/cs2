@@ -5,6 +5,7 @@
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
+#include "zoom_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -50,12 +51,24 @@ int main() {
     Expect(ThirdPersonGetSettings() == ThirdPersonSettings{true, 120, 0, 0, false}, "nonfinite camera values use defaults");
     ThirdPersonResetSettings();
     Expect(ThirdPersonGetSettings() == cameraDefaults, "camera reset restores every default including master and collision");
+    const ZoomSettings zoomDefaults;
+    Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom starts disabled with both weapon defaults");
+    Expect(ZoomSanitizeSettings({true, -1, 999}) == ZoomSettings{true, 0, 200},
+        "scoped zoom levels clamp independently including zero zoom");
+    ZoomSetSettings({true, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()});
+    Expect(ZoomGetSettings() == ZoomSettings{true, 100, 100}, "nonfinite scoped zoom values use weapon defaults");
+    ZoomSetSettings({true, -999, 999});
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "scoped zoom publisher enforces bounds");
+    ZoomResetSettings();
+    Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom reset restores both levels and disables override");
     Expect(!AntiAimGetSettings().enabled, "anti aim starts disabled");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
+    Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\n") != std::string::npos,
+        "default preset explicitly saves both scoped zoom levels");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -84,6 +97,8 @@ int main() {
     AntiAimSetSettings({true});
     const ThirdPersonSettings expectedCamera{true, 173.25f, -21.5f, 17.75f, false};
     ThirdPersonSetSettings(expectedCamera);
+    const ZoomSettings expectedZoom{true, 0, 137.25f};
+    ZoomSetSettings(expectedZoom);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
@@ -91,11 +106,12 @@ int main() {
     Expect(custom.find("anti_aim.enabled=1\n") != std::string::npos, "custom preset saves enabled anti aim");
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
-        !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults,
+        !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
+    Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
     const auto loadedWorld = WorldGetSettings();
     bool sameWorld = loadedWorld.enabled == world.enabled && loadedWorld.exposureEv == world.exposureEv &&
         loadedWorld.contrast == world.contrast && loadedWorld.saturation == world.saturation &&
@@ -134,6 +150,8 @@ int main() {
         "version=1\ncamera.enabled=true\n", "version=1\ncamera.collision=2\n",
         "version=1\ncamera.distance=nan\n", "version=1\ncamera.shoulder=inf\n",
         "version=1\ncamera.height=12oops\n", "version=1\ncamera.distance=120\ncamera.distance=130\n",
+        "version=1\nzoom.enabled=2\n", "version=1\nzoom.zoom1=nan\n", "version=1\nzoom.zoom2=inf\n",
+        "version=1\nzoom.zoom1=1oops\n", "version=1\nzoom.zoom2=50\nzoom.zoom2=150\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -146,6 +164,10 @@ int main() {
         "unknown keys accepted and existing setters enforce bounds");
     Expect(!AntiAimGetSettings().enabled, "older presets without anti aim explicitly restore disabled default");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
+    Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
+    Write(badPath, "version=1\nzoom.enabled=1\nzoom.zoom1=-999\nzoom.zoom2=999\n");
+    Expect(LocalConfigLoad(bad, error) && ZoomGetSettings() == ZoomSettings{true, 0, 200},
+        "scoped zoom config load clamps both levels through bounded settings publisher");
     Write(badPath, "version=1\ncamera.enabled=1\ncamera.distance=999\ncamera.shoulder=-999\ncamera.height=999\ncamera.collision=0\n");
     Expect(LocalConfigLoad(bad, error) && ThirdPersonGetSettings() == ThirdPersonSettings{true, 300, -60, 60, false},
         "camera config load clamps finite values through bounded settings publisher");

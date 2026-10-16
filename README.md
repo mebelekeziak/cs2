@@ -3,13 +3,51 @@
 x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twelve
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirteen
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Scoped weapon zoom
+
+Under **Visuals**, scroll down, open **Scoped zoom**, then enable **Override
+scoped zoom**. **Zoom 1** and **Zoom 2** independently control the weapon's
+first and second scope stages. Each slider ranges from 0–200%: **0% removes
+magnification**, **100% preserves the weapon's normal zoom**, and higher values
+increase magnification. Weapons with one scope stage use Zoom 1 only.
+
+The setting starts disabled, works independently of ESP and third person, and
+saves with local configs. **Reset scoped zoom** disables it and restores both
+sliders to 100%. Older presets use these defaults. This adjusts the current
+world-view FOV; the scope graphic, weapon state, sensitivity and firing behavior
+are unchanged. It does not remove the scope graphic.
+
+The implementation uses the final game-specific camera callback, current
+serialized active-weapon identity and the native unscoped FOV getter. It changes
+only the current view, with no persistent entity or console-variable writes.
+See [scoped zoom evidence](tools/CS2_ZOOM_EVIDENCE.md); recheck installed contracts
+with `python tools/inspect_zoom.py` or the combined compatibility command.
+Build and launch through the existing **Load Overlay.cmd** workflow. Restart CS2
+normally before loading the rebuilt DLL if an older copy is resident; **stopped
+and resident is not physically unloaded**. No live gameplay appearance check is
+claimed. For the standalone menu preview:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\scoped-zoom-menu.bmp 7 100000
+```
+
+**Verification, October 16, 2026:** public and diagnostic x64 Release builds
+succeed, with **25/25 CTest suites passing in each**. The zoom suite runs 556
+checks covering both scope levels, FOV math, stale sources, nested views and
+cooperative stop; menu tests exercise real mouse drags to exact 0% and 200%.
+The software D3D11 Scoped zoom menu preview was inspected. All thirteen
+installed-file compatibility checks pass in
+`logs/compatibility/20261016T160815546576Z/`; thirteen deliberately incorrect
+zoom-header contracts were rejected. Both DLLs retain zero static TLS and
+delay imports. Live scoped appearance remains unobserved.
 
 ## Third-person camera
 
@@ -61,7 +99,7 @@ rejected. With the preview build enabled, reproduce the Camera image with:
 ## Local configs
 
 Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
-to save all current Visuals (including Camera), Movement, World, Lighting and Aim settings. Select
+to save all current Visuals (including Camera and Scoped zoom), Movement, World, Lighting and Aim settings. Select
 a saved preset and click **Load config** to apply it. Type a different name to
 save another preset; **Refresh list** picks up files added outside the menu.
 Loading replaces current options, including feature enable switches. Presets

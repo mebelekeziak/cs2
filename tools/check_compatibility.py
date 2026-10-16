@@ -49,6 +49,7 @@ def component_commands(game):
         ("silent_aim", "inspect_silent_aim.py", ["--client", client]),
         ("anti_aim", "inspect_anti_aim.py", ["--client", client]),
         ("third_person", "inspect_third_person.py", ["--client", client]),
+        ("scoped_zoom", "inspect_zoom.py", ["--client", client]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
         ("aim_hitboxes", "inspect_silent_aim_hitboxes.py", ["--client", client]),
         ("sky", "verify_sky_draw.py", ["--game", str(game)]),

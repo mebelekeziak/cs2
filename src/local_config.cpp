@@ -5,6 +5,7 @@
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
+#include "zoom_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -25,6 +26,7 @@ struct Snapshot {
     SilentAimSettings aim;
     AntiAimSettings anti_aim;
     ThirdPersonSettings camera;
+    ZoomSettings zoom;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -51,6 +53,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(anti_aim, enabled);
     FIELD(camera, enabled); FIELD(camera, distance); FIELD(camera, shoulder);
     FIELD(camera, height); FIELD(camera, collision);
+    FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2);
 #undef COLOR
 #undef FIELD
 }
@@ -142,7 +145,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
@@ -215,6 +218,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     SilentAimSetSettings(snapshot.aim);
     AntiAimSetSettings(snapshot.anti_aim);
     ThirdPersonSetSettings(snapshot.camera);
+    ZoomSetSettings(snapshot.zoom);
     return true;
 }
 
