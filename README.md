@@ -392,6 +392,27 @@ new buffer signal can start an earlier release/retry. Cooldown is measured from
 the conservative observation time, without mixing engine stamp clock domains.
 When the server's automatic bunnyhop mode is already enabled, held jump remains
 down throughout flight. The code reads that setting without changing it.
+
+**October 16, revision 9: private-session jump corrections.** The latest
+revision 8 log contained 18 command sequences with opposite jump outputs during
+rebuilds. Creation-tick corrections and predicted controller-clock rewinds were
+incorrectly treated as reasons to discard the selected input. Revision 9 retains
+the same sequence's native jump state and timed edge across both corrections.
+A simulation rewind on a new command preserves the pending/releasing phase,
+restarts its waits conservatively and discards processing proof from the old
+prediction branch. It cannot turn an outstanding release into another press
+before engine release acknowledgement. Repeated callbacks consume no simulation
+wait time. Continuous corrections can conservatively postpone retries.
+
+Both x64 Release variants build and pass all 18 CTest suites, including captured
+release/rewind regressions and 10,000 combined clock/ground rebuild corrections.
+All ten installed-binary compatibility checks pass; no offsets changed. This is
+code and standalone verification, with no post-fix client/server observation yet.
+Restart CS2 normally before **Load Overlay.cmd**; test with F9 off first to
+isolate jumping. Logs identify `MOVE_IMPLEMENTATION revision=9`, and
+`MOVE_REPLAY` includes `clock_corrections` with the current/prior command clocks.
+See [movement evidence](tools/CS2_MOVEMENT_EVIDENCE.md#october-16-revision-9-prediction-correction-fix).
+
 Autostrafe uses full normalized input and eight timed direction updates per air
 command. Each fragment spends only its share of that command's acceleration,
 then replans against its predicted velocity. This avoids leaving one wish

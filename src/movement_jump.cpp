@@ -22,7 +22,18 @@ JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
     JumpOutput out{};
     if (in.commandTick < 0 || !std::isfinite(in.interval) || in.interval <= 0 || in.interval > 0.1f ||
         !std::isfinite(in.penalty) || in.penalty < 0 || !std::isfinite(in.bufferWindow) || in.bufferWindow < 0) return out;
-    if (state.haveClock && in.simulationTick < state.lastSimulationTick) ResetJump(state);
+    if (state.haveClock && in.simulationTick < state.lastSimulationTick) {
+        // Prediction can rewind without undoing the input already emitted.
+        // Keep its press/release phase, including the release acknowledgement
+        // barrier. Restart waits in the corrected simulation clock instead of
+        // counting replayed ticks or subtracting across the correction.
+        state.requestTick = state.releaseTick = state.consumptionTick = in.simulationTick;
+        // Processing/buffer observations from the discarded prediction branch
+        // do not prove processing in this branch. Establish fresh baselines
+        // without manufacturing a new press.
+        state.haveConsumption = false; state.usableBuffered = false;
+        state.baselineActual = in.actual; state.baselineUsable = in.usable;
+    }
     state.haveClock = true; state.lastSimulationTick = in.simulationTick;
     const bool previous = state.down;
     if (in.autoBunnyhop) {

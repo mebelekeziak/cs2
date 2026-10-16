@@ -1,5 +1,50 @@
 # Movement evidence for the installed client
 
+## October 16 revision 9: prediction correction fix
+
+The user reports perfect offline hops but intermittent ground stutter with
+ordinary settings in a private online session, approximately 10 ms ping.
+Existing log `logs/overlay-35844-134366329278398936.log` identifies revision 8,
+MSVC x64 client hooks and actual D3D11 rendering on the RTX 3060 Laptop GPU.
+Its movement rules are modern jump, automatic mode off, penalty 0.015625 s,
+window 0.007812 s and interval 0.015625 s.
+
+Among 165 `MOVE_JUMP` edge records, 18 distinct sequences contain both down
+and released outputs. There are 11 adjacent simulation-clock rewinds and no
+backward sequence transitions among these edge records. These counts describe
+client log observations, not authoritative server hops or network delay.
+Concrete trace at 14:06:33 UTC:
+
+| Sequence | Command tick | Simulation tick | Ground | Output |
+| --- | --- | --- | --- | --- |
+| 4728 | 47779 | 47781 | yes | release |
+| 4729 | 47780 | 47780 | yes | fresh press despite engine-down feedback |
+| 4730 | 47780 | 47783 | yes | release |
+| 4730 rebuilt | 47781 | 47781 | yes | fresh press despite engine-down feedback |
+
+Three paths discarded emitted state: same-sequence command-tick changes,
+same-sequence simulation rewinds, and planner rollback resetting to Ready.
+Revision 9 freezes native and serialized jump edges for the same sequence and
+verified source despite clock/ground corrections. Physical steering can still
+refresh from the frozen steering start. A new sequence with a corrected
+simulation clock retains the pending/releasing phase, conservatively restarts
+timing anchors, discards old branch processing/buffer proof and waits for engine
+release acknowledgement. Continuous corrections may postpone retries. Actual
+source/owner/lifecycle changes still invalidate state. The existing single-entry
+cache does not implement arbitrary historical sequence replay.
+
+Initial static bundle: `logs/compatibility/20261016T141415475169Z`, all ten pass.
+The installed executable is AMD64 under the documented game root. `steam.inf`
+now reports 1.41.9.1 / client-server 2000933 / source 11133601 / Steam build
+25966348; the consumed client DLL remains SHA256
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`.
+No ABI, signatures or offsets changed. Both public and diagnostic x64 Release
+builds and all 18 CTest suites pass, including 49 planner checks, the captured
+release/rewind trace, and 10,000 combined clock/ground correction rebuilds.
+`MOVE_IMPLEMENTATION revision=9` and `MOVE_REPLAY clock_corrections` identify
+the new behavior. No game launch, injection or server interaction was performed;
+post-fix gameplay remains unobserved. Restart normally before loading this DLL.
+
 ## October 15, 2026 compatibility update: 1.41.9.1
 
 Current installation: `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive`,

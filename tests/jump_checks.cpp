@@ -53,7 +53,16 @@ int main() {
     Expect(out.released, "unacknowledged request retries after observed simulation advances");
     input.simulationTick = 100;
     out = PlanJump(state, input);
-    Expect(out.fresh && state.requestTick == 100, "predicted clock rollback clears pending timing baseline");
+    Expect(!out.down && !out.fresh && state.phase == JumpPhase::Releasing && state.releaseTick == 100,
+        "predicted clock rollback preserves emitted release and restarts its wait");
+    for (int i = 0; i < 12; ++i) { ++input.commandTick; out = PlanJump(state, input); }
+    Expect(!out.down && !out.fresh, "duplicate corrected simulation callbacks cannot complete the release wait");
+    input.simulationTick = 102;
+    out = PlanJump(state, input);
+    Expect(!out.down, "corrected release retains the conservative unobserved cooldown margin");
+    input.simulationTick = 103;
+    out = PlanJump(state, input);
+    Expect(out.fresh, "corrected release can retry after simulation progresses beyond its restarted cooldown");
 
     ResetJump(state); input = {};
     input.grounded = true; input.modern = true; input.commandTick = 100;
@@ -165,8 +174,37 @@ int main() {
     PlanJump(state, input);
     input.simulationTick = 400;
     out = PlanJump(state, input);
-    Expect(out.fresh && !state.haveConsumption && !state.usableBuffered && state.requestTick == 400,
-        "prediction-clock rollback discards observed processing and buffer baselines");
+    Expect(out.down && !out.fresh && !state.haveConsumption && !state.usableBuffered && state.requestTick == 400,
+        "pending prediction rollback discards branch processing proof without emitting a fresh press");
+    for (int i = 0; i < 12; ++i) { ++input.commandTick; out = PlanJump(state, input); }
+    Expect(out.down && !out.fresh && !out.released,
+        "duplicate corrected pending callbacks cannot consume restarted grace");
+    input.simulationTick = 403;
+    out = PlanJump(state, input);
+    Expect(out.down && !state.haveConsumption, "discarded branch consumption cannot trigger an early release after rewind");
+    input.simulationTick = 404;
+    out = PlanJump(state, input);
+    Expect(out.released, "pending corrected request still retries after bounded simulation grace");
+
+    ResetJump(state); input.simulationTick = 47778; input.commandTick = 47775;
+    input.penalty = input.interval; input.engineDown = false;
+    input.actual = {47738, 0.8125f}; input.usable = {};
+    PlanJump(state, input);
+    input.simulationTick = 47781; input.commandTick = 47779;
+    input.actual = {47778, 0.25f}; input.engineDown = true;
+    out = PlanJump(state, input);
+    Expect(out.released && state.phase == JumpPhase::Releasing,
+        "sequence 4728 trace begins a release after a grounded failed attempt");
+    input.simulationTick = 47780; input.commandTick = 47780;
+    out = PlanJump(state, input);
+    Expect(!out.down && !out.fresh && state.phase == JumpPhase::Releasing,
+        "sequence 4729 prediction rewind cannot re-press while engine input remains down");
+    input.simulationTick = 47784;
+    out = PlanJump(state, input);
+    Expect(!out.down, "corrected elapsed cooldown never bypasses engine release acknowledgement");
+    input.engineDown = false;
+    out = PlanJump(state, input);
+    Expect(out.fresh, "corrected trace retries once both simulation cooldown and engine release are satisfied");
 
     ResetJump(state); input.simulationTick = 12000; input.modern = false; input.actual = {1000, 0};
     input.engineDown = false; PlanJump(state, input);

@@ -124,7 +124,7 @@ int main() {
     current.simulationTick += 1;
     Expect(MovementCanReplay(cached, current), "same source command can rebuild as predicted simulation advances");
     bool invalidated = true;
-    for (int change = 0; change < 18; ++change) {
+    for (int change = 0; change < 16; ++change) {
         current = cached;
         switch (change) {
         case 0: current.held = false; break;
@@ -133,22 +133,20 @@ int main() {
         case 3: current.autostrafe = false; break;
         case 4: ++current.sequence; break;
         case 5: ++current.owner; break;
-        case 6: --current.simulationTick; break;
-        case 7: ++current.command; break;
-        case 8: ++current.base; break;
-        case 9: ++current.pawn; break;
-        case 10: ++current.pawnIdentity; break;
-        case 11: ++current.services; break;
-        case 12: ++current.system; break;
-        case 13: ++current.controller; break;
-        case 14: ++current.controllerIdentity; break;
-        case 15: ++current.pawnHandle; break;
-        case 16: ++current.controllerHandle; break;
-        case 17: ++current.commandTick; break;
+        case 6: ++current.command; break;
+        case 7: ++current.base; break;
+        case 8: ++current.pawn; break;
+        case 9: ++current.pawnIdentity; break;
+        case 10: ++current.services; break;
+        case 11: ++current.system; break;
+        case 12: ++current.controller; break;
+        case 13: ++current.controllerIdentity; break;
+        case 14: ++current.pawnHandle; break;
+        case 15: ++current.controllerHandle; break;
         }
         invalidated &= !MovementCanReplay(cached, current);
     }
-    Expect(invalidated, "Space loss, settings, rollback, command tick, owner and all source identity changes reject cached plans");
+    Expect(invalidated, "Space loss, settings, sequence, owner and all source identity changes reject cached plans");
     auto pendingContext = cached;
     bool pressStable = true, releaseStable = true;
     for (int frame = 0; frame < 10000; ++frame) {
@@ -163,8 +161,25 @@ int main() {
     Expect(pressStable, "predicted takeoff and ground rewinds cannot replace the causative command press with a release");
     Expect(releaseStable, "predicted ground changes cannot invent a new press in an already planned release command");
     current = cached; ++current.commandTick; current.grounded = false;
-    Expect(MovementReplaySameSource(cached, current),
-           "command tick progress can request another plan while preserving its pending state and owned messages");
+    Expect(MovementCanReplay(cached, current),
+           "command tick changes retain the selected input for the same sequence");
+    current.simulationTick -= 3;
+    Expect(MovementCanReplay(cached, current),
+           "combined creation-tick correction and simulation rewind cannot replan the same command");
+    bool correctedReleaseStable = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        current.commandTick = cached.commandTick + (frame % 5) - 2;
+        current.simulationTick = cached.simulationTick + (frame % 7) - 3;
+        current.grounded = (frame & 1) != 0;
+        const auto repaired = MovementReplayButtons({off::Jump, off::Jump, off::Jump}, release);
+        MovementSubtick event{}; bool active = false;
+        correctedReleaseStable &= MovementCanReplay(cached, current) &&
+            !(repaired.down & off::Jump) && (repaired.changed & off::Jump) &&
+            MovementReplayTransition(release, MovementReplayJumpEventIndex, 0, 0, event, active) &&
+            active && !event.pressed && event.button == off::Jump;
+    }
+    Expect(correctedReleaseStable,
+        "10000 clock and ground corrections preserve both native release and serialized subtick edge");
     Expect(!MovementCanReplay({}, cached), "discarded cache cannot replay after release or lifecycle invalidation");
 
     namespace keys = movement_physical_keys;

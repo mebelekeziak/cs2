@@ -1,4 +1,23 @@
-# CS2 compatibility continuation — October 15, 2026
+# CS2 auto-bhop correction — October 16, 2026
+
+Revision 9 fixes observed contradictory jump decisions during prediction
+corrections in private online play. Same-sequence command tick/TickBase changes
+now retain the selected native/subtick edge. New-command simulation rollback
+preserves pending release and restarts waits, discarding old processing proof.
+Latest revision 8 log has 18 sequences with opposite edges; the exact
+4728/4729/4730 trace and limitations are recorded at the top of
+`tools/CS2_MOVEMENT_EVIDENCE.md`. User reports ordinary settings, roughly 10 ms.
+
+Both x64 Release variants build and pass 18/18 CTest suites. All ten static
+compatibility checks pass. Installed metadata is now client/server 2000933,
+Steam build 25966348; consumed client DLL hash and offsets remain unchanged.
+No client/server run was performed. Restart normally and use Load Overlay.cmd;
+isolate with F9 off first. Logs identify revision 9 and correction counters.
+Repeated corrections can postpone retries; arbitrary historical command replay
+is outside the existing single-entry cache. Work is implemented and tested,
+with private-session gameplay confirmation still pending.
+
+## Previous compatibility continuation — October 15, 2026
 
 For subsequent updates, start with `docs/CS2_UPDATE_GUIDE.md` and
 `docs/RE_ADDRESS_INDEX.md`. `python tools/check_compatibility.py` runs all seven

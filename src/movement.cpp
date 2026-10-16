@@ -37,7 +37,7 @@ std::uintptr_t sourcePawn = 0, sourceServices = 0;
 std::uintptr_t sourceController = 0;
 std::uint32_t sourceControllerHandle = UINT32_MAX;
 std::uint32_t sourceHandle = UINT32_MAX;
-int lastSequence = -1, lastTick = -1;
+int lastSequence = -1;
 bool wasGrounded = false, haveGround = false;
 JumpState jumpState{};
 SteeringState steeringState{};
@@ -70,6 +70,7 @@ MovementSettings inputSettings{};
 bool haveInputSettings = false;
 std::uint64_t replayed = 0, replayNativeRepairs = 0, replayRestoredEvents = 0;
 std::uint64_t replaySteeringRefreshes = 0;
+std::uint64_t replayClockCorrections = 0;
 ULONGLONG lastReplayReport = 0;
 LARGE_INTEGER timingFrequency{};
 std::uint64_t timedCalls = 0, timedAirCalls = 0;
@@ -129,7 +130,7 @@ bool EffectiveSpeed(std::uintptr_t pawn, float& speed) noexcept {
 void Reset() noexcept {
     sourcePawn = sourceServices = sourceController = 0; sourceHandle = UINT32_MAX;
     sourceControllerHandle = UINT32_MAX;
-    lastSequence = lastTick = -1;
+    lastSequence = -1;
     wasGrounded = haveGround = false; lastSpeed = 0;
     ResetJump(jumpState); ResetAirSteering(steeringState);
     physicalIntentState = {};
@@ -484,6 +485,7 @@ void RememberReplay(const Patch& patch, const MovementReplayContext& context,
                plan.strafe, plan.jumpEdge, reported};
 }
 void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& context) noexcept {
+    const auto previousContext = replay.context;
     const auto refresh = MovementPlanReplaySteering(replay.steeringStart, replay.context.intent,
         context.intent, replay.plan); // The selected jump input remains prediction-stable.
     const auto plan = refresh.plan;
@@ -524,6 +526,8 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
         (incoming.changed ^ patch.buttons.changed) | (incoming.third ^ patch.buttons.third)) & mask) != 0;
     const unsigned restored = static_cast<unsigned>(patch.size - patch.originalSize);
     ++replayed; replayNativeRepairs += repaired; replayRestoredEvents += restored;
+    replayClockCorrections += context.commandTick != previousContext.commandTick ||
+        context.simulationTick < previousContext.simulationTick;
     RememberReplay(patch, context, plan, true);
     if (refresh.refreshed) {
         steeringState = refresh.state; strafeControlled = refresh.steering.valid;
@@ -533,7 +537,7 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
     const auto now = GetTickCount64();
     if (!lastReplayReport || now - lastReplayReport >= 2000) {
         lastReplayReport = now;
-        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu steering_refresh=%u steering_refreshes=%llu physical=%.1f,%.1f held=0x%x yaw=%.3f predicted_valid=%u predicted_speed=%.3f slices=%zu; jump retained, changed steering uses frozen command-start state",
+        Log("MOVE_REPLAY sequence=%d simtick=%u native_rebuilt=%u jump_edge=%u jump_down=%u retained=%u restored=%u subticks_before=%d subticks_after=%d incoming=0x%llx/0x%llx/0x%llx repaired=0x%llx/0x%llx/0x%llx history=%.5f,%.5f desired=%.5f,%.5f total=%llu native_repairs=%llu events_restored=%llu steering_refresh=%u steering_refreshes=%llu physical=%.1f,%.1f held=0x%x yaw=%.3f predicted_valid=%u predicted_speed=%.3f slices=%zu command_tick=%d previous_command_tick=%d previous_simtick=%u clock_corrections=%llu; jump retained, changed steering uses frozen command-start state",
             context.sequence, context.simulationTick, repaired, plan.jumpEdge, plan.jumpDown, retained, restored,
             patch.originalSize, patch.size, incoming.down, incoming.changed, incoming.third,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, historicalForward, historicalLeft,
@@ -541,7 +545,8 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
             refresh.refreshed, replaySteeringRefreshes, context.intent.forward, context.intent.left,
             static_cast<unsigned>(context.intent.heldMask), context.intent.viewYaw,
             refresh.refreshed && refresh.steering.valid,
-            std::hypot(refresh.steering.predictedVelocityX, refresh.steering.predictedVelocityY), MovementReplayAnalogCount(plan));
+            std::hypot(refresh.steering.predictedVelocityX, refresh.steering.predictedVelocityY), MovementReplayAnalogCount(plan),
+            context.commandTick, previousContext.commandTick, previousContext.simulationTick, replayClockCorrections);
     }
 }
 
@@ -613,7 +618,7 @@ void Process(void* input, void* commandPointer) noexcept {
         ++rejected; State("command layout unavailable"); return;
     }
     const float desiredForward = patch.forward, desiredLeft = patch.left;
-    if (sequence < lastSequence || tick < lastTick) {
+    if (sequence < lastSequence) {
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false; strafeControlled = false;
         physicalIntentState = {};
     }
@@ -632,12 +637,10 @@ void Process(void* input, void* commandPointer) noexcept {
     MarkStage(Stage::Keys);
     auto context = ReplayContext(pawn, patch, sequence, tick, settings, intent);
     if (MovementCanReplay(replay.context, context)) { RepairReplay(pawn, patch, context); return; }
-    const ReplayCache rebuilt = replay;
-    const bool sameRebuiltSource = MovementReplaySameSource(rebuilt.context, context) &&
-        rebuilt.context.sequence == sequence && context.simulationTick >= rebuilt.context.simulationTick;
-    if (replay.context.valid && replay.context.sequence == sequence && !sameRebuiltSource) {
+    if (replay.context.valid && replay.context.sequence == sequence) {
         // A pooled command/base or a source identity changed under the same
-        // sequence, or prediction rolled back. Do not reuse the old plan.
+        // sequence. Do not reuse the old storage's plan. Clock/ground
+        // corrections with the same source already replayed above.
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
         physicalIntentState = {};
         const auto priorIntent = intent;
@@ -646,9 +649,8 @@ void Process(void* input, void* commandPointer) noexcept {
         context.intent = intent;
         haveGround = false; strafeControlled = false;
     }
-    // A changed command tick can require another plan for this sequence, but
-    // must keep the pending/releasing phase and recognize still-owned events.
-    // Prediction-only ground changes reuse the existing plan above.
+    // A new sequence gets one plan. Corrections to an existing sequence keep
+    // its original jump input through RepairReplay, including its timed edge.
     replay = {};
     const float speed = std::hypot(pawn.velocity[0], pawn.velocity[1]);
     if (haveGround && grounded != wasGrounded) {
@@ -734,7 +736,7 @@ void Process(void* input, void* commandPointer) noexcept {
         patch.buttons = plan.buttons;
     }
     patch.commandPresence |= 1;
-    if (!PrepareSteps(patch, sameRebuiltSource ? &rebuilt : nullptr) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
+    if (!PrepareSteps(patch) || !SamePawn(pawn)) { ++rejected; State("stale pawn or unsupported subtick layout"); return; }
     MarkStage(Stage::Subticks);
     float historicalForward = 0, historicalLeft = 0;
     if (!ReadHistory(pawn, patch, historicalForward, historicalLeft)) {
@@ -754,7 +756,7 @@ void Process(void* input, void* commandPointer) noexcept {
         ++rejected; enabled.store(false, std::memory_order_release); State("command write failed; movement stopped"); return;
     }
     MarkStage(Stage::Apply);
-    lastSequence = sequence; lastTick = tick;
+    lastSequence = sequence;
     RememberReplay(patch, context, plan);
     replay.steeringStart = {airSteeringAvailable, initialSteeringInput, initialSteeringState, physics, initialDirections};
     strafeControlled = strafe.valid;
@@ -908,7 +910,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=8 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=consumption_observation ground_handoff=physical_axes replay_steering=frozen_input_refresh subticks=timed8", static_cast<unsigned long long>(off::LegacyJump));
+    Log("MOVE_IMPLEMENTATION revision=9 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=wasd_rage stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_axes replay_jump=sequence_stable replay_steering=frozen_input_refresh subticks=timed8", static_cast<unsigned long long>(off::LegacyJump));
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

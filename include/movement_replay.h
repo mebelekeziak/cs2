@@ -70,12 +70,11 @@ inline bool MovementReplaySameSource(const MovementReplayContext& cached,
 }
 inline bool MovementCanReplay(const MovementReplayContext& cached,
                               const MovementReplayContext& current) noexcept {
-    return MovementReplaySameSource(cached, current) && cached.sequence == current.sequence &&
-        // Ground is a result of predicting this input, not a new input identity.
-        // Changing its planned edge based on that result can erase the very
-        // jump that produced a takeoff during the next prediction replay.
-        cached.commandTick == current.commandTick &&
-        current.simulationTick >= cached.simulationTick;
+    // Ground is a prediction result. Creation tick and controller TickBase can
+    // also be corrected while the producer rebuilds this same sequence. None
+    // is a new command: replanning can serialize opposite jump edges for one
+    // sequence, or erase the very press that produced a predicted takeoff.
+    return MovementReplaySameSource(cached, current) && cached.sequence == current.sequence;
 }
 
 struct MovementReplayPlan {
