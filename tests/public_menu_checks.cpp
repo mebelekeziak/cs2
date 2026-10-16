@@ -234,7 +234,10 @@ int main() {
     io.ConfigInputTrickleEventQueue = false;
     unsigned char* pixels = nullptr;
     int width = 0, height = 0;
+    io.ConfigFlags |= ImGuiConfigFlags_NoKeyboard;
     ConfigurePublicMenuStyle();
+    Expect(!(io.ConfigFlags & ImGuiConfigFlags_NoKeyboard),
+           "public menu enables keyboard input even after diagnostic initialization");
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
     EspSetSettings(EspSettings{});
     MovementSetSettings(MovementSettings{});
@@ -506,6 +509,7 @@ int main() {
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##ConfigSettings"), "Configs tab opens");
     ClickControl("##ConfigName");
+    Expect(io.WantTextInput, "config name field requests keyboard text input after click");
     io.AddKeyEvent(ImGuiMod_Ctrl, true);
     io.AddKeyEvent(ImGuiKey_A, true);
     Frame();

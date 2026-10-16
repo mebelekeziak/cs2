@@ -280,9 +280,8 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
     ImGui::SetCurrentContext(imguiContext);
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; io.LogFilename = nullptr;
-    io.ConfigFlags |= ImGuiConfigFlags_NoKeyboard;
 #if CS2_DIAGNOSTIC_UI
-    io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard;
     ImGui::StyleColorsDark();
 #else
     ConfigurePublicMenuStyle();

@@ -119,6 +119,9 @@ void DrawConfigs(bool entering) {
 
 void ConfigurePublicMenuStyle() {
     ImGuiIO& io = ImGui::GetIO();
+    // Public text fields consume the polled keyboard/text events. A context
+    // initialized with the diagnostic flags must not silently discard them.
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoKeyboard;
     if (io.Fonts->Fonts.empty()) {
         io.FontDefault = LoadSystemFont(*io.Fonts);
         if (!io.FontDefault) io.FontDefault = io.Fonts->AddFontDefault();

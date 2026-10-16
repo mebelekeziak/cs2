@@ -38,6 +38,12 @@ application, bounds, names and real menu save/load interactions. The software
 D3D11 Configs preview was inspected. Both DLLs retain zero static TLS and delay
 import directories. No live CS2 input or appearance observation is claimed.
 
+**Keyboard follow-up, October 16:** renderer initialization previously left
+ImGui's `NoKeyboard` flag enabled, discarding the polled keys and text in the
+client. That flag now applies only to diagnostics; public-menu setup explicitly
+enables keyboard input. The menu regression check starts with keyboard input
+disabled, then verifies setup, field focus, Ctrl+A, typing and saving/loading.
+
 ## World visuals
 
 The **World** and **Lighting** tabs provide independent controls, disabled by
