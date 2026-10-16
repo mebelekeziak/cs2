@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
 #include "world_settings.h"
+#include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -14,6 +15,8 @@
 #include <algorithm>
 #include <cstring>
 #include <cwchar>
+#include <string>
+#include <vector>
 
 namespace {
 ImFont* LoadSystemFont(ImFontAtlas& atlas) {
@@ -68,6 +71,49 @@ ImVec2 ClampPosition(ImVec2 position, ImVec2 size, const ImGuiViewport& viewport
         std::clamp(position.y, viewport.WorkPos.y,
                    viewport.WorkPos.y + std::max(0.0f, viewport.WorkSize.y - size.y))
     };
+}
+
+void DrawConfigs(bool entering) {
+    // Accessed only by the render owner; no engine pointers or callbacks retained.
+    static char name[65] = "default";
+    static std::vector<std::string> presets;
+    static std::string status;
+    const auto refresh = [&]() {
+        std::string error;
+        if (!LocalConfigList(presets, error)) status = error;
+    };
+    if (entering) refresh();
+    ImGui::TextUnformatted("Saved presets");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##ConfigPresets", presets.empty() ? "No saved configs" : name)) {
+        for (const auto& preset : presets) {
+            if (ImGui::Selectable(preset.c_str(), preset == name)) {
+                strcpy_s(name, preset.c_str());
+                status.clear();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::TextUnformatted("Config name");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##ConfigName", name, sizeof(name));
+    ImGui::TextWrapped("Letters, numbers, spaces, - and _. Up to 64 characters.");
+    if (ImGui::Button("Save / overwrite", { -1, 0 })) {
+        std::string error;
+        if (LocalConfigSave(name, error)) {
+            status = std::string("Saved: ") + name;
+            refresh();
+        } else status = error;
+    }
+    if (ImGui::Button("Load config", { -1, 0 })) {
+        std::string error;
+        status = LocalConfigLoad(name, error) ? std::string("Loaded: ") + name : error;
+    }
+    if (ImGui::Button("Refresh list", { -1, 0 })) refresh();
+    if (!status.empty()) ImGui::TextWrapped("%s", status.c_str());
+    ImGui::Separator();
+    ImGui::TextWrapped("Saves Visuals, Movement, World, Lighting and Aim options. Loading replaces current options.");
+    ImGui::TextWrapped("Presets stay on disk between runs. Choose Load config to apply one.");
 }
 }
 
@@ -130,15 +176,17 @@ void DrawPublicMenu() {
         // Store the selected category in this window's context-owned state.
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
         int selectedTab = ImGui::GetStateStorage()->GetInt(tabId, 0);
+        const ImGuiID lastTabId = ImGui::GetID("##LastDrawnCategory");
+        const int lastTab = ImGui::GetStateStorage()->GetInt(lastTabId, -1);
         const bool compactCategories = viewport.WorkSize.y < 240;
         if (compactCategories) {
-            constexpr const char* categories[]{"Visuals", "Movement", "World", "Lighting", "Aim"};
+            constexpr const char* categories[]{"Visuals", "Movement", "World", "Lighting", "Aim", "Configs"};
             ImGui::SetNextItemWidth(-1);
-            ImGui::Combo("##Category", &selectedTab, categories, 5);
+            ImGui::Combo("##Category", &selectedTab, categories, 6);
         } else {
         const float available = ImGui::GetContentRegionAvail().x;
         const float minimumTabWidth = ImGui::CalcTextSize("Movement").x + ImGui::GetStyle().FramePadding.x * 2;
-        const int columns = available >= minimumTabWidth * 5 + ImGui::GetStyle().ItemSpacing.x * 4 ? 5 : 2;
+        const int columns = available >= minimumTabWidth * 6 + ImGui::GetStyle().ItemSpacing.x * 5 ? 6 : 2;
         const float tabWidth = std::min(100.0f, std::max(1.0f,
             (available - ImGui::GetStyle().ItemSpacing.x * (columns - 1)) / columns));
         const auto tab = [&](const char* label, int index) {
@@ -155,14 +203,17 @@ void DrawPublicMenu() {
         tab("Visuals", 0);
         ImGui::SameLine();
         tab("Movement", 1);
-        if (columns == 5) ImGui::SameLine();
+        if (columns == 6) ImGui::SameLine();
         tab("World", 2);
         ImGui::SameLine();
         tab("Lighting", 3);
-        if (columns == 5) ImGui::SameLine();
+        if (columns == 6) ImGui::SameLine();
         tab("Aim", 4);
+        ImGui::SameLine();
+        tab("Configs", 5);
         }
         ImGui::GetStateStorage()->SetInt(tabId, selectedTab);
+        ImGui::GetStateStorage()->SetInt(lastTabId, selectedTab);
         ImGui::Separator();
 
         const float footerHeight = ImGui::GetTextLineHeightWithSpacing() + 5;
@@ -359,6 +410,10 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);
+        } else if (selectedTab == 5) {
+            if (ImGui::BeginChild("##ConfigSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders))
+                DrawConfigs(lastTab != 5);
+            ImGui::EndChild();
         } else {
             WorldSettings settings = WorldGetSettings();
             bool changed = false;

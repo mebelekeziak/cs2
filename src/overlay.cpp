@@ -69,6 +69,9 @@ bool endDown = false;
 #if !CS2_DIAGNOSTIC_UI
 bool menuMouseActive = false;
 bool menuMouseArmed = false;
+bool menuKeyboardActive = false;
+bool menuKeyDown[256]{};
+bool menuKeyArmed[256]{};
 #endif
 bool threadChangeLogged = false;
 bool firstPresentReported = false;
@@ -208,6 +211,9 @@ void ReleaseRendererOnOwner(const char* reason) {
 #if !CS2_DIAGNOSTIC_UI
     menuMouseActive = false;
     menuMouseArmed = false;
+    menuKeyboardActive = false;
+    std::fill_n(menuKeyDown, 256, false);
+    std::fill_n(menuKeyArmed, 256, false);
 #endif
     if (imguiContext) {
         ImGuiContext* previous = ImGui::GetCurrentContext();
@@ -393,6 +399,54 @@ void PollMenuMouse(bool foreground) {
     io.AddMouseButtonEvent(0, active && menuMouseArmed && down);
     menuMouseActive = active;
 }
+
+void PollMenuKeyboard(bool foreground) {
+    ImGuiIO& io = ImGui::GetIO();
+    const bool active = foreground && visible;
+    bool pressed[256]{};
+    bool accepted[256]{};
+    for (int key = 0; key < 256; ++key) {
+        const bool down = (GetAsyncKeyState(key) & 0x8000) != 0;
+        // A key held during reopening/refocusing must be released before use.
+        if (!active || !menuKeyboardActive) menuKeyArmed[key] = false;
+        if (active && !down) menuKeyArmed[key] = true;
+        accepted[key] = active && menuKeyArmed[key] && down;
+        pressed[key] = accepted[key] && !menuKeyDown[key];
+        menuKeyDown[key] = down;
+    }
+    const bool shift = accepted[VK_SHIFT];
+    const bool ctrl = accepted[VK_CONTROL];
+    const bool alt = accepted[VK_MENU];
+    const bool super = accepted[VK_LWIN] || accepted[VK_RWIN];
+    io.AddKeyEvent(ImGuiMod_Shift, shift);
+    io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+    io.AddKeyEvent(ImGuiMod_Alt, alt);
+    io.AddKeyEvent(ImGuiMod_Super, super);
+    for (int key = 'A'; key <= 'Z'; ++key)
+        io.AddKeyEvent(static_cast<ImGuiKey>(ImGuiKey_A + key - 'A'), accepted[key]);
+    const struct { int vk; ImGuiKey imgui; } editingKeys[] = {
+        {VK_BACK, ImGuiKey_Backspace}, {VK_DELETE, ImGuiKey_Delete},
+        {VK_LEFT, ImGuiKey_LeftArrow}, {VK_RIGHT, ImGuiKey_RightArrow},
+        {VK_HOME, ImGuiKey_Home}, {VK_RETURN, ImGuiKey_Enter},
+        {VK_ESCAPE, ImGuiKey_Escape}
+    };
+    for (const auto& key : editingKeys) io.AddKeyEvent(key.imgui, accepted[key.vk]);
+    // Config names deliberately use a small ASCII alphabet. WantTextInput is
+    // from the previous frame, so gameplay keys never queue text without a field.
+    // Check physical modifiers as well, including those suppressed on refocus.
+    if (active && io.WantTextInput && !(GetAsyncKeyState(VK_CONTROL) & 0x8000) &&
+        !(GetAsyncKeyState(VK_MENU) & 0x8000) &&
+        !(GetAsyncKeyState(VK_LWIN) & 0x8000) && !(GetAsyncKeyState(VK_RWIN) & 0x8000)) {
+        const bool uppercase = shift != ((GetKeyState(VK_CAPITAL) & 1) != 0);
+        for (int key = 'A'; key <= 'Z'; ++key)
+            if (pressed[key]) io.AddInputCharacter(static_cast<unsigned>(uppercase ? key : key + 'a' - 'A'));
+        for (int key = '0'; key <= '9'; ++key)
+            if (pressed[key]) io.AddInputCharacter(static_cast<unsigned>(key));
+        if (pressed[VK_SPACE]) io.AddInputCharacter(' ');
+        if (pressed[VK_OEM_MINUS]) io.AddInputCharacter(shift ? '_' : '-');
+    }
+    menuKeyboardActive = active;
+}
 #endif
 
 void DrawFrame(IDXGISwapChain* chain) {
@@ -431,6 +485,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     previousCounter = now;
 #if !CS2_DIAGNOSTIC_UI
     PollMenuMouse(foreground);
+    PollMenuKeyboard(foreground);
 #endif
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
 #if !CS2_DIAGNOSTIC_UI

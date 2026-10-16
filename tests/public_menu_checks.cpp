@@ -3,6 +3,7 @@
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
 #include "world_settings.h"
+#include "local_config.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <cstring>
 #include <algorithm>
 #include <limits>
+#include <chrono>
 
 namespace {
 int failures = 0;
@@ -57,7 +59,7 @@ ImVec2 TabPosition(int index) {
     const ImGuiStyle& style = ImGui::GetStyle();
     const float contentWidth = Menu()->Size.x - style.WindowPadding.x * 2;
     const float tabWidth = std::fmin(100.0f, std::fmax(1.0f,
-        (contentWidth - style.ItemSpacing.x * 4) / 5));
+        (contentWidth - style.ItemSpacing.x * 5) / 6));
     return { start.x + tabWidth * 0.5f + static_cast<float>(index) * (tabWidth + style.ItemSpacing.x),
              start.y + 8 + style.ItemSpacing.y + 12.5f };
 }
@@ -212,7 +214,7 @@ void NativeSettingsBounds() {
 }
 void CheckTabsFit(const char* message) {
     bool fit = true;
-    for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim" }) {
+    for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs" }) {
         const ImRect rectangle = ControlRect(label, Menu());
         fit &= rectangle.Min.x >= Menu()->Pos.x && rectangle.Max.x <= Menu()->Pos.x + Menu()->Size.x;
         fit &= rectangle.GetWidth() >= ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
@@ -247,7 +249,7 @@ int main() {
     Expect(Menu()->Pos.x == 24 && Menu()->Pos.y == 24, "initial menu position");
     Expect(Menu()->Size.x == 560 && Menu()->Size.y == 620, "larger menu leaves space for appearance controls");
     Expect(ImGui::GetDrawData()->TotalVtxCount > 0, "public menu submits rendering primitives");
-    CheckTabsFit("all four tab labels fit the normal menu");
+    CheckTabsFit("all tab labels fit the normal menu");
 
     Click(EnablePosition());
     Expect(!EspGetSettings().enabled, "mouse click disables shared ESP setting");
@@ -499,6 +501,32 @@ int main() {
     Frame();
     Expect(!EspGetSettings().boxes && EspGetSettings().armor,
            "world controls preserve existing player visuals");
+
+    Click(TabPosition(5));
+    Frame();
+    Expect(Body() && std::strstr(Body()->Name, "##ConfigSettings"), "Configs tab opens");
+    ClickControl("##ConfigName");
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_A, true);
+    Frame();
+    io.AddKeyEvent(ImGuiKey_A, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    const std::string testName = "ui-check-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    io.AddInputCharactersUTF8(testName.c_str());
+    Frame();
+    const auto savedEsp = EspGetSettings();
+    const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
+    Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
+    ClickControl("Save / overwrite");
+    Expect(std::filesystem::exists(configPath), "Save button writes named preset");
+    EspSetSettings(EspSettings{});
+    ClickControl("Load config");
+    Expect(EspGetSettings() == savedEsp, "Load button restores saved appearance and toggles");
+    ClickControl("Refresh list");
+    std::error_code cleanupError;
+    std::filesystem::remove(configPath, cleanupError);
+    Click(TabPosition(0));
+    Frame();
 
     const ImVec2 origin = Menu()->Pos;
     Move({ origin.x + 35, origin.y + 14 });

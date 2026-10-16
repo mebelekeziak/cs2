@@ -11,10 +11,37 @@ reports under `logs/compatibility/`:
 python tools/check_compatibility.py
 ```
 
+## Local configs
+
+Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
+to save all current Visuals, Movement, World, Lighting and Aim settings. Select
+a saved preset and click **Load config** to apply it. Type a different name to
+save another preset; **Refresh list** picks up files added outside the menu.
+Loading replaces current options, including feature enable switches. Presets
+are loaded manually; startup keeps the existing defaults.
+
+Versioned text presets live in `configs/` under this workspace, independently of
+the build directory, and persist after CS2 exits. They are ignored by Git.
+Names accept up to 64 ASCII letters, digits, spaces, hyphens and underscores;
+reserved Windows names are rejected. Save replaces an existing preset only
+after the new file is completely written. Invalid files report an error without
+partially applying settings. The diagnostic interface has no config controls.
+
+The name field supports typing, Shift/Caps Lock, Ctrl+A, cursor keys,
+Backspace and Delete. Held character keys enter once per press. Input is polled
+while the visible menu has focus; keyboard input can also reach the game.
+
+**Verification, October 16, 2026:** public and diagnostic x64 Release builds
+succeed, with all **18/18 CTest suites passing in each**. Tests cover every
+saved field/color, separate presets, overwrite, malformed files without partial
+application, bounds, names and real menu save/load interactions. The software
+D3D11 Configs preview was inspected. Both DLLs retain zero static TLS and delay
+import directories. No live CS2 input or appearance observation is claimed.
+
 ## World visuals
 
 The **World** and **Lighting** tabs provide independent controls, disabled by
-default. Settings last for the current run and continue applying with the menu
+default. Settings can be saved in configs and continue applying with the menu
 hidden. **Reset world visuals** resets all world controls; **Reset lighting**
 resets only lighting. The previous world implementation was committed as
 `70c0544` before this follow-up; `6ef58ef` preserves the paused implementation.
@@ -716,8 +743,8 @@ Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, `build/Rel
 
 ## Public and diagnostic interfaces
 
-The default build uses a minimal dark public menu with **Visuals** and
-**Movement** tabs. Visuals includes ESP, boxes, names, health bars and HP text,
+The default build uses a minimal dark public menu with **Visuals**, **Movement**,
+**World**, **Lighting**, **Aim** and **Configs** tabs. Visuals includes ESP, boxes, names, health bars and HP text,
 distance labels, teammates, and armor text; Movement includes the two independent
 movement toggles. Only implemented features appear. ESP has
 unlimited range; there is no range slider or +/- range hotkey. Insert shows or
@@ -728,7 +755,7 @@ the viewport after a resize.
 The public menu reads the installed Windows Segoe UI font for its typography,
 with an ImGui default-font fallback. No system font file is copied or bundled.
 
-The public menu polls the Windows cursor and left mouse button on the render
+The public menu polls the Windows cursor, left mouse button and config-name keys on the render
 thread and scales client coordinates to the back buffer. Use the cursor at the
 disconnected main menu or in an offline pause menu. Gameplay may lock/recenter
 the cursor. Mouse clicks also reach the game, so choose a clear area of the
