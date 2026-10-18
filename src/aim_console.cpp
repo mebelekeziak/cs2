@@ -27,6 +27,8 @@ HMODULE expectedModule = nullptr;
 NativePrint nativePrint = nullptr;
 NativeColorPrint nativeColorPrint = nullptr;
 bool ready = false;
+char history[256][1536]{};
+unsigned historyNext = 0, historyCount = 0;
 #ifdef CS2_AIM_CONSOLE_CHECKS
 bool testTarget = false;
 NativePrint testPrint = nullptr;
@@ -125,6 +127,7 @@ bool AimConsoleInitialize() noexcept {
     expectedModule = nullptr;
     nativePrint = nullptr;
     nativeColorPrint = nullptr;
+    historyNext = historyCount = 0;
 #ifdef CS2_AIM_CONSOLE_CHECKS
     if (testTarget) {
         ready = testPrint && testValid && testValid();
@@ -146,10 +149,9 @@ bool AimConsoleInitialize() noexcept {
     return initialized;
 }
 
-void AimConsoleWrite(const char* message) noexcept {
-    if (!message || !*message) return;
-    AcquireSRWLockShared(&sinkLock);
-    if (!ready) { ReleaseSRWLockShared(&sinkLock); return; }
+namespace {
+bool EmitLine(const char* line) noexcept {
+    if (!ready) return false;
     HMODULE module = nullptr;
     NativePrint print = nullptr;
     NativeColorPrint colorPrint = nullptr;
@@ -166,13 +168,33 @@ void AimConsoleWrite(const char* message) noexcept {
         else if (nativeColorPrint && ValidateColor(module) == nativeColorPrint) colorPrint = nativeColorPrint;
     }
     if (print) {
-        char line[1536]{};
-        FormatLine(message, line);
-        if (colorPrint) colorPrint(Color(message), "%s", line);
+        if (colorPrint) colorPrint(Color(line), "%s", line);
         else print("%s", line);
     }
     if (module) FreeLibrary(module);
-    ReleaseSRWLockShared(&sinkLock);
+    return print != nullptr;
+}
+}
+
+void AimConsoleWrite(const char* message) noexcept {
+    if (!message || !*message) return;
+    AcquireSRWLockExclusive(&sinkLock);
+    char line[1536]{};
+    FormatLine(message, line);
+    if (EmitLine(line)) {
+        std::memcpy(history[historyNext], line, sizeof(line));
+        historyNext = (historyNext + 1) % 256;
+        if (historyCount < 256) ++historyCount;
+    }
+    ReleaseSRWLockExclusive(&sinkLock);
+}
+
+void AimConsoleReplay() noexcept {
+    AcquireSRWLockExclusive(&sinkLock);
+    const unsigned first = (historyNext + 256 - historyCount) % 256;
+    for (unsigned index = 0; index < historyCount; ++index)
+        if (!EmitLine(history[(first + index) % 256])) break;
+    ReleaseSRWLockExclusive(&sinkLock);
 }
 
 void AimConsoleStop() noexcept {
@@ -181,6 +203,7 @@ void AimConsoleStop() noexcept {
     nativePrint = nullptr;
     nativeColorPrint = nullptr;
     expectedModule = nullptr;
+    historyNext = historyCount = 0;
     ReleaseSRWLockExclusive(&sinkLock);
 }
 
@@ -193,6 +216,7 @@ void AimConsoleTestSetTarget(AimConsoleTestPrint print, bool (*valid)() noexcept
     nativeColorPrint = nullptr;
     expectedModule = nullptr;
     testTarget = true;
+    historyNext = historyCount = 0;
     testPrint = print;
     testValid = valid;
     testColorPrint = colorPrint;

@@ -3,7 +3,7 @@
 x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all nineteen
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -452,6 +452,27 @@ command claims primary fire; no physical key or persistent attack latch is held.
 Rebuild cleanup preserves human takeover. If state or history changes before aim
 can be applied, the owned attack is cancelled and the original native finalizer
 regenerates its CRC. Native recorder arena/timing caches are not rewound.
+
+**Console cleanup:** under **Aim**, enable **Our logs only** to clear native
+CS2 messages from the console and keep incoming output to this project's `AIM_`
+logs. **Clear console** clears the display and restores the latest 256 project
+lines, in order and with their original colors. Enabling the filter also requests
+a clear. Disable it to show new native messages again; previously cleared native
+messages cannot be recovered. The filter starts off each session and is not saved
+in configs. Workspace log files keep their existing contents and logging options.
+
+Requests use CS2's locked command queue; clearing and replay run after its native
+clear command on the command owner. Controls are disabled if the installed engine
+contract cannot be verified. See [console-control evidence](tools/CS2_CONSOLE_CONTROL_EVIDENCE.md).
+Build and use **Load Overlay.cmd** as usual; restart CS2 normally before loading
+the rebuilt DLL if an older copy is resident. Stopped and resident is not physically
+unloaded. Native display behavior still needs an offline/main-menu check.
+
+**Verification, October 18, 2026:** public and diagnostic x64 Release builds
+pass all **37/37 CTest suites** each; all **20 installed-file compatibility
+checks** pass. Menu previews at normal/narrow widths were inspected. These
+results cover substituted native boundaries and static contracts; live CS2
+clear/filter behavior has not been observed.
 
 **Realtime debugging:** **Aim > Shot logs** defaults on. The console and
 `logs/overlay-<run>.log` receive one result per observed local native

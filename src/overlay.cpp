@@ -26,6 +26,7 @@
 #include "movement.h"
 #include "silent_aim.h"
 #include "aim_console.h"
+#include "console_control.h"
 #include "shot_log_settings.h"
 #include "shot_logging.h"
 #include "anti_aim.h"
@@ -255,6 +256,7 @@ void CleanupOnRenderThread(const char* reason) {
     WorldLightingStop(reason);
     WorldEnvironmentLightingStop(reason);
     ShotLoggingFlushTelemetry();
+    ConsoleControlStop();
     AimConsoleStop();
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
@@ -467,6 +469,7 @@ void PollMenuKeyboard(bool foreground) {
 #endif
 
 void DrawFrame(IDXGISwapChain* chain) {
+    ConsoleControlFlushRequests();
     SilentAimFlushTelemetry();
     ShotLoggingFlushTelemetry();
     AntiAimFlushTelemetry();
@@ -635,6 +638,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
                 }
             }
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
+            ConsoleControlStop();
             MovementStop("stopped before selecting render chain");
             SilentAimStop("stopped before selecting render chain");
             ShotLoggingStop("stopped before selecting render chain");
@@ -724,6 +728,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
+    const bool consoleControlsPrepared = aimConsole && ConsoleControlPrepare();
     const bool aimPrepared = SilentAimPrepare(&EspLog);
     const bool shotLoggingPrepared = ShotLoggingPrepare(&EspLog);
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
@@ -738,6 +743,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_QueueEnableHook(resize);
     if (status == MH_OK) status = MH_ApplyQueued();
     if (status != MH_OK) {
+        ConsoleControlStop();
         MovementStop("partial hook activation failure");
         SilentAimStop("partial hook activation failure");
         ShotLoggingStop("partial hook activation failure");
@@ -754,6 +760,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         startState.store(-1); return 6;
     }
     if (movementPrepared) MovementActivate();
+    if (consoleControlsPrepared) ConsoleControlActivate();
+    EspLog(consoleControlsPrepared ? "AIM_CONSOLE_CONTROLS_READY clear/replay and project-only native console filter available" :
+        "AIM_CONSOLE_CONTROLS_UNAVAILABLE engine console contract verification or hook preparation failed");
     if (aimPrepared) SilentAimActivate(movementPrepared);
     if (shotLoggingPrepared && movementPrepared) ShotLoggingActivate();
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
@@ -771,6 +780,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 
 extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
+    ConsoleControlStop();
     MovementStop("explicit overlay stop request");
     SilentAimStop("explicit overlay stop request");
     ShotLoggingStop("explicit overlay stop request");

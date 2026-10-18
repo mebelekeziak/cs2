@@ -9,6 +9,9 @@ static_assert(sizeof(AimConsoleColor) == 4);
 // engine input hooks. The game's own logging policy controls console visibility.
 bool AimConsoleInitialize() noexcept;
 void AimConsoleWrite(const char* message) noexcept;
+// Reprint the last 256 emitted project lines, preserving their colors. Called
+// after native clear on the console command owner; does not duplicate history.
+void AimConsoleReplay() noexcept;
 
 // Waits for an in-progress console call, then rejects subsequent writes. This
 // does not unload this DLL or retain/pin the game's tier0 module.

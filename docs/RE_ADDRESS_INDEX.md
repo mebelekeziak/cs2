@@ -191,6 +191,18 @@ rediscovery. Geometry changes from landmarks to authored centers when available.
 | Native `tier0!Msg` | `0x7EE60`, named export | Variadic prologue and client `%s` format callers; runtime export/module verification in `aim_console.cpp` |
 | Native `tier0!ConColorMsg` | `0x7F710`, export `?ConColorMsg@@YAXAEBVColor@@PEBDZZ` | RCX points to four RGBA bytes; RDX format, R8 first vararg. Client caller `0x1C6149` constructs a four-byte stack color. Optional color validation in `aim_console.cpp`; plain `Msg` fallback |
 
+Console cleanup adds `engine2.dll` contracts in
+[console_control_offsets.h](../include/console_control_offsets.h), verified by
+`python tools/inspect_console_control.py` and the combined compatibility bundle:
+
+| Boundary | RVA / kind | Independent evidence |
+| --- | --- | --- |
+| Console listener | `0x2094B0`, function | `CEngineConsoleLoggingListener` RTTI, primary vtable `0x586708` slot 0; formatted message in R8, console route `0x209536..0x20954C` |
+| Native clear callback | `0x1B7D70`, member command | Registration `0x1B518E`, name producer `0x1B51C2` references `clear`; text-console and Panorama clear calls both complete before project replay |
+| Locked command enqueue | `0x73720`, function | Native caller `0x75960/0x7596A` supplies buffer `0x8DBF20`; recursive lock and named tier0 `CCommandBuffer::AddText` import call at `0x73850` |
+
+See [console-control evidence](../tools/CS2_CONSOLE_CONTROL_EVIDENCE.md).
+
 Autofire prepares before anti aim and the original movement finalizer. It scopes
 a native input press and lets the native recorder and subsequent history builder
 choose serialized indices. Cancellation restores owned primary fields and reruns

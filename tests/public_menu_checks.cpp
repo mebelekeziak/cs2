@@ -6,6 +6,7 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "console_control.h"
 #include "world_settings.h"
 #include "local_config.h"
 #include <imgui.h>
@@ -405,6 +406,17 @@ int main() {
     Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
            "Aim tab opens with silent aim disabled");
     Expect(!AntiAimGetSettings().enabled, "Aim tab opens with anti aim disabled");
+    Expect(!ConsoleControlOnlyOwn(), "native console filtering starts disabled");
+    ConsoleControlSetAvailable(true);
+    ClickControl("Our logs only");
+    Expect(ConsoleControlOnlyOwn() && ConsoleControlTakeRequest(), "console filter toggle requests a fresh native clear");
+    ConsoleControlCompleteClear();
+    ClickControl("Clear console");
+    Expect(ConsoleControlTakeRequest(), "clear console button submits a request independently of shot logs");
+    ConsoleControlCompleteClear();
+    ClickControl("Our logs only");
+    Expect(!ConsoleControlOnlyOwn(), "console filter toggle restores native messages");
+    ConsoleControlSetAvailable(false);
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "Aim tab opens with human shot logs enabled and verbose diagnostics disabled");
     const auto aimBeforeLogging=SilentAimGetSettings();
     ClickControl("Shot logs");

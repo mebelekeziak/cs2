@@ -6,6 +6,7 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "console_control.h"
 #include "world_settings.h"
 #include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -454,6 +455,12 @@ void DrawPublicMenu() {
                 shotLogChanged |= FeatureCheckbox("Shot logs", shotLog.enabled);
                 shotLogChanged |= FeatureCheckbox("Verbose aim diagnostics", shotLog.verbose);
                 ImGui::TextWrapped("Shot results appear in the console and session log. Detailed diagnostics always stay in the file.");
+                bool onlyOwn = ConsoleControlOnlyOwn();
+                ImGui::BeginDisabled(!ConsoleControlAvailable());
+                if (FeatureCheckbox("Our logs only", onlyOwn)) ConsoleControlSetOnlyOwn(onlyOwn);
+                if (ImGui::Button("Clear console", { -1, 0 })) ConsoleControlRequestClear();
+                ImGui::EndDisabled();
+                ImGui::TextWrapped("%s", ConsoleControlStatus());
                 ImGui::Separator();
                 antiAimChanged = FeatureCheckbox("Enable anti aim", antiAim.enabled);
                 ImGui::TextWrapped("Backwards yaw, downward pitch. Local view stays normal.");

@@ -25,7 +25,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all nineteen frozen verifiers independently, so
+rewrite offsets. It runs all twenty frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -35,10 +35,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Eighteen component JSON files: exact command, exit code, stdout and stderr.
+- Twenty component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all nineteen static checks passed; **1** means one or more
+Exit code **0** means all twenty static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -98,7 +98,7 @@ prefix is a candidate, not sufficient ABI/layout proof.
 
 ## Local tools and evidence
 
-All nineteen frozen verifiers use standard-library Python. Their entry points are
+All twenty frozen verifiers use standard-library Python. Their entry points are
 listed below; the combined runner supplies the correct installation arguments.
 
 | Component | Frozen verifier | Detailed evidence |

@@ -94,6 +94,11 @@ int main() {
             std::string(observed) == std::string(item.text) + '\n',
             "native colored record keeps one literal text line and the expected outcome palette");
     }
+    const auto beforeReplay = calls.load(); const auto colorsBeforeReplay = coloredCalls;
+    AimConsoleReplay();
+    Expect(calls == beforeReplay + 12 && coloredCalls == colorsBeforeReplay + 12 &&
+        std::strcmp(observed, "AIM_SHOT #bad HIT fake format\n") == 0 && observedColor.r == 160 && fixedFormat,
+        "history replay preserves native colors and literal formatting without adding history");
     AimConsoleWrite("AIM_SHOT #4 HIT %n\r\n\x1b[31m");
     Expect(fixedFormat && std::strcmp(observed, "AIM_SHOT #4 HIT %n   [31m\n") == 0,
         "colored printf keeps percent text literal and strips embedded console control codes");

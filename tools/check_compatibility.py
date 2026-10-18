@@ -59,6 +59,7 @@ def component_commands(game):
         ("autofire", "inspect_autofire.py", ["--client", client]),
         ("aim_occlusion", "inspect_aim_occlusion.py", ["--client", client]),
         ("aim_console", "inspect_aim_console.py", ["--game", str(game)]),
+        ("console_control", "inspect_console_control.py", ["--game", str(game)]),
         ("shot_events", "inspect_shot_events.py", ["--client", client,
             "--server", str(game / "csgo/bin/win64/server.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk"),
             "--core-vpk", str(game / "core/pak01_dir.vpk")]),
