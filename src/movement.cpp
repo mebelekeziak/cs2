@@ -831,7 +831,7 @@ void HookFinalize(void* input, void* command) noexcept {
     }
     // Original rebuilds move_crc using the modified native buttons, then normal
     // command production copies those buttons to the network protobuf itself.
-    if (commandReady) SilentAimPrepareCommand(input, command);
+    SilentAimPrepareCommand(input, command, commandReady);
     AntiAimFinishCommand(input, command);
     // Requests are compared against native ingestion in outgoing command space.
     int antiSequence = 0;

@@ -20,17 +20,35 @@ bool Valid(const AimAngles& value) noexcept {
 }
 }
 
-bool SilentAimReadView(std::uintptr_t command, AimAngles& view) noexcept {
-    std::uintptr_t base = 0, angles = 0;
-    std::uint32_t presence = 0;
-    AimAngles current{};
-    if (!Read(command + movement_offsets::command::Base, base) || !base ||
-        !Read(base + movement_offsets::base::Angles, angles) || !angles ||
-        !Read(angles + off::angle::Presence, presence) ||
-        (presence & off::angle::AllPresent) != off::angle::AllPresent ||
-        !Read(angles + off::angle::Pitch, current) || !Valid(current)) return false;
-    view = current;
-    return true;
+bool SilentAimReadView(std::uintptr_t command, AimAngles& view, AimViewDiagnostics* diagnostics) noexcept {
+    AimViewDiagnostics observed{};
+    const auto report = [&](const char* reason, bool success = false) noexcept {
+        observed.reason = reason;
+        if (diagnostics) *diagnostics = observed;
+        return success;
+    };
+    if (!Read(command + movement_offsets::command::Base, observed.base)) return report("base_unreadable");
+    if (!observed.base) return report("base_missing");
+    if (!Read(observed.base + movement_offsets::base::Presence, observed.basePresence)) return report("base_presence_unreadable");
+    if (!Read(observed.base + movement_offsets::base::Angles, observed.angles)) return report("base_angles_unreadable");
+    if (!observed.angles) {
+        if (observed.basePresence & aim_autofire_offsets::BaseAnglesPresent) return report("present_base_angles_missing");
+        // Both the native CRC and view replay use the zero default message
+        // when this pointer is null. Fresh all-zero views need no allocation.
+        observed.nativeDefault = true;
+        view = {};
+        return report("ready_native_default", true);
+    }
+    if (!Read(observed.angles + off::angle::Presence, observed.presence)) return report("angle_presence_unreadable");
+    if (!Read(observed.angles + off::angle::Pitch, observed.values)) return report("angle_values_unreadable");
+    if (!Valid(observed.values)) return report("angle_values_invalid");
+    // Native sparse producers and Clear zero omitted scalar payloads. Native
+    // CRC/replay read these floats directly, independent of scalar hasbits.
+    if ((!(observed.presence & 1) && observed.values.pitch != 0) ||
+        (!(observed.presence & 2) && observed.values.yaw != 0) ||
+        (!(observed.presence & 4) && observed.values.roll != 0)) return report("absent_angle_payload_nonzero");
+    view = observed.values;
+    return report((observed.presence & off::angle::AllPresent) == off::angle::AllPresent ? "ready" : "ready_sparse", true);
 }
 
 bool SilentAimReadShot(std::uintptr_t command, AimShot& shot, AimCommandDiagnostics* diagnostics) noexcept {
@@ -59,7 +77,13 @@ bool SilentAimReadShot(std::uintptr_t command, AimShot& shot, AimCommandDiagnost
     if (!Read(command + movement_offsets::command::Base, base)) return fail("base_unreadable");
     if (!base) return fail("base_missing");
     if (!Read(base + movement_offsets::base::Angles, observed.baseAngles)) return fail("base_angles_unreadable");
-    if (!observed.baseAngles) return fail("base_angles_missing");
+    if (!observed.baseAngles) {
+        std::uint32_t basePresence = 0;
+        if (!Read(base + movement_offsets::base::Presence, basePresence)) return fail("base_presence_unreadable");
+        if (basePresence & aim_autofire_offsets::BaseAnglesPresent) return fail("present_base_angles_missing");
+        // A native zero-default base view has no payload to alias. Existing
+        // history angles still require their own complete writable message.
+    }
     const bool initial = (observed.presence & off::command::Attack1Present) &&
         observed.index >= 0 && observed.index < observed.size;
     if (!initial && !(observed.buttons & 1)) return fail("no_primary_attack");

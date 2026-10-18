@@ -26,9 +26,19 @@ struct AimCommandDiagnostics {
 bool SilentAimReadShot(std::uintptr_t command, AimShot& shot,
     AimCommandDiagnostics* diagnostics = nullptr) noexcept;
 bool SilentAimWriteShot(const AimShot& shot, const AimAngles& angles) noexcept;
+struct AimViewDiagnostics {
+    const char* reason = "not_read";
+    std::uintptr_t base = 0, angles = 0;
+    std::uint32_t basePresence = 0, presence = 0;
+    AimAngles values{};
+    bool nativeDefault = false;
+};
 // Read the current native base view even when no attack is present. Call before
 // anti aim emits a new command pose, after its prior owned patch is restored.
-bool SilentAimReadView(std::uintptr_t command, AimAngles& view) noexcept;
+// Native base QAngles omit zero scalar fields. A missing angle message with no
+// parent presence uses the native zero default; no messages are allocated.
+bool SilentAimReadView(std::uintptr_t command, AimAngles& view,
+    AimViewDiagnostics* diagnostics = nullptr) noexcept;
 
 using AimRecordHistoryFn = void (*)(void*, int);
 struct AimAutofireDiagnostics {

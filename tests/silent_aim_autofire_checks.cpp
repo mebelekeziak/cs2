@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace {
 namespace fire = aim_autofire_offsets;
@@ -85,6 +86,51 @@ struct Fixture {
             cmd::command::Attack1Present);
     }
 };
+void ViewChecks() {
+    Fixture fixture;
+    for (std::uint32_t presence = 0; presence < 8; ++presence) {
+        const AimAngles expected{presence & 1 ? 5.0f : 0.0f, presence & 2 ? 10.0f : 0.0f, 0};
+        Put(At(fixture.baseAngles) + cmd::angle::Presence, presence | 0x8000);
+        Put(At(fixture.baseAngles) + cmd::angle::Pitch, expected);
+        const auto before = fixture.baseAngles;
+        AimAngles view{1, 2, 3};
+        AimViewDiagnostics diagnostics{};
+        Expect(SilentAimReadView(At(fixture.command), view, &diagnostics) &&
+            !std::memcmp(&view, &expected, sizeof(view)) && fixture.baseAngles == before &&
+            diagnostics.presence == (presence | 0x8000), "native sparse angle masks preserve values and complete message bytes");
+    }
+    AimAngles view{1, 2, 3};
+    AimViewDiagnostics diagnostics{};
+    Put(At(fixture.base) + movement_offsets::base::Angles, std::uintptr_t{0});
+    Expect(SilentAimReadView(At(fixture.command), view, &diagnostics) &&
+        view.pitch == 0 && view.yaw == 0 && view.roll == 0 && diagnostics.nativeDefault,
+        "null base view with no parent presence uses native zero default");
+    Put(At(fixture.base) + movement_offsets::base::Presence, fire::BaseAnglesPresent);
+    view = {1, 2, 3};
+    Expect(!SilentAimReadView(At(fixture.command), view, &diagnostics) && view.roll == 3 &&
+        !std::strcmp(diagnostics.reason, "present_base_angles_missing"), "present but null angle message is rejected without replacing caller view");
+    Put(At(fixture.base) + movement_offsets::base::Angles, At(fixture.baseAngles));
+    for (const auto invalid : {AimAngles{5, 0, 0}, AimAngles{0, 10, 0}, AimAngles{0, 0, 1}}) {
+        Put(At(fixture.baseAngles) + cmd::angle::Presence, std::uint32_t{0});
+        Put(At(fixture.baseAngles) + cmd::angle::Pitch, invalid);
+        view = {1, 2, 3};
+        Expect(!SilentAimReadView(At(fixture.command), view, &diagnostics) && view.roll == 3,
+            "nonzero values hidden behind absent components are rejected without changing caller view");
+    }
+    for (const auto invalid : {AimAngles{std::numeric_limits<float>::quiet_NaN(), 0, 0},
+        AimAngles{0, std::numeric_limits<float>::infinity(), 0}, AimAngles{90, 0, 0}, AimAngles{0, 361, 0}}) {
+        Put(At(fixture.baseAngles) + cmd::angle::Presence, std::uint32_t{7});
+        Put(At(fixture.baseAngles) + cmd::angle::Pitch, invalid);
+        Expect(!SilentAimReadView(At(fixture.command), view, &diagnostics) &&
+            !std::strcmp(diagnostics.reason, "angle_values_invalid"), "nonfinite and out-of-range base views still fail validation");
+    }
+    Put(At(fixture.base) + movement_offsets::base::Angles, std::uintptr_t{1});
+    Expect(!SilentAimReadView(At(fixture.command), view, &diagnostics) &&
+        !std::strcmp(diagnostics.reason, "angle_presence_unreadable"), "unreadable angle storage reports its actual rejection stage");
+    Put(At(fixture.command) + movement_offsets::command::Base, std::uintptr_t{0});
+    Expect(!SilentAimReadView(At(fixture.command), view, &diagnostics) &&
+        !std::strcmp(diagnostics.reason, "base_missing"), "missing base remains unavailable rather than a default view");
+}
 void NativeFlow() {
     Fixture fixture;
     const auto inputBefore = fixture.input;
@@ -256,7 +302,7 @@ void FailureAndRebuild() {
 }
 }
 int main() {
-    NativeFlow(); Preservation(); FailureAndRebuild();
+    ViewChecks(); NativeFlow(); Preservation(); FailureAndRebuild();
     std::printf("Autofire command checks: %d; failures: %d\n", checks, failures);
     return failures ? 1 : 0;
 }

@@ -491,6 +491,36 @@ preview was inspected in `logs/hitchance-menu.bmp`. Both DLLs retain zero static
 TLS and delay imports. These are static and standalone checks; live autofire,
 native console visibility and hit registration remain unobserved.
 
+**Autofire correction, October 18:** the supplied
+`logs/overlay-4016-134366430011225970.log` records valid 100% estimates with
+`ready=1`, `autofire=1` and a 0% minimum, but zero requested/published automatic
+commands. Its 1,079 decisions came from the 1,079 manual primary-input commands.
+The preparation reader incorrectly required scalar angle presence `0x7`.
+Native base views serialize nonzero components independently and ordinarily
+use `0x3` for pitch/yaw with zero roll omitted, so preparation stopped before
+acquisition and requesting. The subsequent history callback overwrote the
+shared status, hiding this rejection behind “awaiting primary-fire history.”
+
+The reader now accepts native sparse zero components, cleared retained angle
+messages and the native null-message zero default. It preserves base/camera
+bytes and still rejects inconsistent, unreadable and nonfinite payloads.
+`AIM_PREPARE_DIAGNOSTICS` reports preparation calls, completed evaluations,
+view rejections, other blockers, exact stage, scalar/parent presence and view
+values independently of manual history diagnostics. The native attack recorder
+and hitchance sampler are unchanged by this correction. Regression fixtures
+reproduced the original failure before the fix, then verify automatic request
+and aimed history publication without manual input for sparse and zero views.
+They also cover an exactly 0% estimate with a 0% minimum. No new live autofire
+result is claimed; reload the rebuilt DLL after a normal game restart for the
+next offline check.
+
+Both corrected public/diagnostic Release builds succeed and all 31 suites pass
+in each, including 75 integrated pipeline checks and 71 command/view checks.
+All seventeen installed-file checks pass in
+`logs/compatibility/20261018T082358165777Z/`. The expanded native-view verifier
+rejects 27 mutated instruction windows and an incorrect parent-angle presence
+constant. Both DLLs retain AMD64, zero static TLS and zero delay imports.
+
 Restart CS2 normally before loading the new DLL through **Load Overlay.cmd**
 if a previous copy is resident. Open **Aim**, enable silent aim, set the minimum
 and sample count, then enable **Autofire** in the authorized offline/private

@@ -8,6 +8,86 @@ The thirteen existing compatibility components passed before investigation.
 This is native client command integration; it uses no server plugin framework.
 No game/server process was launched or installed file changed for this work.
 
+## October 18: pre-request base-view rejection
+
+The supplied offline run `logs/overlay-4016-134366430011225970.log` ends with
+`decisions=1079`, `requested=0`, `published=0`, and `fire_reason=not_requested`.
+Its valid 100% estimates, including minimum 0% with `ready=1`, are logged as
+`action="manual primary aimed"`. Those estimates came from the existing
+post-history manual-fire path. They do not establish that the pre-finalizer
+autofire decision path ran. The nearby anti-aim ingestion diagnostics repeatedly
+show ordinary base-angle presence **3** and zero roll.
+
+`SilentAimReadView` incorrectly applied shot history's all-three-fields rule to
+the earlier base command. Its exact `(presence & 7) == 7` check rejects that
+ordinary native representation before candidate/hitchance evaluation and before
+the native attack recorder is requested. The installed binary hash remains
+unchanged. This is a source contract mismatch, with no offset relocation needed.
+The log contains no attempted automatic request from which to infer a second
+native recorder failure. Native request fields, attack mask, ABI and slot should
+remain unchanged unless new request-stage diagnostics identify another failure.
+
+### Sparse scalar fields and current native consumers
+
+Native producer `0xB85D70` is called at `0xB66450`, before command finalization
+at `0xB66973`. It obtains the base through command `+0x40` and its angle-message pointer at base
+`+0x40`. For a nonzero view it sets base presence `+0x10` bit **4** with
+instruction `0xB85DF6` (`83 4B 10 04`); the independent bit operand is
+`0xB85DF9`. The feature's `BaseAnglesPresent` source constant follows this operand.
+
+Each angle scalar has its own native presence/zero-payload contract:
+
+| Scalar | Payload / bit | Zero branch | Nonzero branch |
+| --- | --- | --- | --- |
+| Pitch | `+0x18` / 1 | `0xB85E2E` writes raw zero; `0xB85E31` clears bit 1 | `0xB85E3A` sets bit; `0xB85E41` stores float |
+| Yaw | `+0x1C` / 2 | `0xB85E52` clears bit 2; `0xB85E55` writes raw zero | `0xB85E5D` sets bit; `0xB85E63` stores float |
+| Roll | `+0x20` / 4 | `0xB85E74` clears bit 4; `0xB85E77` writes raw zero | `0xB85E7F` sets bit; `0xB85E85` stores float |
+
+Presence lives at angle `+0x10`. Each zero comparison includes negative zero
+and canonicalizes omitted payloads to positive zero. NaN takes the unordered,
+present branch, so finite-value checks remain necessary. All scalar masks 0–7
+are legal native message representations; an omitted component must retain its
+raw zero payload. A zero roll normally means mask 3 or less. Absent nonzero
+payload, nonfinite values or unsupported roll remain reasons to reject the view.
+
+The native reset reads all three payloads directly at
+`0xB6CA39/0xB6CA3E/0xB6CA43`; the movement CRC finalizer does the same at
+`0xCECFE1/0xCECFE6/0xCECFEB`. Neither reader checks scalar presence. Therefore
+silently replacing an absent **nonzero** raw payload with a default would diverge
+from native command processing. Borrow the current raw float3 and validate its
+presence/payload consistency. This is distinct from the later shot-history
+producer `0xCFA751..0xCFA77D`, which explicitly sets all three scalar bits.
+
+### Whole-zero view and angle-message lifetime
+
+Producer `0xB85D92..0xB85DAD` compares the complete view against native float3
+zero through `0x2056F0`. For a whole-zero view, branch
+`0xB85E8C..0xB85ED4` calls base helper `0x4FD870`. That helper loads the
+existing angle pointer at base `+0x40`, calls angle clear `0x644910` when it
+exists, and clears **base** presence bit 4. It retains the existing angle
+pointer. Angle clear zeroes all three raw payloads when scalar bits were present,
+then clears scalar presence. Thus a cleared base presence bit does not imply
+that the existing angle allocation is stale or should be freed.
+
+On a fresh base whose angle pointer is null, that whole-zero branch does not
+allocate an angle message. Both native readers have the same independent
+null-pointer fallback: CRC LEA `0xCECFCE` and reset LEA `0xB6CA26` select
+the default angle object at `0x22082E8` when base `+0x40` is null. Its scalar
+presence is zero and its native raw XYZ payload is exactly `(0,0,0)`. Therefore
+base-angles presence absent plus a null pointer is a valid native zero view.
+The implementation accepts that restricted default representation; a present
+base-angles bit with a null pointer is inconsistent and must report a named
+rejection instead of inventing a message.
+
+For a nonzero view with a missing angle pointer, `0xB85E14` calls allocator
+`0x6723C0`, using the current base message's arena when present or native heap
+allocation otherwise, and stores the returned pointer at `0xB85E19`. Constructor
+`0x676DB0` initializes scalar presence/cache and all three raw fields to zero.
+Existing non-null storage is reused; whole-zero clearing retains it. The feature
+borrows these current callback-owned values only. It must not allocate messages,
+change presence/payloads while reading a view, cache the allocation across source
+changes, or substitute a history-message pointer for the base view.
+
 ## Why native command buttons alone are insufficient
 
 The primary start index in `CSGOUserCmdPB` is generated from the input history
@@ -105,9 +185,10 @@ history/debug structures. This follows the normal native per-frame lifetime.
 
 ## Verification and limits
 
-`python tools/inspect_autofire.py` freezes twelve producer/consumer/caller
-windows, the complete installed file identity, source constant inventory,
-independently decoded event layout and native entry bytes. It requires only
+`python tools/inspect_autofire.py` freezes 27 native request and base-view
+producer/consumer/lifecycle windows, the complete installed file identity,
+source constant inventory, independently decoded event layout, sparse scalar
+offsets/masks, shared native default object, zero payload and native entry bytes. It requires only
 Python's standard library, accepts `--header` for contract mutation tests, and
 never writes source offsets.
 

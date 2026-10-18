@@ -41,6 +41,9 @@ ULONGLONG lastReport = 0;
 ULONGLONG lastSummary = 0; // Render owner only.
 std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0;
 AimAutofireDiagnostics fireDiagnostics{};
+AimViewDiagnostics viewDiagnostics{};
+std::uint64_t prepareCalls = 0, prepareEvaluated = 0, viewRejected = 0, prepareBlocked = 0;
+const char* prepareStage = "not_called";
 struct Decision {
     AimSource source{};
     AimTarget target{};
@@ -328,8 +331,14 @@ void SilentAimActivate(bool commandHookReady) noexcept {
     if (prepared && !stopped) active.store(true, std::memory_order_release);
     ReleaseSRWLockExclusive(&mutationLock);
 }
-void SilentAimPrepareCommand(void* input, void* command) noexcept {
+void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noexcept {
     AcquireSRWLockExclusive(&mutationLock);
+    ++prepareCalls;
+    if (!commandReady) {
+        ++prepareBlocked; prepareStage = "anti_aim_restore_unresolved";
+        ReleaseSRWLockExclusive(&mutationLock);
+        return;
+    }
     const auto address = reinterpret_cast<std::uintptr_t>(command);
     auto* request = Request(address);
     const bool identity = client && reinterpret_cast<std::uintptr_t>(input) == client + off::Input &&
@@ -338,16 +347,22 @@ void SilentAimPrepareCommand(void* input, void* command) noexcept {
     if (identity && request && request->patch.active)
         restored = SilentAimRestoreAutofireRebuild(reinterpret_cast<std::uintptr_t>(input), address, request->patch, &fireDiagnostics);
     if (!restored) {
+        ++prepareBlocked;
         active.store(false, std::memory_order_release); stopped = true;
         Status("autofire rebuild ownership unavailable; stopped");
     }
     if (request && !request->patch.active) *request = {};
-    if (restored && Usable(input)) {
+    prepareStage = "inactive_or_unfocused";
+    if (!restored) prepareStage = "autofire_restore_failed";
+    else if (Usable(input)) {
         const auto settings = SilentAimGetSettings();
         AimAngles view{};
-        if (!settings.enabled) Status("disabled");
-        else if (!SilentAimReadView(address, view)) Status("native physical view unavailable");
+        if (!settings.enabled) { prepareStage = "disabled"; Status("disabled"); }
+        else if (!SilentAimReadView(address, view, &viewDiagnostics)) {
+            ++viewRejected; prepareStage = viewDiagnostics.reason; Status("native physical view unavailable");
+        }
         else {
+            ++prepareEvaluated;
             auto decision = Evaluate(view, settings);
             const char* action = decision.reason;
             if (settings.autofire && (!autofirePrepared || !finalizerReady)) action = "native autofire contract unavailable";
@@ -363,6 +378,7 @@ void SilentAimPrepareCommand(void* input, void* command) noexcept {
                 }
             }
             Status(action);
+            prepareStage = action;
             Report(decision, action);
         }
     }
@@ -415,10 +431,20 @@ void SilentAimFlushTelemetry() noexcept {
         lastObservedAction, lastDecision.reason);
     ReleaseSRWLockShared(&mutationLock);
     logger(fireMessage);
+    char prepareMessage[768]{};
+    AcquireSRWLockShared(&mutationLock);
+    std::snprintf(prepareMessage, sizeof(prepareMessage),
+        "AIM_PREPARE_DIAGNOSTICS calls=%llu evaluated=%llu view_rejected=%llu blocked=%llu stage=\"%s\" view_reason=%s base=0x%llx base_presence=0x%x angles=0x%llx angle_presence=0x%x native_default=%u view=(%.3f,%.3f,%.3f); preparation state retained separately from manual shot history",
+        prepareCalls, prepareEvaluated, viewRejected, prepareBlocked, prepareStage, viewDiagnostics.reason,
+        static_cast<unsigned long long>(viewDiagnostics.base), viewDiagnostics.basePresence,
+        static_cast<unsigned long long>(viewDiagnostics.angles), viewDiagnostics.presence, viewDiagnostics.nativeDefault,
+        viewDiagnostics.values.pitch, viewDiagnostics.values.yaw, viewDiagnostics.values.roll);
+    ReleaseSRWLockShared(&mutationLock);
+    logger(prepareMessage);
 }
 
 #ifdef CS2_AIM_PIPELINE_CHECKS
-void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTestRecordFn recorder) noexcept {
+void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTestRecordFn recorder, SilentAimLogCallback callback) noexcept {
     testRuntime = true; testForeground = true;
     client = base; original = builder; recordHistory = recorder;
     active.store(true); stopped = false; prepared = weaponPrepared = autofirePrepared = finalizerReady = true;
@@ -428,6 +454,8 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
     decisions = requested = fired = cancelled = chanceRejected = 0;
     commandDiagnostics = {}; targetDiagnostics = {}; fireDiagnostics = {};
+    viewDiagnostics = {}; prepareCalls = prepareEvaluated = viewRejected = prepareBlocked = 0;
+    prepareStage = "not_called"; logger = callback; lastSummary = 0;
 }
 void SilentAimTestHistory(void* input, void* command) noexcept { HookHistory(input, 0, command); }
 void SilentAimTestForeground(bool foreground) noexcept { testForeground = foreground; }

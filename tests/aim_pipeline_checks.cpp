@@ -129,7 +129,7 @@ void NativeBuilder(void* input, int slot, void* command) {
     const auto angles = Get<std::uintptr_t>(entry + cmd::history::Angles);
     const auto base = Get<std::uintptr_t>(address + move::command::Base);
     const auto baseAngles = Get<std::uintptr_t>(base + move::base::Angles);
-    Put(angles + cmd::angle::Pitch, Get<AimAngles>(baseAngles + cmd::angle::Pitch));
+    Put(angles + cmd::angle::Pitch, baseAngles ? Get<AimAngles>(baseAngles + cmd::angle::Pitch) : AimAngles{});
     Put(angles + cmd::angle::Presence, badHistory ? std::uint32_t{0} : std::uint32_t{0x8007});
 }
 
@@ -245,6 +245,91 @@ void GateChecks(World& world) {
         Expect(recorderCalls == 0 && Equal(missing.Buttons(), missing.originalButtons),
             "missing target/geometry/weapon or cooldown rejects automatic request case " + std::to_string(unavailable));
     }
+}
+
+void SparseViewChecks(World& world) {
+    // Native base angles omit zero components. The reported run has scalar
+    // presence 0x3 (pitch/yaw, zero roll); do not manufacture all-present data.
+    for (std::uint32_t presence = 0; presence < 8; ++presence) {
+        world.Reset();
+        Command command;
+        auto settings = SilentAimGetSettings();
+        settings.hitchance = presence == 3 ? 0.0f : 100.0f;
+        SilentAimSetSettings(settings);
+        Put(Address(command.baseAngles) + cmd::angle::Presence, presence);
+        Put(Address(command.base) + move::base::Presence, presence ? fire::BaseAnglesPresent : 0u);
+        Put(Address(command.baseAngles) + cmd::angle::Pitch,
+            AimAngles{presence & 1 ? 1.531f : 0.0f, presence & 2 ? 10.0f : 0.0f, 0});
+        const auto baseBefore = command.baseAngles;
+        world.Prepare(command);
+        Expect(recorderCalls == 1 && (command.Buttons().down & 1),
+            "sparse base view presence=" + std::to_string(presence) + " can request a shot without manual attack");
+        world.History(command);
+        Expect(Equal(command.History(), Desired()) && command.Index() == 0 && checksumCalls == 0 &&
+            command.baseAngles == baseBefore && Get<int>(world.InputAddress() + fire::InputPrimaryIndex) == -1,
+            "sparse base view presence=" + std::to_string(presence) + " publishes aimed history and preserves native base bytes");
+    }
+    world.Reset();
+    Command nativeDefault;
+    Put(Address(nativeDefault.base) + move::base::Angles, std::uintptr_t{0});
+    const auto defaultBaseBefore = nativeDefault.base;
+    world.Prepare(nativeDefault); world.History(nativeDefault);
+    Expect(recorderCalls == 1 && nativeDefault.Index() == 0 && Equal(nativeDefault.History(), Desired()) &&
+        nativeDefault.base == defaultBaseBefore && checksumCalls == 0,
+        "native null default view can publish an automatic shot without allocating or editing base angles");
+
+    world.Reset();
+    Command inconsistent;
+    Put(Address(inconsistent.baseAngles) + cmd::angle::Presence, std::uint32_t{2});
+    Put(Address(inconsistent.baseAngles) + cmd::angle::Pitch, AimAngles{5, 10, 0});
+    const auto inconsistentBefore = inconsistent.command;
+    world.Prepare(inconsistent);
+    Expect(recorderCalls == 0 && inconsistent.command == inconsistentBefore,
+        "nonzero payload hidden behind an absent scalar flag prevents an automatic request");
+
+    world.Reset();
+    Command zeroThreshold;
+    auto settings = SilentAimGetSettings(); settings.hitchance = 0; SilentAimSetSettings(settings);
+    weapon.range = 50; // Valid geometric estimate with exactly zero intersections.
+    Put(Address(zeroThreshold.baseAngles) + cmd::angle::Presence, std::uint32_t{3});
+    world.Prepare(zeroThreshold);
+    Expect(recorderCalls == 1 && (zeroThreshold.Buttons().down & 1) && !telemetry.empty() &&
+        telemetry[0].find("estimate_valid=1 estimated=0.00%") != std::string::npos,
+        "zero threshold accepts an exactly zero-percent valid estimate from a native sparse view");
+    world.History(zeroThreshold);
+    Expect(zeroThreshold.Index() == 0 && Equal(zeroThreshold.History(), Desired()) && checksumCalls == 0,
+        "zero-threshold request publishes without any physical primary input");
+}
+
+void CaptureLog(const char* message) { if (message) telemetry.emplace_back(message); }
+void PreparationDiagnosticsChecks(World& world) {
+    world.Reset();
+    Command invalid;
+    SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+    Put(Address(invalid.baseAngles) + cmd::angle::Presence, std::uint32_t{3});
+    Put(Address(invalid.baseAngles) + cmd::angle::Pitch, AimAngles{5, 10, 1});
+    world.Prepare(invalid);
+    world.History(invalid); // This overwrites the shared status with no-primary history.
+    SilentAimFlushTelemetry();
+    bool found = false;
+    for (const auto& message : telemetry) {
+        if (message.find("AIM_PREPARE_DIAGNOSTICS calls=1 evaluated=0 view_rejected=1") != std::string::npos &&
+            message.find("stage=\"angle_values_invalid\"") != std::string::npos &&
+            message.find("angle_presence=0x3") != std::string::npos) found = true;
+    }
+    Expect(found && recorderCalls == 0, "preparation rejection and scalar flags remain logged after the history callback");
+
+    world.Reset();
+    Command blocked;
+    SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+    SilentAimPrepareCommand(world.Input(), blocked.Pointer(), false);
+    SilentAimFlushTelemetry();
+    found = false;
+    for (const auto& message : telemetry) {
+        if (message.find("AIM_PREPARE_DIAGNOSTICS calls=1 evaluated=0 view_rejected=0 blocked=1") != std::string::npos &&
+            message.find("anti_aim_restore_unresolved") != std::string::npos) found = true;
+    }
+    Expect(found && recorderCalls == 0, "unresolved prior anti-aim restoration is counted before acquisition");
 }
 
 void CancellationChecks(World& world) {
@@ -394,6 +479,8 @@ void MovementTelemetryPush(const char* message) noexcept { if (message) telemetr
 int main() {
     World world;
     GateChecks(world);
+    SparseViewChecks(world);
+    PreparationDiagnosticsChecks(world);
     CancellationChecks(world);
     OwnershipChecks(world);
     SilentAimStop("pipeline checks complete");
