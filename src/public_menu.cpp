@@ -5,6 +5,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "shot_log_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -420,8 +421,10 @@ void DrawPublicMenu() {
         } else if (selectedTab == 4) {
             auto settings = SilentAimGetSettings();
             auto antiAim = AntiAimGetSettings();
+            auto shotLog = ShotLogGetSettings();
             bool changed = false;
             bool antiAimChanged = false;
+            bool shotLogChanged = false;
             if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
                 ImGui::BeginDisabled(!settings.enabled);
@@ -446,8 +449,11 @@ void DrawPublicMenu() {
                 ImGui::Separator();
                 ImGui::TextWrapped("Autofire shoots when estimated hitchance meets the minimum. Manual fire remains available.");
                 ImGui::TextWrapped("Hitchance estimates spread against the selected hitbox. Walls and server timing can still prevent a hit.");
-                ImGui::TextWrapped("Aim decisions appear in the developer console and the session log.");
                 ImGui::TextDisabled("F10  Silent aim");
+                ImGui::Separator();
+                shotLogChanged |= FeatureCheckbox("Shot logs", shotLog.enabled);
+                shotLogChanged |= FeatureCheckbox("Verbose aim diagnostics", shotLog.verbose);
+                ImGui::TextWrapped("Shot results appear in the console and session log. Detailed diagnostics always stay in the file.");
                 ImGui::Separator();
                 antiAimChanged = FeatureCheckbox("Enable anti aim", antiAim.enabled);
                 ImGui::TextWrapped("Backwards yaw, downward pitch. Local view stays normal.");
@@ -455,6 +461,7 @@ void DrawPublicMenu() {
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);
             if (antiAimChanged) AntiAimSetSettings(antiAim);
+            if (shotLogChanged) ShotLogSetSettings(shotLog);
         } else if (selectedTab == 5) {
             if (ImGui::BeginChild("##ConfigSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders))
                 DrawConfigs(lastTab != 5);

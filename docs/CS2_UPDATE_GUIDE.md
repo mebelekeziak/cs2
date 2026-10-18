@@ -25,7 +25,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all seventeen frozen verifiers independently, so
+rewrite offsets. It runs all eighteen frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -35,10 +35,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Seventeen component JSON files: exact command, exit code, stdout and stderr.
+- Eighteen component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all seventeen static checks passed; **1** means one or more
+Exit code **0** means all eighteen static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -98,7 +98,7 @@ prefix is a candidate, not sufficient ABI/layout proof.
 
 ## Local tools and evidence
 
-All seventeen frozen verifiers use standard-library Python. Their entry points are
+All eighteen frozen verifiers use standard-library Python. Their entry points are
 listed below; the combined runner supplies the correct installation arguments.
 
 | Component | Frozen verifier | Detailed evidence |
@@ -110,6 +110,7 @@ listed below; the combined runner supplies the correct installation arguments.
 | Aim authored capsules | [inspect_aim_geometry.py](../tools/inspect_aim_geometry.py) | [geometry evidence](../tools/CS2_AIM_GEOMETRY_EVIDENCE.md) |
 | Native autofire/history request | [inspect_autofire.py](../tools/inspect_autofire.py) | [autofire evidence](../tools/CS2_AUTOFIRE_EVIDENCE.md) |
 | Aim developer-console output | [inspect_aim_console.py](../tools/inspect_aim_console.py) | [console evidence](../tools/CS2_AIM_CONSOLE_EVIDENCE.md) |
+| Shot firing/impact/damage events | [inspect_shot_events.py](../tools/inspect_shot_events.py) | [event evidence](../tools/CS2_SHOT_EVENTS_EVIDENCE.md) |
 | Anti aim / input replay | [inspect_anti_aim.py](../tools/inspect_anti_aim.py) | [anti-aim evidence](../tools/CS2_ANTI_AIM_EVIDENCE.md) |
 | Third-person view/model/collision | [inspect_third_person.py](../tools/inspect_third_person.py) | [camera evidence](../tools/CS2_THIRD_PERSON_EVIDENCE.md) |
 | Scoped view FOV | [inspect_zoom.py](../tools/inspect_zoom.py) | [zoom evidence](../tools/CS2_ZOOM_EVIDENCE.md) |

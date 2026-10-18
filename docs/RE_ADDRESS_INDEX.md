@@ -377,3 +377,24 @@ Across all hooks, initialization/teardown stay outside DllMain. Respect native
 callback ownership, invalidate stale sources and use cooperative stop barriers.
 Original calls may still execute after disarming. Stopped code/trampolines remain
 resident until normal process exit without a verified physical-unload barrier.
+
+## Shot result events: client.dll
+
+Header: [shot_events_offsets.h](../include/shot_events_offsets.h).
+Verifier: [inspect_shot_events.py](../tools/inspect_shot_events.py).
+Details: [native event evidence](../tools/CS2_SHOT_EVENTS_EVIDENCE.md).
+Added October 18, 2026 against the same installed client identity.
+
+| Symbol | Current value / kind | Rediscovery anchor |
+| --- | --- | --- |
+| `Manager`, `ManagerVtable` | `0x254BC08` pointer slot, `0x1C31878` RVA | CGameEventManager RTTI; native client AddListener callers and client dispatch |
+| `AddListener`, `FindListener` | `0x9C9D30`, `0x9E1BF0` RVAs; byte slots `0x18`, `0x20` | Registration returns event index or -1; client interest uses server=false; external listener is retained |
+| `FireClient` | `0x9E2960`, byte slot `0x40` | Manager dispatch calls listener byte slot +8, then frees owned event through slot +0x50 |
+| `EventVtable` | `0x1C315C0` RVA | CGameEvent RTTI; typed getters, 16-byte Murmur2 field key |
+| `Name`, `Empty`, `Boolean`, `Integer`, `Float`, `String`, `Handle` | `0x9E7E50`, `0x9F1770`, `0x9E3E60`, `0x9E7120`, `0x9E6D40`, `0x9E9550`, `0x9E4620` RVAs | Getter slots +8/+0x28/+0x30/+0x38/+0x48/+0x50/+0x60; generated `userid_pawn`/`attacker_pawn` retain full serialized handles |
+
+The verifier also checks shipped server event producers and VPK event schemas.
+`weapon_fire`, `bullet_impact` and `player_hurt` carry no shot ID or server tick.
+The adapter registers on the native command owner, copies fields synchronously,
+and retains an inert listener after cooperative stop. Correlation windows and
+capsule comparisons are diagnostics, not proof of a spread or prediction cause.

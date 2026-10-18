@@ -16,7 +16,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game")
 MODULES = (
-    "bin/win64/cs2.exe", "csgo/bin/win64/client.dll", "bin/win64/engine2.dll",
+    "bin/win64/cs2.exe", "csgo/bin/win64/client.dll", "csgo/bin/win64/server.dll", "bin/win64/engine2.dll",
     "bin/win64/scenesystem.dll", "bin/win64/worldrenderer.dll",
     "bin/win64/materialsystem2.dll", "bin/win64/rendersystemdx11.dll",
     "bin/win64/animationsystem.dll", "bin/win64/tier0.dll",
@@ -58,6 +58,9 @@ def component_commands(game):
         ("aim_weapon", "inspect_aim_weapon.py", ["--client", client]),
         ("autofire", "inspect_autofire.py", ["--client", client]),
         ("aim_console", "inspect_aim_console.py", ["--game", str(game)]),
+        ("shot_events", "inspect_shot_events.py", ["--client", client,
+            "--server", str(game / "csgo/bin/win64/server.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk"),
+            "--core-vpk", str(game / "core/pak01_dir.vpk")]),
         ("sky", "verify_sky_draw.py", ["--game", str(game)]),
         ("materials", "verify_world_materials.py", ["--installation", str(game / "bin/win64")]),
         ("local_lighting", "verify_world_lighting.py", ["--game", str(game)]),
@@ -114,6 +117,7 @@ def main():
     source_files = [*sorted((ROOT / "include").glob("*offsets.h")),
                     *sorted((ROOT / "src").glob("aim_*.cpp")),
                     ROOT / "src/silent_aim.cpp", ROOT / "src/silent_aim_command.cpp", ROOT / "src/silent_aim_target.cpp",
+                    ROOT / "src/shot_events.cpp", ROOT / "src/shot_log.cpp", ROOT / "src/shot_logging.cpp",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]
     snapshot["source_sha256"] = {

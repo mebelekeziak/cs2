@@ -5,6 +5,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "shot_log_settings.h"
 #include "world_settings.h"
 #include "local_config.h"
 #include <imgui.h>
@@ -342,6 +343,7 @@ int main() {
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    ShotLogSetSettings({});
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -403,6 +405,16 @@ int main() {
     Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
            "Aim tab opens with silent aim disabled");
     Expect(!AntiAimGetSettings().enabled, "Aim tab opens with anti aim disabled");
+    Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "Aim tab opens with human shot logs enabled and verbose diagnostics disabled");
+    const auto aimBeforeLogging=SilentAimGetSettings();
+    ClickControl("Shot logs");
+    ClickControl("Verbose aim diagnostics");
+    Expect(ShotLogGetSettings()==ShotLogSettings{false,true} && SilentAimGetSettings()==aimBeforeLogging && !AntiAimGetSettings().enabled,
+        "shot logging and verbose controls remain usable with aim disabled and do not enable aim or autofire");
+    ClickControl("Shot logs");
+    Expect(ShotLogGetSettings()==ShotLogSettings{true,true}, "human logging can be enabled while verbose diagnostics remain enabled");
+    ClickControl("Verbose aim diagnostics");
+    Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "verbose diagnostics can be disabled while human results remain enabled");
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.9f);
     ClickControl("##AimSamples", 0.9f);
@@ -430,6 +442,10 @@ int main() {
     ClickControl("Enable silent aim");
     Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
            "silent aim changes preserve independent ESP settings");
+    ClickControl("Shot logs");
+    ClickControl("Verbose aim diagnostics");
+    Expect(ShotLogGetSettings()==ShotLogSettings{false,true} && !SilentAimGetSettings().enabled && !SilentAimGetSettings().autofire,
+        "logging remains independently configurable after disabling active aim");
     ClickControl("Enable anti aim");
     Expect(AntiAimGetSettings().enabled && !SilentAimGetSettings().enabled &&
            MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
@@ -644,6 +660,7 @@ int main() {
     const auto savedCamera = ThirdPersonGetSettings();
     const auto savedZoom = ZoomGetSettings();
     const auto savedAim = SilentAimGetSettings();
+    const auto savedShotLog=ShotLogGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -653,10 +670,11 @@ int main() {
     ThirdPersonResetSettings();
     ZoomResetSettings();
     SilentAimSetSettings({});
+    ShotLogSetSettings({});
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera &&
-           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim,
-           "Load button restores appearance, aim, hitchance, anti aim, camera and scoped zoom settings");
+           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog,
+           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom and logging settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -703,6 +721,7 @@ int main() {
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    ShotLogSetSettings({});
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

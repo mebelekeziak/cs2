@@ -26,6 +26,8 @@
 #include "movement.h"
 #include "silent_aim.h"
 #include "aim_console.h"
+#include "shot_log_settings.h"
+#include "shot_logging.h"
 #include "anti_aim.h"
 #include "third_person.h"
 #include "zoom.h"
@@ -124,8 +126,7 @@ void EspLog(const char* message) noexcept {
     Log("%s", message);
     // Engine callbacks enqueue diagnostics; their render-owner drain reaches
     // this sink without performing console or file I/O in those callbacks.
-    if (message && (std::strncmp(message, "AIM_", 4) == 0 || std::strstr(message, "] AIM_")))
-        AimConsoleWrite(message);
+    if (const auto console = ShotLogConsoleMessage(message, ShotLogGetSettings())) AimConsoleWrite(console);
 }
 
 bool OpenLog(const wchar_t* suppliedPath) {
@@ -244,6 +245,7 @@ void ReleaseRendererOnOwner(const char* reason) {
 void CleanupOnRenderThread(const char* reason) {
     MovementStop(reason);
     SilentAimStop(reason);
+    ShotLoggingStop(reason);
     AntiAimStop(reason);
     ThirdPersonStop(reason);
     ZoomStop(reason);
@@ -252,6 +254,7 @@ void CleanupOnRenderThread(const char* reason) {
     WorldLightingSwitchesStop(reason);
     WorldLightingStop(reason);
     WorldEnvironmentLightingStop(reason);
+    ShotLoggingFlushTelemetry();
     AimConsoleStop();
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
@@ -465,6 +468,7 @@ void PollMenuKeyboard(bool foreground) {
 
 void DrawFrame(IDXGISwapChain* chain) {
     SilentAimFlushTelemetry();
+    ShotLoggingFlushTelemetry();
     AntiAimFlushTelemetry();
     ThirdPersonFlushTelemetry();
     ZoomFlushTelemetry();
@@ -633,6 +637,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
         } else if (!selectedChain && stopRequested.load() && !stopped.load()) {
             MovementStop("stopped before selecting render chain");
             SilentAimStop("stopped before selecting render chain");
+            ShotLoggingStop("stopped before selecting render chain");
             AntiAimStop("stopped before selecting render chain");
             ThirdPersonStop("stopped before selecting render chain");
             ZoomStop("stopped before selecting render chain");
@@ -720,6 +725,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
     const bool aimPrepared = SilentAimPrepare(&EspLog);
+    const bool shotLoggingPrepared = ShotLoggingPrepare(&EspLog);
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool thirdPersonPrepared = ThirdPersonPrepare(&EspLog);
     const bool zoomPrepared = ZoomPrepare(&EspLog);
@@ -734,6 +740,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status != MH_OK) {
         MovementStop("partial hook activation failure");
         SilentAimStop("partial hook activation failure");
+        ShotLoggingStop("partial hook activation failure");
         AntiAimStop("partial hook activation failure");
         ThirdPersonStop("partial hook activation failure");
         ZoomStop("partial hook activation failure");
@@ -748,6 +755,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     }
     if (movementPrepared) MovementActivate();
     if (aimPrepared) SilentAimActivate(movementPrepared);
+    if (shotLoggingPrepared && movementPrepared) ShotLoggingActivate();
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (thirdPersonPrepared) ThirdPersonActivate();
     if (zoomPrepared) ZoomActivate();
@@ -765,6 +773,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     stopRequested.store(true, std::memory_order_release);
     MovementStop("explicit overlay stop request");
     SilentAimStop("explicit overlay stop request");
+    ShotLoggingStop("explicit overlay stop request");
     AntiAimStop("explicit overlay stop request");
     ThirdPersonStop("explicit overlay stop request");
     ZoomStop("explicit overlay stop request");

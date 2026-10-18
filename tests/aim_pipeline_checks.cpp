@@ -5,6 +5,8 @@
 #include "silent_aim_offsets.h"
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
+#include "shot_logging.h"
+#include "shot_log_settings.h"
 #include "movement.h"
 #include "movement_offsets.h"
 #include "movement_telemetry.h"
@@ -26,6 +28,8 @@ bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volum
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
 bool recorderSawNativePress = false, builderSawPrimary = false, checksumSawCancelledPrimary = false;
 std::vector<std::string> telemetry;
+std::vector<ShotLogMetadata> shotMetadata;
+unsigned shotPumps = 0;
 AimWeaponSnapshot weapon{};
 constexpr std::uint64_t UnrelatedDown = 0x1000, UnrelatedChanged = 0x2000, UnrelatedThird = 0x4000;
 constexpr std::uint32_t UnrelatedPresence = 0x400000;
@@ -161,6 +165,8 @@ struct World {
         weaponAvailable = weaponCurrent = checksumAvailable = true;
         badHistory = false;
         telemetry.clear();
+        shotMetadata.clear(); shotPumps = 0;
+        ShotLogSetSettings({});
         weapon = {};
         weapon.weapon = 0x444000; weapon.identity = 0x445000; weapon.services = 0x446000;
         weapon.data = 0x447000; weapon.handle = 0x8008;
@@ -193,6 +199,7 @@ void GateChecks(World& world) {
     world.History(below);
     Expect(Equal(below.History(), Command::PhysicalView) && checksumCalls == 0,
         "rejected automatic candidate does not acquire manual-fire history or regenerate checksum");
+    Expect(shotMetadata.empty() && shotPumps == 1, "rejected fire has no shot context; native logger still receives its owner pump");
 
     world.Reset();
     Command accepted;
@@ -208,6 +215,10 @@ void GateChecks(World& world) {
         accepted.Index() == -1 && !(accepted.Presence() & cmd::command::Attack1Present),
         "automatic primary buttons exist before the builder; native builder retains index ownership");
     world.History(accepted);
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].automatic && shotMetadata[0].chanceValid &&
+        shotMetadata[0].commandSequence == 37 && shotMetadata[0].hitchance == 100 &&
+        shotMetadata[0].source.pawn == 0x8003 && shotMetadata[0].targetPawn == 0x8004,
+        "successful automatic history publishes copied aim context without claiming an actual shot");
     Put(Address(expectedInput) + fire::InputPrimaryIndex, -1);
     Expect(builderCalls == 1 && builderSawPrimary && accepted.Index() == 0 &&
         (accepted.Presence() & cmd::command::Attack1Present) && Equal(accepted.History(), Desired()),
@@ -233,6 +244,26 @@ void GateChecks(World& world) {
     world.Prepare(manual); world.History(manual);
     Expect(recorderCalls == 0 && Equal(manual.Buttons(), manualButtons) && Equal(manual.History(), Desired()),
         "physical/manual command primary remains available to existing silent aim below the automatic threshold");
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].automatic && shotMetadata[0].chanceValid &&
+        shotMetadata[0].hitchance == 0, "manual aimed history captures its actual zero-percent estimate");
+
+    world.Reset();
+    Command manualStale;
+    volumeCurrent = weaponCurrent = false;
+    auto staleButtons = manualStale.originalButtons; staleButtons.down |= 1;
+    Put(Address(manualStale.command) + move::command::Buttons, staleButtons);
+    world.Prepare(manualStale); world.History(manualStale);
+    Expect(Equal(manualStale.History(), Desired()) && shotMetadata.size() == 1 &&
+        !shotMetadata[0].chanceValid && !shotMetadata[0].capsuleValid && !*shotMetadata[0].weapon,
+        "manual fire remains available when logging revalidation marks stale weapon/geometry metadata unknown");
+
+    world.Reset();
+    Command loggingChanged;
+    world.Prepare(loggingChanged);
+    ShotLogSetSettings({false, true});
+    world.History(loggingChanged);
+    Expect(Equal(loggingChanged.History(), Desired()) && loggingChanged.Index() == 0 && checksumCalls == 0 && shotMetadata.empty(),
+        "logging preferences can change between request and publication without cancelling working autofire");
 
     for (int unavailable = 0; unavailable < 4; ++unavailable) {
         world.Reset();
@@ -442,6 +473,7 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
     if (!selectAvailable) return false;
     target = {};
     target.local.pawn = source.pawn;
+    target.local.controllerHandle = 0x8002; target.local.pawnHandle = 0x8003;
     target.enemy.pawn = 0x555000; target.enemy.pawnHandle = 0x8004;
     target.eye = {}; target.point = {100, 10, 0}; target.hitbox = hitbox;
     target.solution = SilentAimSolve(target.eye, target.point, view, fov);
@@ -475,6 +507,8 @@ bool MovementRefinalizeCommand(void*, void* command) noexcept {
     return checksumAvailable;
 }
 void MovementTelemetryPush(const char* message) noexcept { if (message) telemetry.emplace_back(message); }
+void ShotLoggingPump() noexcept { ++shotPumps; }
+void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept { shotMetadata.push_back(metadata); }
 
 int main() {
     World world;

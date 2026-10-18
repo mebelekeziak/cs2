@@ -7,6 +7,8 @@
 #include "aim_autofire_offsets.h"
 #include "aim_hitchance.h"
 #include "aim_weapon.h"
+#include "shot_logging.h"
+#include "shot_log_settings.h"
 #include "movement.h"
 #include "cs2_offsets.h"
 #include "movement_memory.h"
@@ -186,6 +188,47 @@ bool Current(const Decision& decision) noexcept {
         SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
         AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
 }
+template<std::size_t N> void CopyNativeText(std::uintptr_t address, char (&text)[N]) noexcept {
+    if (!address) return;
+    for (std::size_t i = 0; i + 1 < N; ++i) {
+        char value = 0;
+        if (!Read(address + i, value)) { text[0] = 0; return; }
+        text[i] = value;
+        if (!value) return;
+    }
+    text[N - 1] = 0;
+}
+void CaptureShot(const Decision& decision, std::uintptr_t command, bool automatic) noexcept {
+    if (!ShotLogGetSettings().enabled || !SameSource(decision.source) ||
+        !SilentAimTargetValid(decision.source, decision.target)) return;
+    const bool volumeCurrent = decision.volume.valid && SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume);
+    const bool weaponCurrent = AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
+    ShotLogMetadata metadata{};
+    metadata.receiptMs = GetTickCount64();
+    metadata.source.controller = decision.target.local.controllerHandle;
+    metadata.source.pawn = decision.target.local.pawnHandle;
+    Read(command + movement_offsets::command::Sequence, metadata.commandSequence);
+    metadata.weaponHandle = decision.weapon.handle;
+    metadata.targetController = decision.target.enemy.controllerHandle;
+    metadata.targetPawn = decision.target.enemy.pawnHandle;
+    if (decision.target.enemy.controller)
+        CopyNativeText(decision.target.enemy.controller + cs2_offsets::CBasePlayerController::m_iszPlayerName, metadata.targetName);
+    std::uintptr_t designer = 0;
+    if (weaponCurrent && decision.weapon.identity && Read(decision.weapon.identity + cs2_offsets::CEntityIdentity::m_designerName, designer))
+        CopyNativeText(designer, metadata.weapon);
+    metadata.eye = decision.target.eye;
+    metadata.aim = {decision.target.solution.angles.pitch + decision.weapon.aimPunch.pitch,
+        decision.target.solution.angles.yaw + decision.weapon.aimPunch.yaw,
+        decision.target.solution.angles.roll + decision.weapon.aimPunch.roll};
+    metadata.capsule = decision.volume.capsule;
+    metadata.capsuleValid = volumeCurrent;
+    metadata.hitchance = decision.chance.percent;
+    metadata.hits = decision.chance.hits; metadata.samples = decision.chance.samples;
+    metadata.chanceValid = decision.chance.valid && volumeCurrent && weaponCurrent;
+    metadata.spread = decision.weapon.spread; metadata.inaccuracy = decision.weapon.inaccuracy;
+    metadata.range = decision.weapon.range; metadata.automatic = automatic;
+    ShotLoggingCapture(metadata);
+}
 bool Cancel(Pending& request, void* input, void* command) noexcept {
     const bool restored = SilentAimCancelAutofire(request.patch, &fireDiagnostics);
     bool checksum = true;
@@ -235,6 +278,7 @@ void Process(void* input, void* command) noexcept {
                 "automatic cancellation incomplete; aim stopped", true); return;
         }
         ++shots; ++edited; ++fired; request->waiting = false;
+        CaptureShot(decision, address, true);
         Status("autofire primary-fire history updated");
         Report(decision, "automatic primary published", true); return;
     }
@@ -254,6 +298,7 @@ void Process(void* input, void* command) noexcept {
         Status("source/history changed; shot unchanged"); return;
     }
     ++edited;
+    CaptureShot(decision, address, false);
     Status("primary-fire history updated");
     Report(decision, "manual primary aimed", true);
     const auto now = GetTickCount64();
@@ -332,6 +377,7 @@ void SilentAimActivate(bool commandHookReady) noexcept {
     ReleaseSRWLockExclusive(&mutationLock);
 }
 void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noexcept {
+    ShotLoggingPump();
     AcquireSRWLockExclusive(&mutationLock);
     ++prepareCalls;
     if (!commandReady) {

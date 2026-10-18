@@ -453,29 +453,56 @@ Rebuild cleanup preserves human takeover. If state or history changes before aim
 can be applied, the owned attack is cancelled and the original native finalizer
 regenerates its CRC. Native recorder arena/timing caches are not rewound.
 
-**Realtime debugging:** open CS2's developer console to see `AIM_HITCHANCE`
-records, mirrored in the existing `logs/overlay-<run>.log` session file. They
-include estimate validity, percentage, hit/sample counts, minimum, autofire,
-weapon, readiness, spread, inaccuracy, punch and decision/rejection reason.
-Estimates are bounded to five records per second; shot/decision transitions can
-report up to twenty. `AIM_FIRE_DIAGNOSTICS` and existing `AIM_DIAGNOSTICS` report
-cumulative counters about every two seconds. Hook callbacks enqueue bounded
-messages; their consumer performs file/console I/O. `AIM_CONSOLE_READY` confirms
-the native console sink; if unavailable, `AIM_CONSOLE_UNAVAILABLE` explains the
-file-only fallback. The game's console/logging policy controls native visibility.
+**Realtime debugging:** **Aim > Shot logs** defaults on. The console and
+`logs/overlay-<run>.log` receive one result per observed local native
+`weapon_fire` event, including manual fire. Aim requests alone do not count as
+shots. Typical output:
+
+```text
+AIM_SHOT #1 HIT Mayer in chest for 34 (66 HP) | weapon ak47 | target Mayer [0x00008006] | HC 78% (200/256) | delay 22ms
+AIM_SHOT #2 MISS no confirmed damage in 250ms | weapon ak47 | HC unknown | impact missing or not uniquely mapped
+```
+
+Results settle after a 250ms outcome window plus a 60ms ordering allowance.
+Damage, remaining HP and hitgroup come from native damage events. Hitchance and
+intended target come from a recent compatible weapon/command snapshot; they can
+be unknown. Receipt delay is a local event timing measurement, not network ping.
+The events contain no shot ID: overlapping bursts or late events can make the
+mapping ambiguous. Such shots say `UNCONFIRMED`; separate `AIM_HIT AMBIGUOUS`
+lines preserve confirmed damage without assigning it arbitrarily. A `MISS`
+means no confirmed damage within the window. An observed impact may also report
+whether its segment crosses the recorded target capsule; this does not establish
+spread, obstruction, prediction or server rejection as the cause. Lifecycle
+changes and cooperative stop close unfinished records as unconfirmed. A lost
+local snapshot retains only copied full handles for up to one second to preserve
+late damage/death evidence; a new valid pawn or lifecycle event resets immediately.
+Native events have no lifecycle cookie, so a delayed same-pawn event across
+rounds still cannot be distinguished exactly from a fresh receipt.
+
+**Verbose aim diagnostics** defaults off. Enable it to also show the existing
+`AIM_HITCHANCE`, preparation, firing and numeric shot detail records in the
+console. Those technical records always stay in the session file. Both logging
+preferences are saved in presets and can change independently of autofire.
+Console lines omit internal queue/thread prefixes. `AIM_CONSOLE_READY` confirms
+the native console sink; `AIM_SHOT_LOG_READY` confirms native event interests
+registered on the engine owner. Unavailable native contracts produce an explicit
+file/console status. Callbacks copy/enqueue bounded values; render-owner output
+performs sink I/O outside tracker locks. Listener storage remains resident and
+inert after stop until normal process exit.
 
 Hitchance is a current geometric estimate. It does not trace walls, predict
 damage/penetration, model other players as blockers, refresh animations or add
 lag compensation. A target behind a wall can still reach 100% and trigger
 autofire. Native shot-time interpolation, future recoil/spread changes and server
 timing can differ from this snapshot; the percentage is not measured hit
-registration. No live autofire or new hit-registration result is claimed.
+registration.
 
 Contracts and rediscovery:
 [weapon model](tools/CS2_AIM_WEAPON_EVIDENCE.md),
 [authored geometry](tools/CS2_AIM_GEOMETRY_EVIDENCE.md),
 [native autofire](tools/CS2_AUTOFIRE_EVIDENCE.md),
-[console](tools/CS2_AIM_CONSOLE_EVIDENCE.md).
+[console](tools/CS2_AIM_CONSOLE_EVIDENCE.md),
+[shot result events](tools/CS2_SHOT_EVENTS_EVIDENCE.md).
 
 **Verification, October 16, 2026:** public and diagnostic x64 Release builds
 succeed, with **31/31 CTest suites passing in each**. The new suites include
@@ -510,9 +537,9 @@ values independently of manual history diagnostics. The native attack recorder
 and hitchance sampler are unchanged by this correction. Regression fixtures
 reproduced the original failure before the fix, then verify automatic request
 and aimed history publication without manual input for sparse and zero views.
-They also cover an exactly 0% estimate with a 0% minimum. No new live autofire
-result is claimed; reload the rebuilt DLL after a normal game restart for the
-next offline check.
+They also cover an exactly 0% estimate with a 0% minimum. The user subsequently
+confirmed the corrected autofire works in an offline bot match. This report does
+not establish live behavior of the new shot result logger.
 
 Both corrected public/diagnostic Release builds succeed and all 31 suites pass
 in each, including 75 integrated pipeline checks and 71 command/view checks.
@@ -520,6 +547,20 @@ All seventeen installed-file checks pass in
 `logs/compatibility/20261018T082358165777Z/`. The expanded native-view verifier
 rejects 27 mutated instruction windows and an incorrect parent-angle presence
 constant. Both DLLs retain AMD64, zero static TLS and zero delay imports.
+
+**Shot logging verification, October 18:** public and diagnostic x64 Release
+builds succeed with **35/35 CTest suites passing in each**. New suites cover
+91 native event adapter checks, 61 tracker/formatting checks, 85 integrated
+logging lifecycle checks and 46 settings/routing checks. The existing pipeline
+now passes 80 checks, including logging changes during an automatic request and
+stale manual-shot metadata. Real menu/config checks cover both new controls.
+All eighteen installed-file checks pass in
+`logs/compatibility/20261018T085349765675Z/`; 26 incorrect event header contracts
+were rejected. The software D3D11 preview was inspected in
+`logs/shot-logging-menu.bmp`. Both final DLLs retain AMD64, zero static TLS and
+zero delay imports. These are static and standalone observations; native event
+delivery and the new shot logger's in-game output await an offline client check.
+The working autofire correction was checkpointed as `5aa11f3` before this stage.
 
 Restart CS2 normally before loading the new DLL through **Load Overlay.cmd**
 if a previous copy is resident. Open **Aim**, enable silent aim, set the minimum

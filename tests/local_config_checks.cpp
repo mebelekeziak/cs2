@@ -6,6 +6,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "shot_log_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -62,6 +63,7 @@ int main() {
     ZoomResetSettings();
     Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom reset restores both levels and disables override");
     Expect(!AntiAimGetSettings().enabled, "anti aim starts disabled");
+    Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "shot logs start enabled with verbose diagnostics disabled");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
@@ -71,6 +73,8 @@ int main() {
         "default preset explicitly saves every camera control");
     Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\n") != std::string::npos,
         "default preset explicitly saves both scoped zoom levels");
+    Expect(defaults.find("shot_log.enabled=1\nshot_log.verbose=0\n") != std::string::npos,
+        "default preset explicitly saves human shot logs enabled and verbose console diagnostics disabled");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -102,6 +106,8 @@ int main() {
     ThirdPersonSetSettings(expectedCamera);
     const ZoomSettings expectedZoom{true, 0, 137.25f};
     ZoomSetSettings(expectedZoom);
+    const ShotLogSettings expectedShotLog{false,true};
+    ShotLogSetSettings(expectedShotLog);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
@@ -109,13 +115,16 @@ int main() {
     Expect(custom.find("anti_aim.enabled=1\n") != std::string::npos, "custom preset saves enabled anti aim");
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
-        !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults,
+        !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
+        ShotLogGetSettings()==ShotLogSettings{true,false},
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim, "aim, autofire, threshold and sample count roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
+    Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
+        "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
     bool sameWorld = loadedWorld.enabled == world.enabled && loadedWorld.exposureEv == world.exposureEv &&
         loadedWorld.contrast == world.contrast && loadedWorld.saturation == world.saturation &&
@@ -158,6 +167,10 @@ int main() {
         "version=1\ncamera.height=12oops\n", "version=1\ncamera.distance=120\ncamera.distance=130\n",
         "version=1\nzoom.enabled=2\n", "version=1\nzoom.zoom1=nan\n", "version=1\nzoom.zoom2=inf\n",
         "version=1\nzoom.zoom1=1oops\n", "version=1\nzoom.zoom2=50\nzoom.zoom2=150\n",
+        "version=1\nshot_log.enabled=true\n", "version=1\nshot_log.verbose=2\n",
+        "version=1\nshot_log.enabled=0\nshot_log.enabled=1\n",
+        "version=1\nshot_log.verbose=0\nshot_log.verbose=1\n",
+        "version=1\nshot_log.enabled=1\naim.enabled=0\nshot_log.verbose=invalid\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -173,6 +186,13 @@ int main() {
         SilentAimGetSettings().samples == 256, "older presets restore autofire off and hitchance defaults");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
+    Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
+    Write(badPath,"version=1\nshot_log.enabled=0\n");
+    Expect(LocalConfigLoad(bad,error) && ShotLogGetSettings()==ShotLogSettings{false,false},
+        "preset with only human logging key uses independent verbose default");
+    Write(badPath,"version=1\nshot_log.verbose=1\n");
+    Expect(LocalConfigLoad(bad,error) && ShotLogGetSettings()==ShotLogSettings{true,true} && !SilentAimGetSettings().enabled,
+        "preset with only verbose key retains enabled human logging default without enabling aim");
     Write(badPath, "version=1\nzoom.enabled=1\nzoom.zoom1=-999\nzoom.zoom2=999\n");
     Expect(LocalConfigLoad(bad, error) && ZoomGetSettings() == ZoomSettings{true, 0, 200},
         "scoped zoom config load clamps both levels through bounded settings publisher");
