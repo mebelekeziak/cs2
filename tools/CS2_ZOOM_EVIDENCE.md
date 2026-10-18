@@ -100,9 +100,94 @@ The implementation converts degrees for trigonometry. Zero returns B exactly;
 This preserves each weapon's different native FOV and scales the current
 native interpolation. It is not a fixed replacement of every weapon's native
 FOV1/FOV2. Invalid/nonfinite inputs, FOV outside `(0,179)`, or a special native
-view wider than the baseline retain the native view. Only current world FOV
-is changed; scope graphics, sensitivity, viewmodel FOV, recoil, weapon state,
-shooting and server data remain native.
+view wider than the baseline retain the native view. The FOV hook changes only
+current world FOV. Scope graphics, viewmodel FOV, recoil, weapon state,
+shooting and server data remain native. Scoped mouse sensitivity has its own
+independent current-call override described below.
+
+## Scoped mouse sensitivity (October 18, 2026)
+
+The installed build and SHA-256 above were rechecked without starting a client
+or server. Named `C_BasePlayerPawn` schema fields independently identify
+`m_flFOVSensitivityAdjust=0x149C` and `m_flMouseSensitivity=0x14A0` as floats.
+Native pawn function `0xB227D0..0xB228B9`, ABI `void(pawn*)`, produces both.
+It obtains integer baseline/current/minimum FOV through camera-services virtual
+slots `+0x120`, `+0x118`, `+0x150`, uses the greater current/minimum FOV, and
+initializes the adjustment to 1. If that FOV equals baseline, mouse sensitivity
+is set to the native zero sentinel. Otherwise it computes
+`adjustment = zoom_sensitivity_ratio * integerFov / integerBaseline` and
+`mouseSensitivity = sensitivity * adjustment`. The baseline denominator uses
+1 if its integer value is zero. Registrations `0xC957E..0xC95A7` and
+`0xD81EE..0xD8217` bind the exact names `zoom_sensitivity_ratio` and
+`sensitivity` to embedded cvar wrappers `0x255ACD8` and `0x2562A10`.
+
+The current-call override avoids writing these persistent pawn fields or any
+cvar. Exact mouse input caller `0xB65560..0xB6568E` calls `CCSGOInput` virtual
+slot 24 (`+0xC0`) at `0xB655D1`, passing the float literal **1.0** from
+`0x1AC6074`. The installed input primary RTTI table `0x1C9DB20` points that
+slot to `0xB80180`, whose complete body is `movaps xmm0,xmm1; ret`: this getter
+preserves that exact 1.0. The embedded input object at `0x257B640` and its table
+are independently established by constructor operands `0xEE574`, `0xEE58C`
+and `0xEE59A`, as in the movement verifier.
+
+At `0xB65606`, the caller passes the result as XMM1 to native mouse dispatcher
+`0xBA67B0`. At `0xBA68DC` that dispatcher resolves the pawn for its split-screen
+slot using `0x96A8F0`, reads `pawn+0x149C` at `0xBA68E6`, and multiplies its
+incoming 1.0 by that adjustment only when the adjustment is positive. Otherwise
+the scale stays 1.0. It passes this completed scale in **XMM3**, the fourth
+argument, to exactly one of these conversion methods:
+
+| Function / sole direct call site | Microsoft x64 ABI |
+| --- | --- |
+| `0xBA6ED0` / `0xBA6934` | `void(int slot, float axis1, float axis2, float scale, float* angular1, float* angular2, int* mouse1, int* mouse2)` |
+| `0xBA6D00` / `0xBA694C` | `void(int slot, float axis1, float axis2, float scale, float deltaTime, float* angular1, float* angular2)` |
+
+There is no `this` argument: ECX contains the slot; XMM1, XMM2 and XMM3 hold
+the three floats. In the alternate method, `deltaTime` is stack argument 5,
+loaded at `0xBA6D81` from post-prologue `rsp+0xE0`; output pointers are stack
+arguments 6 and 7. In the ordinary method, output pointers are stack arguments
+5 and 6 and integer mouse outputs are stack arguments 7 and 8. Callers ignore
+return registers; neither callback contract defines a return value.
+
+The ordinary conversion obtains the native `sensitivity` with split-screen
+cvar getter `0xBAA320`, then applies the passed scale, native vertical scale and
+the engine's native angular coefficients to its original float/integer output
+buffers. The alternate curve conversion also applies the passed scale only
+after its native curve calculation (`0xBA6E03`, `0xBA6E6C`). Both therefore
+support the same call-local replacement without duplicating input curves,
+rounding, angular coefficients, cvar fallback, or output-buffer behavior.
+The separate `0xB62A20` path reads `m_flMouseSensitivity` directly for native
+camera/mouse-delta bookkeeping; it is not the angular conversion intercepted
+here, and its stored fields remain untouched.
+
+For selected sensitivity percentage `p` in 0..100, the replacement fourth
+argument is `1 + (nativeScale - 1) * p / 100`. Zero restores the exact original
+unscoped angular sensitivity; 100 forwards the original native argument
+unchanged, including the user's native zoom ratio. Intermediate values blend
+the full native scale rather than attempting to cancel only FOV. This setting
+is independent of the two world-FOV strengths and applies to both zoom levels.
+The existing scoped-zoom master switch also controls sensitivity.
+
+The callback requires split-screen slot zero, an alive scoped local pawn and
+one of the same six verified active weapon classes/levels. It snapshots and
+revalidates source identity immediately before forwarding to native conversion;
+invalid/nonfinite inputs retain the original scale. Native receives all other
+arguments unchanged and owns every output write. The existing dynamic TLS and
+shared callback lock cover view and both mouse callbacks, so nested calls
+forward unchanged and stop drains all in-flight edits before retaining native
+forwarding. No persistent sensitivity state needs restoration, and stopped
+code remains resident until process exit.
+
+`inspect_zoom.py` now pins the complete mouse input caller, scale getter,
+dispatcher, both conversion functions, pawn sensitivity producer and both
+cvar registration windows. It checks exact schema fields, input RTTI/table,
+constructor operands, the 1.0 literal, direct call targets, decoded cvar
+producer/consumer relationships, and every added source constant/byte array.
+Static evidence and memory-backed callback tests do not establish live mouse
+feel; no scoped client run was performed in this investigation.
+All 15 deliberate mutations of the nine new constants and six new byte arrays
+were rejected by the frozen verifier; results are recorded in
+`logs/research/zoom-sensitivity-header-mutations/results.json`.
 
 ## Final current-view hook and lifecycle
 
@@ -139,11 +224,12 @@ while an engine callback may return through it.
 
 ## Verification and limits
 
-`inspect_zoom.py` pins nine instruction windows across the native normal-view
+`inspect_zoom.py` pins seventeen instruction windows across the native normal-view
 wrapper, baseline getter/camera baseline, current-FOV interpolation, view-FOV
-producer/projection consumer, weapon FOV selection and zoom-state cycle/use.
+producer/projection consumer, weapon FOV selection, zoom-state cycle/use and
+native scoped mouse sensitivity production/conversion.
 It separately checks exact named schema registrations, RTTI/vtable slots,
-decoded member operands, every source constant and all three source arrays.
+decoded member operands, every source constant and all source arrays.
 Entity layouts come from the existing entity header and its independent frozen
 compatibility check, included in the combined verification bundle.
 
@@ -158,7 +244,7 @@ the installed engine routines. Static verifier success/build success cannot
 establish visible scope appearance or gameplay behavior. Those remain
 unobserved until the user's authorized offline/private session.
 
-Both public and diagnostic x64 Release builds succeeded. The native zoom
+Historical October 16 verification: both public and diagnostic x64 Release builds succeeded. The native zoom
 suite passes **556 checks, zero failures**. All **13/13** installed static
 verifiers pass in `logs/compatibility/20261016T160815546576Z/`; all **13/13**
 deliberate header-constant/array mutations reject in
@@ -167,3 +253,21 @@ static TLS and zero delay-import directories. All 25 CTest suites pass in each
 build, including menu/config interaction checks; verification is also recorded
 in the README. The software D3D11 menu preview was visually inspected
 with zoom 1 at 0% and zoom 2 at 150%; no live scoped render was observed.
+
+**October 18 sensitivity verification:** public and diagnostic x64 Release
+builds succeed and each passes 42/42 CTest suites. The expanded `zoom_checks`
+passes 1,794 checks, including normal and alternate conversion forwarding,
+0/50/100% sensitivity, both zoom stages and all six classes, independence from
+the FOV sliders, unchanged source/entity bytes, invalid/stale/dead sources,
+nonprimary slots, invalid scales, nested mouse/view callbacks, and cooperative
+stop during either blocked native conversion. Menu/config regressions cover
+actual slider drags, resets, fractional persistence and missing older keys.
+The software D3D11 preview `logs/zoom-sensitivity-menu.bmp` was inspected.
+
+All 21 installed-file compatibility checks pass in
+`logs/compatibility/20261018T140828198745Z/`; that bundle's zoom header/verifier
+hashes match the final sources. All 15 added sensitivity constant/array
+mutations reject in
+`logs/research/zoom-sensitivity-header-mutations/results.json`. Both payloads
+retain zero TLS and delay-import directories. No client/server was launched;
+live scoped sensitivity and visible zoom remain unobserved.

@@ -21,7 +21,7 @@ SilentAimSettings SilentAimGetSettings() noexcept {
         static_cast<float>((value >> 20) & 0x3fff) / 100.0f, static_cast<int>((value >> 34) & 0x7ff)};
 }
 void SilentAimSetSettings(const SilentAimSettings& value) noexcept {
-    const float fov = std::isfinite(value.fov) ? std::clamp(value.fov, 0.1f, 30.0f) : 5.0f;
+    const float fov = std::isfinite(value.fov) ? std::clamp(value.fov, 0.1f, 180.0f) : 5.0f;
     const auto hitbox = static_cast<unsigned>(std::clamp(static_cast<int>(value.hitbox), 0, 3));
     const float chance = std::isfinite(value.hitchance) ? std::clamp(value.hitchance, 0.0f, 100.0f) : 50.0f;
     settings.store(static_cast<std::uint64_t>(std::lround(fov * 100)) |

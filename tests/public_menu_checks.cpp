@@ -337,13 +337,19 @@ void ZoomControls() {
            "scoped zoom opens at defaults independently of disabled ESP and camera");
     ClickControl("##Zoom1", 0.1f);
     ClickControl("##Zoom2", 0.9f);
-    Expect(ZoomGetSettings() == ZoomSettings{}, "disabled scoped zoom master blocks both sliders");
+    ClickControl("##ZoomSensitivity", 0.1f);
+    Expect(ZoomGetSettings() == ZoomSettings{}, "disabled scoped zoom master blocks all three sliders");
     ClickControl("Override scoped zoom");
     ClickControl("##Zoom1", 0.2f);
     const float firstLevel = ZoomGetSettings().zoom1;
     ClickControl("##Zoom2", 0.8f);
     Expect(ZoomGetSettings().enabled && firstLevel < 60 && ZoomGetSettings().zoom1 == firstLevel &&
            ZoomGetSettings().zoom2 > 140, "scoped zoom sliders independently publish first and second zoom levels");
+    const auto zoomLevels = ZoomGetSettings();
+    ClickControl("##ZoomSensitivity", 0.35f);
+    Expect(ZoomGetSettings().sensitivity > 25 && ZoomGetSettings().sensitivity < 45 &&
+           ZoomGetSettings().zoom1 == zoomLevels.zoom1 && ZoomGetSettings().zoom2 == zoomLevels.zoom2,
+           "sensitivity slider publishes blended values without changing either zoom level");
     const auto dragToEndpoint = [](const char* control, bool maximum) {
         ClickControl(control); // Scroll the control fully into view first.
         const auto rectangle = ControlRect(control);
@@ -358,28 +364,36 @@ void ZoomControls() {
     };
     dragToEndpoint("##Zoom1", false);
     dragToEndpoint("##Zoom2", true);
-    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "scoped zoom slider endpoints reach no zoom and strongest zoom");
+    dragToEndpoint("##ZoomSensitivity", false);
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200, 0},
+           "scoped slider endpoints reach no zoom, strongest zoom and unscoped sensitivity");
+    dragToEndpoint("##ZoomSensitivity", true);
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200, 100},
+           "sensitivity slider upper endpoint reaches native scoped sensitivity");
+    dragToEndpoint("##ZoomSensitivity", false);
     ImGui::NewFrame();
     ImGui::LogToBuffer();
     DrawPublicMenu();
     const char* labels = ImGui::GetCurrentContext()->LogBuffer.c_str();
     Expect(std::strstr(labels, "Zoom 1") && std::strstr(labels, "Zoom 2") &&
-           std::strstr(labels, "0%: no zoom. 100%: weapon default. 200%: stronger zoom."),
-           "scoped zoom labels explain both levels and slider meanings");
+           std::strstr(labels, "0%: no zoom. 100%: weapon default. 200%: stronger zoom.") &&
+           std::strstr(labels, "Zoom sensitivity") && std::strstr(labels, "0% uses unscoped sensitivity") &&
+           std::strstr(labels, "100% uses CS2 native scoped sensitivity") && std::strstr(labels, "Values between blend the two."),
+           "scoped zoom labels explain both zoom levels, sensitivity endpoints and blending");
     ImGui::LogFinish();
     ImGui::Render();
     ClickControl("Reset ESP appearance");
-    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "ESP reset preserves scoped zoom controls");
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200, 0}, "ESP reset preserves scoped zoom and sensitivity controls");
     ClickControl("Override scoped zoom");
     ClickControl("Reset scoped zoom");
-    Expect(ZoomGetSettings() == ZoomSettings{}, "scoped zoom reset works while its master is disabled");
+    Expect(ZoomGetSettings() == ZoomSettings{}, "scoped zoom reset restores native sensitivity while its master is disabled");
     Expect(!ThirdPersonGetSettings().enabled && MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe &&
            !WorldGetSettings().enabled, "scoped zoom edits preserve independent camera, movement and world settings");
     ClickControl("Scoped zoom");
     EspSetSettings(savedEsp);
     ThirdPersonSetSettings(savedCamera);
-    // Keep both endpoint values for the Configs mouse-flow persistence check.
-    ZoomSetSettings({true, 0, 200});
+    // Keep zoom endpoints and blended sensitivity for the Configs mouse-flow persistence check.
+    ZoomSetSettings({true, 0, 200, 42.5f});
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
@@ -578,8 +592,10 @@ int main() {
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
     ClickControl("##AimFov", 0.5f);
-    Expect(SilentAimGetSettings().enabled && SilentAimGetSettings().fov > 10,
+    Expect(SilentAimGetSettings().enabled && SilentAimGetSettings().fov > 80,
            "silent aim master and FOV respond to mouse input");
+    ClickControl("##AimFov", 0.99f);
+    Expect(SilentAimGetSettings().fov == 180, "silent aim FOV slider reaches 180 degrees");
     for (const auto hitbox : { AimHitbox::Head, AimHitbox::Stomach, AimHitbox::Pelvis, AimHitbox::Chest }) {
         const char* name = hitbox == AimHitbox::Head ? "Head" : hitbox == AimHitbox::Stomach ? "Stomach" :
             hitbox == AimHitbox::Pelvis ? "Pelvis" : "Chest";

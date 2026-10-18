@@ -61,6 +61,15 @@ void MathChecks() {
     result = SilentAimSolve({}, {100, 0, 100}, {-45, 0, 0}, 1);
     Expect(result.valid && Near(result.angles.pitch, -45), "upward target uses negative Source pitch");
     Expect(!SilentAimSolve({}, {100, 100, 0}, {}, 5).valid, "outside-FOV enemy is rejected");
+    result = SilentAimSolve({}, {0, 100, 0}, {}, 90);
+    Expect(result.valid && Near(result.separation, 90), "90 degree FOV includes a perpendicular target at its boundary");
+    result = SilentAimSolve({}, {-100, 0, 0}, {}, 180);
+    Expect(result.valid && Near(result.separation, 180) && Near(result.angles.yaw, 180),
+           "180 degree FOV includes a target directly behind");
+    Expect(!SilentAimSolve({}, {-100, 0, 0}, {}, 179.99f).valid,
+           "target directly behind remains outside a smaller FOV");
+    Expect(!SilentAimSolve({}, {100, 0, 0}, {}, 180.01f).valid,
+           "FOV above 180 degrees is rejected");
     Expect(!SilentAimSolve({}, {}, {}, 5).valid && !SilentAimSolve({}, {0, 0, 100}, {-89, 0, 0}, 5).valid,
            "zero-length and out-of-range pitch have no aim solution");
     Expect(!SilentAimSolve({}, {100, 0, 0}, {0, std::numeric_limits<float>::quiet_NaN(), 0}, 5).valid,

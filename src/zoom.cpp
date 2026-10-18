@@ -15,8 +15,12 @@ namespace off = zoom_offsets;
 namespace ent = cs2_offsets;
 using ViewFn = void (*)(void*, void*);
 using BaselineFn = float (*)(void*);
+using MouseFn = void (*)(int, float, float, float, float*, float*, int*, int*);
+using MouseAlternateFn = void (*)(int, float, float, float, float, float*, float*);
 ViewFn originalView = nullptr;
 BaselineFn baselineFov = nullptr;
+MouseFn originalMouse = nullptr;
+MouseAlternateFn originalMouseAlternate = nullptr;
 std::uintptr_t client = 0;
 DWORD scopeTls = TLS_OUT_OF_INDEXES;
 SRWLOCK viewLock = SRWLOCK_INIT;
@@ -25,8 +29,10 @@ bool prepared = false, stopped = false;
 std::atomic<const char*> status{"scoped zoom not initialized"};
 ZoomLogCallback logger = nullptr;
 std::atomic<unsigned long long> calls{0}, edited{0}, rejected{0};
+std::atomic<unsigned long long> mouseCalls{0}, mouseEdited{0}, mouseRejected{0};
 ULONGLONG reportTime = 0;
 unsigned long long reportedCalls = 0;
+unsigned long long reportedMouseCalls = 0;
 #ifdef CS2_ZOOM_CHECKS
 bool testRuntime = false;
 #endif
@@ -87,6 +93,36 @@ bool WriteFov(std::uintptr_t address, float value) noexcept {
     __try { std::memcpy(reinterpret_cast<void*>(address),&value,sizeof(value)); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+template<class Forward> void WithSensitivity(int slot, float nativeScale, Forward forward) noexcept {
+    mouseCalls.fetch_add(1,std::memory_order_relaxed);
+    // The native conversion owns all mouse processing and output buffers. Only
+    // its already-computed scope multiplier argument is replaced for this call.
+    if (scopeTls!=TLS_OUT_OF_INDEXES && TlsGetValue(scopeTls)) { forward(nativeScale); return; }
+    AcquireSRWLockShared(&viewLock);
+    bool scope=false;
+    const bool tlsReady=scopeTls!=TLS_OUT_OF_INDEXES && TlsSetValue(scopeTls,&scope);
+    const auto settings=ZoomGetSettings();
+    float scale=nativeScale;
+    if (tlsReady && active.load(std::memory_order_acquire) && settings.enabled && settings.sensitivity!=100 && slot==0) {
+        Source before{}, after{};
+        if (ReadSource(before) && ZoomBlendSensitivity(1.0f,nativeScale,settings.sensitivity,scale) &&
+            ReadSource(after) && after==before) {
+            mouseEdited.fetch_add(1,std::memory_order_relaxed);
+        } else {
+            scale=nativeScale;
+            mouseRejected.fetch_add(1,std::memory_order_relaxed);
+        }
+    }
+    forward(scale);
+    if (tlsReady) TlsSetValue(scopeTls,nullptr);
+    ReleaseSRWLockShared(&viewLock);
+}
+void HookMouse(int slot, float dx, float dy, float scale, float* yaw, float* pitch, int* mouseDx, int* mouseDy) noexcept {
+    WithSensitivity(slot,scale,[&](float selected) { originalMouse(slot,dx,dy,selected,yaw,pitch,mouseDx,mouseDy); });
+}
+void HookMouseAlternate(int slot, float dx, float dy, float scale, float deltaTime, float* yaw, float* pitch) noexcept {
+    WithSensitivity(slot,scale,[&](float selected) { originalMouseAlternate(slot,dx,dy,selected,deltaTime,yaw,pitch); });
+}
 void HookView(void* mode, void* view) noexcept {
     calls.fetch_add(1,std::memory_order_relaxed);
     // Reentrant views are forwarded without borrowing the outer source/settings.
@@ -136,15 +172,31 @@ bool ZoomComputeFov(float baseline, float native, float strength, float& output)
     if (!std::isfinite(result) || result<=0 || result>=179) return false;
     output=static_cast<float>(result); return true;
 }
+bool ZoomBlendSensitivity(float baseline, float native, float strength, float& output) noexcept {
+    if (!std::isfinite(baseline) || baseline<=0 || !std::isfinite(native) || native<0 ||
+        !std::isfinite(strength)) return false;
+    strength=std::clamp(strength,0.0f,100.0f);
+    if (strength==0) { output=baseline; return true; }
+    if (strength==100) { output=native; return true; }
+    output=static_cast<float>(baseline+(static_cast<double>(native)-baseline)*(strength/100.0));
+    return std::isfinite(output) && output>=0;
+}
 bool ZoomPrepare(ZoomLogCallback callback) noexcept {
     logger=callback;
     client=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll"));
-    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{}; std::uintptr_t view=0;
+    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{}; std::uintptr_t view=0, inputTable=0, scaleMethod=0;
+    float unscopedScale=0;
     if (!Read(client,dos) || dos.e_magic!=IMAGE_DOS_SIGNATURE || dos.e_lfanew<=0 || dos.e_lfanew>0x100000 ||
         !Read(client+dos.e_lfanew,nt) || nt.Signature!=IMAGE_NT_SIGNATURE ||
         nt.FileHeader.Machine!=IMAGE_FILE_MACHINE_AMD64 || nt.OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
         nt.FileHeader.TimeDateStamp!=ent::ClientTimestamp || nt.OptionalHeader.SizeOfImage!=ent::ClientImageSize ||
         !Match(client+off::OverrideView,off::OverrideViewBytes) || !Match(client+off::BaselineFov,off::BaselineFovBytes) ||
+        !Match(client+off::MouseConvert,off::MouseConvertBytes) || !Match(client+off::MouseConvertAlternate,off::MouseConvertAlternateBytes) ||
+        !Match(client+off::MouseScale,off::MouseScaleBytes) || !Match(client+off::MouseCaller,off::MouseCallerBytes) ||
+        !Match(client+off::MouseScopeDispatch,off::MouseScopeDispatchBytes) ||
+        !Read(client+off::MouseScaleUnit,unscopedScale) || unscopedScale!=1.0f ||
+        !Read(client+off::MouseInput,inputTable) || inputTable!=client+off::MouseInputVtable ||
+        !Read(inputTable+24*sizeof(std::uintptr_t),scaleMethod) || scaleMethod!=client+off::MouseScale ||
         !Read(client+off::ModeVtable+16*sizeof(std::uintptr_t),view) || view!=client+off::OverrideView) {
         status.store("scoped zoom build verification failed",std::memory_order_release); return false;
     }
@@ -156,9 +208,17 @@ bool ZoomPrepare(ZoomLogCallback callback) noexcept {
         !originalView || MH_QueueEnableHook(target)!=MH_OK) {
         status.store("scoped zoom hook preparation failed",std::memory_order_release); return false;
     }
+    auto* mouseTarget=reinterpret_cast<void*>(client+off::MouseConvert);
+    auto* alternateTarget=reinterpret_cast<void*>(client+off::MouseConvertAlternate);
+    if (MH_CreateHook(mouseTarget,reinterpret_cast<void*>(&HookMouse),reinterpret_cast<void**>(&originalMouse))!=MH_OK ||
+        !originalMouse || MH_CreateHook(alternateTarget,reinterpret_cast<void*>(&HookMouseAlternate),
+            reinterpret_cast<void**>(&originalMouseAlternate))!=MH_OK || !originalMouseAlternate ||
+        MH_QueueEnableHook(mouseTarget)!=MH_OK || MH_QueueEnableHook(alternateTarget)!=MH_OK) {
+        status.store("scoped sensitivity hook preparation failed",std::memory_order_release); return false;
+    }
     prepared=true;
     status.store("scoped zoom disabled",std::memory_order_release);
-    if (logger) logger("ZOOM_BUILD_VERIFIED normal mode final view; six scoped weapon RTTI tables; full serialized handles; native baseline getter; view FOV only");
+    if (logger) logger("ZOOM_BUILD_VERIFIED final view FOV; normal/alternate mouse conversion scale; six scoped weapon RTTI tables; full serialized handles; no persistent settings writes");
     return true;
 }
 void ZoomActivate() noexcept {
@@ -174,7 +234,7 @@ void ZoomStop(const char* reason) noexcept {
     ReleaseSRWLockExclusive(&viewLock);
     if (logger) {
         char text[384]{};
-        std::snprintf(text,sizeof(text),"ZOOM_STOPPED_RESIDENT reason=%s; view edits drained; original forwarding retained; no physical unload",reason ? reason : "stop");
+        std::snprintf(text,sizeof(text),"ZOOM_STOPPED_RESIDENT reason=%s; view/mouse callbacks drained; original forwarding retained; no physical unload",reason ? reason : "stop");
         logger(text);
     }
 }
@@ -185,11 +245,15 @@ void ZoomFlushTelemetry() noexcept {
     if (reportTime && now-reportTime<2000) return;
     reportTime=now;
     const auto count=calls.load(std::memory_order_relaxed);
-    if (count==reportedCalls) return;
+    const auto mouseCount=mouseCalls.load(std::memory_order_relaxed);
+    if (count==reportedCalls && mouseCount==reportedMouseCalls) return;
     reportedCalls=count;
+    reportedMouseCalls=mouseCount;
     char text[384]{};
-    std::snprintf(text,sizeof(text),"ZOOM views=%llu applied=%llu rejected=%llu enabled=%d status=%s; counters do not prove visible output",count,
-        edited.load(std::memory_order_relaxed),rejected.load(std::memory_order_relaxed),ZoomGetSettings().enabled,ZoomStatus());
+    const auto settings=ZoomGetSettings();
+    std::snprintf(text,sizeof(text),"ZOOM views=%llu applied=%llu rejected=%llu mouse=%llu mouse_applied=%llu mouse_rejected=%llu sensitivity=%.1f enabled=%d status=%s; counters do not prove visible output",count,
+        edited.load(std::memory_order_relaxed),rejected.load(std::memory_order_relaxed),mouseCount,
+        mouseEdited.load(std::memory_order_relaxed),mouseRejected.load(std::memory_order_relaxed),settings.sensitivity,settings.enabled,ZoomStatus());
     logger(text);
 }
 #ifdef CS2_ZOOM_CHECKS
@@ -199,4 +263,13 @@ void ZoomTestConfigure(std::uintptr_t base, ZoomViewFn original, ZoomBaselineFn 
     testRuntime=true; prepared=true; stopped=false; active.store(true,std::memory_order_release);
 }
 void ZoomTestView(void* mode, void* view) noexcept { HookView(mode,view); }
+void ZoomTestConfigureMouse(ZoomMouseFn normal, ZoomMouseAlternateFn alternate) noexcept {
+    originalMouse=normal; originalMouseAlternate=alternate;
+}
+void ZoomTestMouse(int slot, float dx, float dy, float scale, float* yaw, float* pitch, int* mouseDx, int* mouseDy) noexcept {
+    HookMouse(slot,dx,dy,scale,yaw,pitch,mouseDx,mouseDy);
+}
+void ZoomTestMouseAlternate(int slot, float dx, float dy, float scale, float deltaTime, float* yaw, float* pitch) noexcept {
+    HookMouseAlternate(slot,dx,dy,scale,deltaTime,yaw,pitch);
+}
 #endif

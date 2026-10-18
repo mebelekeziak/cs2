@@ -15,6 +15,7 @@ ZoomSettings ZoomSanitizeSettings(const ZoomSettings& settings) noexcept {
     ZoomSettings result = settings;
     result.zoom1 = Clamp(result.zoom1);
     result.zoom2 = Clamp(result.zoom2);
+    result.sensitivity = std::isfinite(result.sensitivity) ? std::clamp(result.sensitivity, 0.0f, 100.0f) : 100.0f;
     return result;
 }
 

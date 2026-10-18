@@ -60,7 +60,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(anti_aim, spinSpeed); FIELD(anti_aim, pitchMode); FIELD(anti_aim, pitch); FIELD(anti_aim, pitchAlternate);
     FIELD(camera, enabled); FIELD(camera, distance); FIELD(camera, shoulder);
     FIELD(camera, height); FIELD(camera, collision);
-    FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2);
+    FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2); FIELD(zoom, sensitivity);
     FIELD(shot_log, enabled); FIELD(shot_log, verbose);
     FIELD(model_swap, enabled); FIELD(model_swap, model);
 #undef COLOR

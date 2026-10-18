@@ -92,15 +92,24 @@ first and second scope stages. Each slider ranges from 0–200%: **0% removes
 magnification**, **100% preserves the weapon's normal zoom**, and higher values
 increase magnification. Weapons with one scope stage use Zoom 1 only.
 
+**Zoom sensitivity** independently blends scoped mouse sensitivity from 0–100%:
+**0% uses your ordinary unscoped sensitivity**, **100% uses CS2's native scoped
+sensitivity**, and intermediate values blend the two. It applies to both scope
+stages; the Zoom 1/2 magnification sliders do not change this selection.
+
 The setting starts disabled, works independently of ESP and third person, and
-saves with local configs. **Reset scoped zoom** disables it and restores both
-sliders to 100%. Older presets use these defaults. This adjusts the current
-world-view FOV; the scope graphic, weapon state, sensitivity and firing behavior
-are unchanged. It does not remove the scope graphic.
+saves with local configs. **Reset scoped zoom** disables it and restores all
+three sliders to 100%. Older presets use these defaults, preserving native
+sensitivity. This adjusts the current world-view FOV and scoped mouse
+sensitivity; the scope graphic, weapon state and firing behavior are unchanged.
+It does not remove the scope graphic.
 
 The implementation uses the final game-specific camera callback, current
-serialized active-weapon identity and the native unscoped FOV getter. It changes
-only the current view, with no persistent entity or console-variable writes.
+serialized active-weapon identity and the native unscoped FOV getter. Sensitivity
+blends the scope multiplier argument in both native mouse-conversion branches;
+CS2 still applies your base sensitivity and processes the mouse input. Changes
+apply only to the current view/conversion call, with no persistent entity or
+console-variable writes.
 See [scoped zoom evidence](tools/CS2_ZOOM_EVIDENCE.md); recheck installed contracts
 with `python tools/inspect_zoom.py` or the combined compatibility command.
 Build and launch through the existing **Load Overlay.cmd** workflow. Restart CS2
@@ -121,6 +130,19 @@ installed-file compatibility checks pass in
 `logs/compatibility/20261016T160815546576Z/`; thirteen deliberately incorrect
 zoom-header contracts were rejected. Both DLLs retain zero static TLS and
 delay imports. Live scoped appearance remains unobserved.
+
+**Sensitivity follow-up, October 18, 2026:** public and diagnostic x64 Release
+builds succeed, with **42/42 CTest suites passing in each**. The zoom suite runs
+**1,794 checks**, including both native mouse conversion signatures, sensitivity
+endpoints/blending, preserved input/output arguments and entity bytes, stale
+sources, nested callbacks and concurrent cooperative stop. The menu/config
+checks cover dragging, reset, persistence and older presets; the software D3D11
+preview was inspected. All **21/21 installed-file compatibility checks** pass in
+`logs/compatibility/20261018T140828198745Z/`, and 15 deliberately incorrect new
+sensitivity contracts are rejected. Both DLLs retain zero static TLS and delay
+imports. No CS2 client/server was launched; live scoped mouse feel remains
+unobserved. Restart CS2 normally before using **Load Overlay.cmd** with the new
+build if an older copy is resident.
 
 ## Third-person camera
 
@@ -566,7 +588,8 @@ DLL through **Load Overlay.cmd**.
 
 The **Aim** tab has an **Enable silent aim** checkbox, a **Hitbox** selector
 (**Head**, **Chest**, **Stomach**, **Pelvis**) and an angular **Aim FOV** slider
-(0.1–30 degrees). It starts **disabled**, with Chest and 5 degrees selected.
+(0.1–180 degrees from the current view direction). At 180 degrees, targets
+directly behind are within the angular limit. It starts **disabled**, with Chest and 5 degrees selected.
 **F10** toggles it while the client is foreground. Menu visibility and ESP
 settings do not control aim acquisition.
 

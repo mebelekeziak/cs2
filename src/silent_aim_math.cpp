@@ -16,7 +16,7 @@ AimSolution SilentAimSolve(const AimVector& eye, const AimVector& point,
     if (!Finite(eye) || !Finite(point) || !std::isfinite(view.pitch) ||
         !std::isfinite(view.yaw) || !std::isfinite(view.roll) ||
         std::abs(view.pitch) > 89 || std::abs(view.yaw) > 360 ||
-        !std::isfinite(fov) || fov <= 0 || fov > 30) return result;
+        !std::isfinite(fov) || fov <= 0 || fov > 180) return result;
     const double x = static_cast<double>(point.x) - eye.x;
     const double y = static_cast<double>(point.y) - eye.y;
     const double z = static_cast<double>(point.z) - eye.z;

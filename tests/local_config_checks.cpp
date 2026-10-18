@@ -54,15 +54,21 @@ int main() {
     ThirdPersonResetSettings();
     Expect(ThirdPersonGetSettings() == cameraDefaults, "camera reset restores every default including master and collision");
     const ZoomSettings zoomDefaults;
-    Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom starts disabled with both weapon defaults");
-    Expect(ZoomSanitizeSettings({true, -1, 999}) == ZoomSettings{true, 0, 200},
-        "scoped zoom levels clamp independently including zero zoom");
-    ZoomSetSettings({true, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()});
-    Expect(ZoomGetSettings() == ZoomSettings{true, 100, 100}, "nonfinite scoped zoom values use weapon defaults");
-    ZoomSetSettings({true, -999, 999});
-    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200}, "scoped zoom publisher enforces bounds");
+    Expect(ZoomGetSettings() == zoomDefaults && zoomDefaults.sensitivity == 100,
+        "scoped zoom starts disabled with weapon zoom and native scoped sensitivity defaults");
+    Expect(ZoomSanitizeSettings({true, -1, 999, -1}) == ZoomSettings{true, 0, 200, 0},
+        "scoped zoom levels and sensitivity clamp independently including unscoped sensitivity");
+    ZoomSetSettings({true, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN()});
+    Expect(ZoomGetSettings() == ZoomSettings{true, 100, 100, 100}, "nonfinite scoped zoom and sensitivity values use native defaults");
+    Expect(ZoomSanitizeSettings({true, 25, 75, std::numeric_limits<float>::infinity()}).sensitivity == 100 &&
+        ZoomSanitizeSettings({true, 25, 75, -std::numeric_limits<float>::infinity()}).sensitivity == 100,
+        "both infinite sensitivities restore native scoped sensitivity");
+    ZoomSetSettings({true, -999, 999, 999});
+    Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200, 100}, "scoped zoom publisher enforces distinct zoom and sensitivity bounds");
+    ZoomSetSettings({true, 100, 100, 0});
     ZoomResetSettings();
-    Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom reset restores both levels and disables override");
+    Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom reset restores both levels and native sensitivity and disables override");
     Expect(!AntiAimGetSettings().enabled, "anti aim starts disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "shot logs start enabled with verbose diagnostics disabled");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
@@ -73,8 +79,8 @@ int main() {
         "default preset saves autofire off and hitchance controls");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
-    Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\n") != std::string::npos,
-        "default preset explicitly saves both scoped zoom levels");
+    Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\nzoom.sensitivity=100\n") != std::string::npos,
+        "default preset explicitly saves both scoped zoom levels and native sensitivity");
     Expect(defaults.find("shot_log.enabled=1\nshot_log.verbose=0\n") != std::string::npos,
         "default preset explicitly saves human shot logs enabled and verbose console diagnostics disabled");
     Expect(defaults.find("model_swap.enabled=0\nmodel_swap.model=\n") != std::string::npos,
@@ -103,14 +109,14 @@ int main() {
     for (unsigned c = 0; c < std::size(worldColors); ++c)
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
-    const SilentAimSettings expectedAim{true, 12.34f, AimHitbox::Pelvis, true, 73.25f, 512};
+    const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512};
     SilentAimSetSettings(expectedAim);
     const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
         -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
     AntiAimSetSettings(expectedAntiAim);
     const ThirdPersonSettings expectedCamera{true, 173.25f, -21.5f, 17.75f, false};
     ThirdPersonSetSettings(expectedCamera);
-    const ZoomSettings expectedZoom{true, 0, 137.25f};
+    const ZoomSettings expectedZoom{true, 0, 137.25f, 38.25f};
     ZoomSetSettings(expectedZoom);
     const ShotLogSettings expectedShotLog{false,true};
     ShotLogSetSettings(expectedShotLog);
@@ -133,7 +139,8 @@ int main() {
     Expect(SilentAimGetSettings() == expectedAim, "aim, autofire, threshold and sample count roundtrip");
     Expect(AntiAimGetSettings() == expectedAntiAim, "all anti aim modes, interval and fractional angle controls roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
-    Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
+    Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\n") != std::string::npos,
+        "scoped zoom master, no zoom, fractional second level and blended sensitivity roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
         "human results and verbose diagnostics independently roundtrip in named presets");
@@ -156,7 +163,7 @@ int main() {
         for (unsigned i = 0; i < 3; ++i) sameWorld &= loadedColors[c][i] == worldColors[c][i];
     Expect(sameWorld, "all world fields and array channels roundtrip");
     Expect(!MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe &&
-        SilentAimGetSettings().enabled && SilentAimGetSettings().fov == 12.34f &&
+        SilentAimGetSettings().enabled && SilentAimGetSettings().fov == expectedAim.fov &&
         SilentAimGetSettings().hitbox == AimHitbox::Pelvis && AntiAimGetSettings().enabled,
         "movement, silent aim and anti aim roundtrip");
     Expect(LocalConfigSave(second, error) && Read(secondPath) == custom, "atomic overwrite preserves exact float roundtrip");
@@ -185,6 +192,9 @@ int main() {
         "version=1\ncamera.height=12oops\n", "version=1\ncamera.distance=120\ncamera.distance=130\n",
         "version=1\nzoom.enabled=2\n", "version=1\nzoom.zoom1=nan\n", "version=1\nzoom.zoom2=inf\n",
         "version=1\nzoom.zoom1=1oops\n", "version=1\nzoom.zoom2=50\nzoom.zoom2=150\n",
+        "version=1\nzoom.sensitivity=nan\n", "version=1\nzoom.sensitivity=inf\n",
+        "version=1\nzoom.sensitivity=-inf\n", "version=1\nzoom.sensitivity=50oops\n",
+        "version=1\nzoom.sensitivity=25\nzoom.sensitivity=75\n",
         "version=1\nshot_log.enabled=true\n", "version=1\nshot_log.verbose=2\n",
         "version=1\nshot_log.enabled=0\nshot_log.enabled=1\n",
         "version=1\nshot_log.verbose=0\nshot_log.verbose=1\n",
@@ -201,13 +211,13 @@ int main() {
     Write(badPath, "version=1\nfuture.option=hello\nworld.exposureEv=999\nesp.boxThickness=-99\naim.fov=999\naim.hitbox=99\n");
     Expect(LocalConfigLoad(bad, error) && WorldGetSettings().exposureEv == 3 &&
         EspGetSettings().boxThickness == EspSanitizeSettings(EspSettings{.boxThickness = -99}).boxThickness &&
-        SilentAimGetSettings().fov == 30 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
+        SilentAimGetSettings().fov == 180 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
     Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
         SilentAimGetSettings().samples == 256, "older presets restore autofire off and hitchance defaults");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
-    Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
+    Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Write(badPath, "version=1\nanti_aim.enabled=1\n");
@@ -231,7 +241,13 @@ int main() {
         "preset with only verbose key retains enabled human logging default without enabling aim");
     Write(badPath, "version=1\nzoom.enabled=1\nzoom.zoom1=-999\nzoom.zoom2=999\n");
     Expect(LocalConfigLoad(bad, error) && ZoomGetSettings() == ZoomSettings{true, 0, 200},
-        "scoped zoom config load clamps both levels through bounded settings publisher");
+        "older zoom preset clamps both levels and defaults missing sensitivity to native scoped value");
+    Write(badPath, "version=1\nzoom.enabled=1\nzoom.sensitivity=-999\n");
+    Expect(LocalConfigLoad(bad, error) && ZoomGetSettings() == ZoomSettings{true, 100, 100, 0},
+        "scoped sensitivity config clamps below zero to unscoped sensitivity");
+    Write(badPath, "version=1\nzoom.enabled=0\nzoom.zoom1=137\nzoom.sensitivity=999\n");
+    Expect(LocalConfigLoad(bad, error) && ZoomGetSettings() == ZoomSettings{false, 137, 100, 100},
+        "scoped sensitivity config clamps above one hundred to native scoped sensitivity independently of zoom");
     Write(badPath, "version=1\ncamera.enabled=1\ncamera.distance=999\ncamera.shoulder=-999\ncamera.height=999\ncamera.collision=0\n");
     Expect(LocalConfigLoad(bad, error) && ThirdPersonGetSettings() == ThirdPersonSettings{true, 300, -60, 60, false},
         "camera config load clamps finite values through bounded settings publisher");

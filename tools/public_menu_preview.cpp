@@ -133,7 +133,7 @@ int wmain(int argc, wchar_t** argv) {
         AntiAimSetSettings(antiAim);
     }
     if (selectedTab == 6) ThirdPersonSetSettings({true});
-    if (selectedTab == 7) ZoomSetSettings({true, 0, 150});
+    if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50});
     ModelPickerFixture modelFixture;
     if (selectedTab == 8 && !modelFixture.Create()) { ImGui::DestroyContext(); return 1; }
     if (!ImGui_ImplDX11_Init(device.Get(), context.Get())) {

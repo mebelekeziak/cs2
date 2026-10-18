@@ -395,6 +395,18 @@ and applies the engine default when zero. Recheck named schema fields,
 scoped-weapon RTTI ownership, the active weapon's full serialized handle,
 view-FOV stores and both native entries before adapting this feature.
 
+Scoped sensitivity uses the same current serialized source and replaces only
+the fourth float argument in the normal/alternate mouse conversion callbacks.
+The baseline multiplier is 1; the native argument includes the game's scoped
+adjustment. Verify the complete caller chain before reusing this assumption.
+
+| Symbol | Current value / kind | Rediscovery anchor / ABI |
+| --- | --- | --- |
+| `MouseConvert`, `MouseConvertAlternate` | `0xBA6ED0`, `0xBA6D00`, function RVAs | Dispatcher calls `0xBA6934` / `0xBA694C`; normal `void(int,float,float,float,float*,float*,int*,int*)`, alternate `void(int,float,float,float,float,float*,float*)` |
+| `MouseInput`, `MouseInputVtable`, `MouseScale` | `0x257B640`, embedded object; `0x1C9DB20`, primary vtable; `0xB80180`, method RVA | CCSGOInput RTTI, slot 24 identity getter returns incoming XMM1 |
+| `MouseCaller`, `MouseScopeDispatch` | `0xB655C3`, `0xBA68DA`, code windows | Native caller passes literal 1 through identity getter; dispatcher multiplies positive pawn scope adjustment and forwards XMM3 |
+| `MouseScaleUnit`, `FovSensitivity` | `0x1AC6074`, float constant RVA; `0x149C`, pawn member | Caller literal and named `C_BasePlayerPawn::m_flFOVSensitivityAdjust` schema; runtime does not write the member |
+
 ## Local player models: client, engine, host, resource system and tier0
 
 Header: [model_swap_offsets.h](../include/model_swap_offsets.h).

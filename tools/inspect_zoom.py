@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_HASH = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
 SCHEMA = {
     'CBasePlayerController': (0x2223A38, 0x2223800, 17, {'m_iDesiredFOV': 0x794}),
-    'C_BasePlayerPawn': (0x21F4588, 0x21F41F0, 28, {'m_pWeaponServices': 0x12F0}),
+    'C_BasePlayerPawn': (0x21F4588, 0x21F41F0, 28, {'m_pWeaponServices': 0x12F0,
+        'm_flFOVSensitivityAdjust': 0x149C, 'm_flMouseSensitivity': 0x14A0}),
     'C_CSPlayerPawn': (0x2239A68, 0x2238D10, 105, {'m_bIsScoped': 0x1E98}),
     'CPlayer_WeaponServices': (0x222BDC8, 0x222BD30, 4, {'m_hActiveWeapon': 0x60}),
     'C_CSWeaponBaseGun': (0x221BF48, 0x221BB00, 7, {'m_zoomLevel': 0x1F20}),
@@ -35,12 +36,24 @@ WINDOWS = {
     'weapon_fov_selection': (0x80E420, 0x70, '92043a52340becfd3050af85f3f2f3fa6484bc20ba94cae345257215923fdbc5'),
     'zoom_state_cycle': (0x8248AE, 0x8E, '75328c193009bbe638bf3ae9669196205e41eaecc89e04d4bfc0460c567e7afb'),
     'zoom_state_consumer': (0x82921C, 0x3D, 'c57dab89226b1ff96914e1479a05cab10cfac7af8691301cf5e1c66aecd79f1d'),
+    'mouse_input_caller': (0xB65560, 0x12F, '189914a5f4e6017a1512ee3eeffa4072588439ebcaf321e48ed79078dc262a54'),
+    'mouse_scale_identity': (0xB80180, 4, '2fe08174d918f72b8cbcdf7f2affed11f88d44ad2929886406754774bd9e36be'),
+    'mouse_scope_dispatch': (0xBA67B0, 0x28C, '773339cce21be75b1d2bb2808d370bb0a4791e7cfc7a3c5c7d4b58781dd413bd'),
+    'mouse_convert': (0xBA6ED0, 0x12A, 'd3a470027c68bd3eaf82e154a829f5c61720462c185d58ffc044728f7070bfcf'),
+    'mouse_convert_alternate': (0xBA6D00, 0x1C1, 'ceabc8b34419d915471748014bd59c572013ae009c0d292cbf0c8a3dfd5387b1'),
+    'pawn_sensitivity_producer': (0xB227D0, 0xEA, '127879958eb4d5ad520304b92ae771fcda3edae4776e70cdfadb8c496de6f88c'),
+    'base_sensitivity_registration': (0xD81EE, 0x2A, 'e781cf2cd1be0cd27df72b27e0994b9101ad5a7029883c07a302be9ec97068d9'),
+    'zoom_ratio_registration': (0xC957E, 0x2A, '8a026fe7679cc28ba69cda04bb123be748817d646a84acc7b6223db2f5a4706b'),
 }
 
 
 def verify(image, base, header):
     def u32(at): return struct.unpack_from('<I', image, at)[0]
     def ptr(at): return struct.unpack_from('<Q', image, at)[0] - base
+    def rip(at, size, displacement): return at + size + struct.unpack_from('<i', image, at + displacement)[0]
+    def call(at):
+        if image[at] != 0xE8: raise SystemExit(f'Changed relative call at {at:#x}')
+        return rip(at, 5, 1)
     def string(at):
         if not 0 < at < len(image): raise SystemExit('Invalid schema string pointer')
         end = image.find(0, at)
@@ -62,6 +75,17 @@ def verify(image, base, header):
     table = primary_vtable(image, base, b'.?AVClientModeCSNormal@@')
     if table != 0x1C9FC20 or ptr(table + 16*8) != 0xD02E30:
         raise SystemExit('Changed final normal-mode view slot')
+    input_table = primary_vtable(image, base, b'.?AVCCSGOInput@@')
+    if input_table != 0x1C9DB20 or ptr(input_table + 24*8) != 0xB80180:
+        raise SystemExit('Changed native mouse pre-scope scale virtual slot')
+    if rip(0xEE58C, 7, 3) != input_table or rip(0xEE574, 7, 3) != rip(0xEE59A, 7, 3):
+        raise SystemExit('Changed embedded input constructor contract')
+    if u32(rip(0xB655C9, 8, 4)) != 0x3F800000 or call(0xB65606) != 0xBA67B0:
+        raise SystemExit('Changed exact unscoped mouse scale of 1.0')
+    if string(rip(0xD81EE, 7, 3)) != 'sensitivity' or string(rip(0xC957E, 7, 3)) != 'zoom_sensitivity_ratio':
+        raise SystemExit('Changed native base/zoom sensitivity cvar registrations')
+    if rip(0xD81FA, 7, 3) != rip(0xBA6EEA, 7, 3) or rip(0xC958A, 7, 3) != rip(0xB2285D, 7, 3):
+        raise SystemExit('Changed native sensitivity cvar producer/consumer binding')
     for name, (at, size, digest) in WINDOWS.items():
         if hashlib.sha256(image[at:at+size]).hexdigest() != digest:
             raise SystemExit(f'Changed native window: {name}')
@@ -73,15 +97,26 @@ def verify(image, base, header):
         'WeaponServices': fields['C_BasePlayerPawn']['m_pWeaponServices'],
         'ActiveWeapon': fields['CPlayer_WeaponServices']['m_hActiveWeapon'],
         'Scoped': fields['C_CSPlayerPawn']['m_bIsScoped'], 'ZoomLevel': u32(0x829222+2),
+        'MouseConvert': call(0xBA6934), 'MouseConvertAlternate': call(0xBA694C),
+        'MouseInput': rip(0xEE574, 7, 3), 'MouseInputVtable': input_table,
+        'MouseScale': ptr(input_table + 24*8), 'MouseCaller': 0xB655C3,
+        'MouseScaleUnit': rip(0xB655C9, 8, 4),
+        'MouseScopeDispatch': 0xBA68DA, 'FovSensitivity': u32(0xBA68E6+4),
     }
     if expected['ViewFov'] != u32(0xD0309F+4) or expected['ZoomLevel'] != fields['C_CSWeaponBaseGun']['m_zoomLevel']:
         raise SystemExit('Independent FOV/zoom operands disagree')
+    if expected['FovSensitivity'] != fields['C_BasePlayerPawn']['m_flFOVSensitivityAdjust']:
+        raise SystemExit('Independent native mouse scale member disagrees with schema')
     source = re.sub(r'//[^\n]*|/\*.*?\*/', '', header.read_text(encoding='utf-8-sig'), flags=re.S)
     for name, value in expected.items():
         matches = re.findall(rf'\b{name}\s*=\s*(0[xX][\da-fA-F]+|\d+)', source)
         if len(matches) != 1 or int(matches[0],0) != value:
             raise SystemExit(f'Header {name} differs from native evidence')
-    for name, at, size in [('OverrideViewBytes',0xD02E30,15), ('BaselineFovBytes',0x93FC40,42)]:
+    for name, at, size in [('OverrideViewBytes',0xD02E30,15), ('BaselineFovBytes',0x93FC40,42),
+            ('MouseConvertBytes',0xBA6ED0,16), ('MouseConvertAlternateBytes',0xBA6D00,19),
+            ('MouseScaleBytes',0xB80180,4), ('MouseCallerBytes',0xB655C3,0x48),
+            ('MouseScaleUnitBytes',0x1AC6074,4),
+            ('MouseScopeDispatchBytes',0xBA68DA,0x77)]:
         match = re.search(rf'\b{name}\[\]\s*\{{([^}}]*)\}}', source,re.S)
         actual = bytes(int(v.strip(),0) for v in match[1].split(',') if v.strip()) if match else b''
         if actual != image[at:at+size]: raise SystemExit(f'Header {name} differs')
@@ -102,7 +137,9 @@ def main():
     constants, fields = verify(image, base, args.header)
     print(json.dumps({'client_sha256': digest, 'constants': {k:hex(v) for k,v in constants.items()},
         'schema': fields, 'scoped_weapon_tables': TABLES, 'windows': WINDOWS,
-        'abi': 'void(mode*,view*); float(controller*); final normal-mode FOV only',
+        'abi': ['void(mode*,view*)', 'float(controller*)',
+            'void(int,float,float,float,float*,float*,int*,int*)',
+            'void(int,float,float,float,float,float*,float*)'],
         'scope': 'Static installed evidence; live scoped appearance unobserved'}, indent=2))
 
 

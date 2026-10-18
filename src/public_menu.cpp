@@ -452,8 +452,10 @@ void DrawPublicMenu() {
                     ImGui::BeginDisabled(!zoom.enabled);
                     zoomChanged |= slider("Zoom 1", "##Zoom1", zoom.zoom1, 0, 200, "%.0f%%");
                     zoomChanged |= slider("Zoom 2", "##Zoom2", zoom.zoom2, 0, 200, "%.0f%%");
-                    ImGui::EndDisabled();
                     ImGui::TextWrapped("0%%: no zoom. 100%%: weapon default. 200%%: stronger zoom.");
+                    zoomChanged |= slider("Zoom sensitivity", "##ZoomSensitivity", zoom.sensitivity, 0, 100, "%.0f%%");
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Zoom sensitivity: 0%% uses unscoped sensitivity, 100%% uses CS2 native scoped sensitivity. Values between blend the two.");
                     if (zoomChanged) ZoomSetSettings(zoom);
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }
@@ -550,7 +552,7 @@ void DrawPublicMenu() {
                 }
                 ImGui::TextUnformatted("Aim FOV");
                 ImGui::SetNextItemWidth(-1);
-                changed |= ImGui::SliderFloat("##AimFov", &settings.fov, 0.1f, 30, "%.1f degrees");
+                changed |= ImGui::SliderFloat("##AimFov", &settings.fov, 0.1f, 180, "%.1f degrees");
                 changed |= FeatureCheckbox("Autofire", settings.autofire);
                 ImGui::TextUnformatted("Minimum hitchance");
                 ImGui::SetNextItemWidth(-1);
