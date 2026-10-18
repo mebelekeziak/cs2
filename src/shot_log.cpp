@@ -12,7 +12,11 @@ constexpr unsigned MetadataCapacity = 64, EventCapacity = 256, DedupCapacity = 2
 constexpr unsigned CandidateCapacity = ShotLogPendingCapacity * 2;
 enum class EventKind : unsigned { Fire = 1, Impact, Hurt };
 struct Pending { bool used = false; ShotLogRecord record{}; };
-struct Metadata { bool used = false; ShotLogMetadata value{}; };
+struct Metadata {
+    bool used = false, acknowledged = false, reported = false;
+    std::uint64_t publishedMs = 0;
+    ShotLogMetadata value{};
+};
 struct Retired { bool used = false; std::uint64_t id = 0, fireMs = 0; char weapon[48]{}; };
 struct Effect {
     bool used = false, reported = false, late = false, lost = false;
@@ -102,6 +106,26 @@ void Complete(const ShotLogRecord& record) noexcept {
     state.completed[(state.completedHead + state.completedCount) % ShotLogCompletedCapacity] = record;
     ++state.completedCount; ++state.counters.completed;
 }
+bool Acknowledges(const ShotLogMetadata& metadata, std::uint64_t fireMs, const char (&weapon)[48]) noexcept {
+    if (!WeaponMatch(metadata.weapon, weapon)) return false;
+    return fireMs >= metadata.receiptMs ? fireMs - metadata.receiptMs <= ShotLogFireAckWindowMs :
+        metadata.receiptMs - fireMs <= ShotLogReorderWindowMs;
+}
+void CompleteAttempt(Metadata& sample, ShotLogCloseReason close) noexcept {
+    if (!sample.used || !sample.value.attackPublished || sample.acknowledged || sample.reported) return;
+    ShotLogRecord record{};
+    record.kind = ShotLogRecordKind::CommandAttempt;
+    record.source = sample.value.source; record.fireMs = sample.publishedMs; record.settledMs = state.now;
+    record.metadata = sample.value; record.metadataKnown = true; record.closeReason = close;
+    Copy(record.weapon, sample.value.weapon);
+    record.reason = close == ShotLogCloseReason::Settled ? ShotLogReason::UnregisteredShot :
+        close == ShotLogCloseReason::Capacity ? ShotLogReason::TrackingOverflow : ShotLogReason::Interrupted;
+    record.diagnostic = close == ShotLogCloseReason::Settled ? ShotLogDiagnostic::NoFireEvent :
+        close == ShotLogCloseReason::Capacity ? ShotLogDiagnostic::Capacity :
+        close == ShotLogCloseReason::Stopped ? ShotLogDiagnostic::Stopped : ShotLogDiagnostic::SourceChanged;
+    if (close == ShotLogCloseReason::Settled) ++state.counters.unregistered;
+    Complete(record); sample.reported = true;
+}
 Pending* Find(std::uint64_t id) noexcept {
     for (auto& shot : state.pending) if (shot.used && shot.record.id == id) return &shot;
     return nullptr;
@@ -143,6 +167,7 @@ void Evidence(Effect& effect, ShotLogCloseReason reason = ShotLogCloseReason::Se
     if (effect.kind != EventKind::Hurt || effect.reported) return;
     ShotLogRecord record{};
     record.kind = effect.count > 1 ? ShotLogRecordKind::AmbiguousHit : ShotLogRecordKind::UnmatchedHit;
+    record.reason = effect.count > 1 ? ShotLogReason::ShotOverlap : ShotLogReason::Unknown;
     record.eventMs = effect.receiptMs; record.settledMs = state.now;
     record.source = state.source; record.closeReason = reason;
     record.candidateCount = effect.count; record.possibleLateEvent = effect.late;
@@ -166,16 +191,92 @@ void Retire(const ShotLogRecord& record) noexcept {
     retired.used = true; retired.id = record.id; retired.fireMs = record.fireMs;
     Copy(retired.weapon, record.weapon);
 }
+bool AimRay(ShotLogRecord& record, AimVector& direction) noexcept {
+    const auto& metadata = record.metadata;
+    if (!record.metadataKnown || !metadata.capsuleValid || !std::isfinite(metadata.range) ||
+        metadata.range <= 0 || metadata.range > 1000000 || !std::isfinite(metadata.aim.pitch) ||
+        !std::isfinite(metadata.aim.yaw) || std::abs(metadata.aim.pitch) > 360 || std::abs(metadata.aim.yaw) > 360) return false;
+    constexpr double radians = 0.01745329251994329577;
+    const double pitch = metadata.aim.pitch * radians, yaw = metadata.aim.yaw * radians;
+    direction = {static_cast<float>(std::cos(pitch) * std::cos(yaw)),
+        static_cast<float>(std::cos(pitch) * std::sin(yaw)), static_cast<float>(-std::sin(pitch))};
+    record.aimRayValid = true;
+    record.aimIntersectsCapsule = AimRayIntersectsCapsule(metadata.eye, direction, metadata.range, metadata.capsule);
+    if (std::isfinite(metadata.spread) && std::isfinite(metadata.inaccuracy) && metadata.spread >= 0 && metadata.inaccuracy >= 0)
+        record.spreadCone = static_cast<float>(std::atan(static_cast<double>(metadata.spread) + metadata.inaccuracy) / radians);
+    return true;
+}
+void Geometry(ShotLogRecord& record, const AimVector& impact, const AimVector& aimDirection) noexcept {
+    if (!record.metadataKnown || !record.metadata.capsuleValid) return;
+    const auto& metadata = record.metadata;
+    const AimVector direction{impact.x - metadata.eye.x, impact.y - metadata.eye.y, impact.z - metadata.eye.z};
+    const double distance = std::sqrt(static_cast<double>(direction.x) * direction.x +
+        static_cast<double>(direction.y) * direction.y + static_cast<double>(direction.z) * direction.z);
+    if (distance <= 0 || distance > 1000000) return;
+    if (AimRayCapsuleMissDistance(metadata.eye, direction, static_cast<float>(distance), metadata.capsule) < 0) return;
+    ++record.geometryImpacts;
+    if (distance >= record.impactDistance) { record.impactDistance = static_cast<float>(distance); record.furthestImpact = impact; }
+    const bool segmentHit = AimRayIntersectsCapsule(metadata.eye, direction, static_cast<float>(distance), metadata.capsule);
+    if (segmentHit) record.trajectory = ShotLogTrajectory::IntersectsRecordedCapsule;
+    else if (record.trajectory == ShotLogTrajectory::Unknown) record.trajectory = ShotLogTrajectory::MissesRecordedCapsule;
+    if (!record.aimRayValid) return;
+    // Extend only the direction for diagnostics. A short segment must never be
+    // mistaken for spread, and later penetration impacts may reach the capsule.
+    const bool rayHit = AimRayIntersectsCapsule(metadata.eye, direction, metadata.range, metadata.capsule);
+    if (!segmentHit && rayHit) ++record.shortImpacts;
+    const float miss = AimRayCapsuleMissDistance(metadata.eye, direction, metadata.range, metadata.capsule);
+    if (miss >= 0 && (record.missDistance < 0 || miss < record.missDistance)) record.missDistance = miss;
+    const double cosine = (static_cast<double>(direction.x) * aimDirection.x +
+        static_cast<double>(direction.y) * aimDirection.y + static_cast<double>(direction.z) * aimDirection.z) / distance;
+    constexpr double degrees = 57.29577951308232;
+    const float angle = static_cast<float>(std::acos(std::clamp(cosine, -1.0, 1.0)) * degrees);
+    record.impactAngle = std::max(record.impactAngle, angle);
+    if (!rayHit && !segmentHit && metadata.chanceValid && metadata.spread + metadata.inaccuracy > 0 &&
+        angle <= record.spreadCone + 0.01f) ++record.spreadMissImpacts;
+}
+void Classify(ShotLogRecord& record) noexcept {
+    const auto assign = [&](ShotLogReason reason, ShotLogDiagnostic diagnostic) {
+        record.reason = reason; record.diagnostic = diagnostic;
+    };
+    if (record.outcome == ShotLogOutcome::Hit) return assign(ShotLogReason::None, ShotLogDiagnostic::None);
+    if (record.closeReason == ShotLogCloseReason::Capacity || record.evidenceLost)
+        return assign(ShotLogReason::TrackingOverflow, ShotLogDiagnostic::Capacity);
+    if (record.closeReason != ShotLogCloseReason::Settled)
+        return assign(ShotLogReason::Interrupted, record.closeReason == ShotLogCloseReason::Stopped ?
+            ShotLogDiagnostic::Stopped : ShotLogDiagnostic::SourceChanged);
+    if (record.overlappingEvents) return assign(ShotLogReason::ShotOverlap, ShotLogDiagnostic::OverlappingEvents);
+    if (record.possibleLateEvent) return assign(ShotLogReason::LateEvent, ShotLogDiagnostic::LateDelivery);
+    if (record.ambiguousEvents) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
+    if (!record.uniqueImpacts) return assign(ShotLogReason::NoImpact, ShotLogDiagnostic::NoImpactEvent);
+    if (!record.metadataKnown) return assign(ShotLogReason::Unknown, record.metadataAmbiguous ?
+        ShotLogDiagnostic::OverlappingMetadata : ShotLogDiagnostic::NoMetadata);
+    if (!record.metadata.capsuleValid) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::NoCapsule);
+    if (!record.aimRayValid) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidAim);
+    if (!record.geometryImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
+    if (record.trajectory == ShotLogTrajectory::IntersectsRecordedCapsule)
+        return assign(ShotLogReason::Unknown, ShotLogDiagnostic::ImpactCrossedCapsule);
+    if (!record.aimIntersectsCapsule) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::AimMissedCapsule);
+    if (record.geometryImpacts != record.uniqueImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
+    if (record.shortImpacts == record.geometryImpacts)
+        return assign(ShotLogReason::ImpactShort, ShotLogDiagnostic::ImpactBeforeCapsule);
+    if (record.spreadMissImpacts == record.geometryImpacts)
+        return assign(ShotLogReason::Spread, ShotLogDiagnostic::ImpactMissedCapsule);
+    if (record.shortImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::MixedImpacts);
+    return assign(ShotLogReason::Unknown, record.metadata.chanceValid ? ShotLogDiagnostic::OutsideSpreadCone :
+        ShotLogDiagnostic::ImpactMissedCapsule);
+}
 void Finish(Pending& pending, ShotLogCloseReason reason) noexcept {
     auto& record = pending.record;
     record.settledMs = state.now; record.closeReason = reason;
-    bool intersects = false, geometryEvaluated = false;
+    AimVector aimDirection{};
+    AimRay(record, aimDirection);
     for (auto& effect : state.effects) {
         if (!effect.used || !Contains(effect, record.id)) continue;
         const bool unique = effect.count == 1 && !effect.late && !effect.lost;
         record.possibleLateEvent = record.possibleLateEvent || effect.late;
         record.reorderedEvent = record.reorderedEvent || effect.receiptMs < record.fireMs;
         if (!unique) ++record.ambiguousEvents;
+        if (effect.count > 1) ++record.overlappingEvents;
         if (effect.kind == EventKind::Hurt) {
             if (unique && reason == ShotLogCloseReason::Settled && !record.evidenceLost &&
                 !record.possibleLateEvent && !effect.reported) {
@@ -186,26 +287,15 @@ void Finish(Pending& pending, ShotLogCloseReason reason) noexcept {
             } else if (unique && effect.reported) ++record.ambiguousEvents;
         } else if (unique) {
             ++record.uniqueImpacts;
-            if (record.metadataKnown && record.metadata.capsuleValid) {
-                const AimVector direction{effect.impact.x - record.metadata.eye.x,
-                    effect.impact.y - record.metadata.eye.y, effect.impact.z - record.metadata.eye.z};
-                const double range = std::sqrt(static_cast<double>(direction.x) * direction.x +
-                    static_cast<double>(direction.y) * direction.y + static_cast<double>(direction.z) * direction.z);
-                if (range > 0 && range <= 1000000) {
-                    geometryEvaluated = true;
-                    intersects = intersects || AimRayIntersectsCapsule(record.metadata.eye, direction,
-                        static_cast<float>(range), record.metadata.capsule);
-                }
-            }
+            Geometry(record, effect.impact, aimDirection);
         }
     }
-    if (geometryEvaluated)
-        record.trajectory = intersects ? ShotLogTrajectory::IntersectsRecordedCapsule : ShotLogTrajectory::MissesRecordedCapsule;
     if (reason != ShotLogCloseReason::Settled || record.evidenceLost)
         record.outcome = ShotLogOutcome::Unconfirmed;
     else if (record.damageCount) record.outcome = ShotLogOutcome::Hit;
     else if (record.ambiguousEvents || record.possibleLateEvent) record.outcome = ShotLogOutcome::Unconfirmed;
     else record.outcome = ShotLogOutcome::Miss;
+    Classify(record);
     Complete(record); Retire(record); pending.used = false;
 }
 void ClearContext() noexcept {
@@ -333,6 +423,7 @@ void ShotLogReset(const ShotLogSource& source, std::uint64_t nowMs, ShotLogClose
     state.now = std::max(state.now, nowMs);
     for (auto& shot : state.pending) if (shot.used) Finish(shot, reason);
     for (auto& effect : state.effects) if (effect.used) Evidence(effect, reason);
+    for (auto& sample : state.metadata) CompleteAttempt(sample, reason);
     ClearContext(); state.source = source;
 }
 void ShotLogSetEnabled(bool enabled, std::uint64_t nowMs) noexcept {
@@ -342,6 +433,8 @@ void ShotLogSetEnabled(bool enabled, std::uint64_t nowMs) noexcept {
         for (const auto& shot : state.pending) if (shot.used) ++state.counters.abandonedDisabled;
         for (const auto& effect : state.effects)
             if (effect.used && effect.kind == EventKind::Hurt && !effect.reported) ++state.counters.abandonedDisabled;
+        for (const auto& sample : state.metadata) if (sample.used && sample.value.attackPublished &&
+            !sample.acknowledged && !sample.reported) ++state.counters.abandonedDisabled;
         state.counters.abandonedDisabled += state.completedCount;
         state.completedCount = state.completedHead = 0;
     }
@@ -354,6 +447,7 @@ void ShotLogStop(std::uint64_t nowMs) noexcept {
 void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
     if (!Accept(metadata.source)) return;
     if (metadata.commandSequence <= 0) { ++state.counters.invalid; return; }
+    state.now = std::max(state.now, metadata.receiptMs);
     Metadata* destination = nullptr;
     for (auto& sample : state.metadata) if (sample.used &&
         sample.value.commandSequence == metadata.commandSequence && sample.value.weaponHandle == metadata.weaponHandle) {
@@ -362,16 +456,24 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
     }
     if (!destination) {
         destination = &state.metadata[state.metadataCursor++ % MetadataCapacity];
-        if (destination->used) ++state.counters.metadataOverflow;
+        if (destination->used) { ++state.counters.metadataOverflow; CompleteAttempt(*destination, ShotLogCloseReason::Capacity); }
+        *destination = {};
     }
+    const bool previouslyPublished = destination->used && destination->value.attackPublished;
+    if (!previouslyPublished && metadata.attackPublished) destination->publishedMs = metadata.receiptMs;
     destination->used = true; destination->value = metadata;
     destination->value.weapon[47] = destination->value.targetName[63] = 0;
     auto& value = destination->value;
+    value.attackPublished = value.attackPublished || previouslyPublished;
     if (!std::isfinite(value.hitchance) || value.hitchance < 0 || value.hitchance > 100 || !value.samples || value.samples > 65536 ||
-        value.hits > value.samples || !std::isfinite(value.spread) || value.spread < 0 ||
-        !std::isfinite(value.inaccuracy) || value.inaccuracy < 0) value.chanceValid = false;
+        value.hits > value.samples || !std::isfinite(value.spread) || value.spread < 0 || value.spread > 1 ||
+        !std::isfinite(value.inaccuracy) || value.inaccuracy < 0 || value.inaccuracy > 1) value.chanceValid = false;
     if (!Finite(value.eye) || !Finite(value.capsule.start) || !Finite(value.capsule.end) ||
         !std::isfinite(value.capsule.radius) || value.capsule.radius <= 0 || value.capsule.radius > 10000) value.capsuleValid = false;
+    for (const auto& pending : state.pending) if (pending.used && Acknowledges(value, pending.record.fireMs, pending.record.weapon))
+        destination->acknowledged = true;
+    for (const auto& retired : state.retired) if (retired.used && Acknowledges(value, retired.fireMs, retired.weapon))
+        destination->acknowledged = true;
 }
 std::uint64_t ShotLogOnFire(const ShotLogFire& event) noexcept {
     if (!Accept(event.source)) return 0;
@@ -394,6 +496,10 @@ std::uint64_t ShotLogOnFire(const ShotLogFire& event) noexcept {
     record.possibleLateEvent = delayedDelivery;
     if (delayedDelivery) ++state.counters.lateEvents;
     Copy(record.weapon, event.weapon); SelectMetadata(record);
+    // An overlapping fire can acknowledge several candidate commands. Suppress
+    // their timeout rather than claiming which command the native fire used.
+    for (auto& sample : state.metadata) if (sample.used && Acknowledges(sample.value, event.receiptMs, event.weapon))
+        sample.acknowledged = true;
     ++state.counters.fires; Remember(EventKind::Fire, event.deliveryId, record.id);
     for (auto& effect : state.effects) if (effect.used) {
         bool late = false;
@@ -433,6 +539,9 @@ void ShotLogOnHurt(const ShotLogHurt& event) noexcept {
 void ShotLogAdvance(std::uint64_t nowMs) noexcept {
     state.now = std::max(state.now, nowMs);
     if (!state.enabled) return;
+    for (auto& sample : state.metadata) if (sample.used &&
+        Elapsed(state.now, sample.publishedMs, ShotLogFireAckWindowMs + ShotLogReorderWindowMs))
+        CompleteAttempt(sample, ShotLogCloseReason::Settled);
     for (auto& shot : state.pending) if (shot.used &&
         Elapsed(state.now, shot.record.fireMs, ShotLogOutcomeWindowMs + ShotLogReorderWindowMs))
         Finish(shot, ShotLogCloseReason::Settled);
@@ -462,33 +571,75 @@ bool ShotLogPollCompleted(ShotLogRecord& record) noexcept {
     return true;
 }
 ShotLogCounters ShotLogGetCounters() noexcept { return state.counters; }
+const char* ShotLogReasonText(ShotLogReason reason) noexcept {
+    switch (reason) {
+    case ShotLogReason::None: return "none";
+    case ShotLogReason::Spread: return "spread";
+    case ShotLogReason::ImpactShort: return "impact short";
+    case ShotLogReason::NoImpact: return "no impact";
+    case ShotLogReason::UnregisteredShot: return "unregistered shot";
+    case ShotLogReason::ShotOverlap: return "shot overlap";
+    case ShotLogReason::LateEvent: return "late event";
+    case ShotLogReason::Interrupted: return "interrupted";
+    case ShotLogReason::TrackingOverflow: return "tracking overflow";
+    default: return "unknown";
+    }
+}
+const char* ShotLogDiagnosticText(ShotLogDiagnostic diagnostic) noexcept {
+    switch (diagnostic) {
+    case ShotLogDiagnostic::None: return "none";
+    case ShotLogDiagnostic::NoFireEvent: return "published attack has no observed fire event";
+    case ShotLogDiagnostic::NoImpactEvent: return "fire observed without an impact or hurt";
+    case ShotLogDiagnostic::OverlappingEvents: return "events fit several shots";
+    case ShotLogDiagnostic::LateDelivery: return "event exceeded timing allowance";
+    case ShotLogDiagnostic::SourceChanged: return "source changed before settlement";
+    case ShotLogDiagnostic::Stopped: return "stopped before settlement";
+    case ShotLogDiagnostic::Capacity: return "tracking capacity reached";
+    case ShotLogDiagnostic::NoMetadata: return "no aim context";
+    case ShotLogDiagnostic::OverlappingMetadata: return "several possible aim commands";
+    case ShotLogDiagnostic::NoCapsule: return "target capsule unavailable";
+    case ShotLogDiagnostic::InvalidAim: return "aim ray unavailable";
+    case ShotLogDiagnostic::AimMissedCapsule: return "aim ray missed saved capsule";
+    case ShotLogDiagnostic::ImpactMissedCapsule: return "impact ray missed saved capsule";
+    case ShotLogDiagnostic::ImpactBeforeCapsule: return "impact ended before saved capsule";
+    case ShotLogDiagnostic::ImpactCrossedCapsule: return "impact crossed saved capsule without damage";
+    case ShotLogDiagnostic::OutsideSpreadCone: return "impact outside saved spread cone";
+    case ShotLogDiagnostic::MixedImpacts: return "impacts disagree on path";
+    case ShotLogDiagnostic::InvalidTrajectory: return "impact direction unavailable";
+    default: return "insufficient evidence";
+    }
+}
 bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capacity) noexcept {
     if (!output || !capacity) return false;
     *output = 0;
     Text text{output, capacity};
-    if (record.kind != ShotLogRecordKind::Shot) {
-        text.Add("AIM_HIT %s ", record.kind == ShotLogRecordKind::AmbiguousHit ? "AMBIGUOUS" : "UNMATCHED");
+    if (record.kind == ShotLogRecordKind::AmbiguousHit || record.kind == ShotLogRecordKind::UnmatchedHit) {
+        text.Add("AIM_HIT HIT ");
         if (record.damageCount) DamageText(text, record.damage[0]);
         else text.Add("confirmed damage event");
         char normalized[48]{}, weapon[64]{};
         Normalize(record.weapon, normalized); Name(normalized, weapon);
         text.Add(" | weapon %s", weapon);
-        text.Add(" | shot mapping unknown");
-        if (record.candidateCount) text.Add(" (%u candidate%s #%llu..#%llu)", record.candidateCount,
-            record.candidateCount == 1 ? "" : "s", record.firstCandidateId, record.lastCandidateId);
+        if (record.candidateCount > 1) text.Add(" | shot overlap (%u possible shots #%llu..#%llu)",
+            record.candidateCount, record.firstCandidateId, record.lastCandidateId);
+        else if (record.candidateCount) text.Add(" | shot unknown (late or incomplete event; candidate #%llu)", record.firstCandidateId);
+        else text.Add(" | shot unknown (no matching fire event)");
         if (record.possibleLateEvent) text.Add(" | possible late event");
         CloseText(text, record);
         return text.complete;
     }
-    text.Add("AIM_SHOT #%llu ", record.id);
+    if (record.kind == ShotLogRecordKind::CommandAttempt) text.Add("AIM_SHOT cmd #%d ", record.metadata.commandSequence);
+    else text.Add("AIM_SHOT #%llu ", record.id);
     if (record.outcome == ShotLogOutcome::Hit && record.damageCount) {
         text.Add("HIT ");
         for (unsigned i = 0; i < std::min(record.damageCount, ShotLogDamageCapacity); ++i) {
             if (i) text.Add("; ");
             DamageText(text, record.damage[i]);
         }
-    } else if (record.outcome == ShotLogOutcome::Miss) text.Add("MISS no confirmed damage in %llums", ShotLogOutcomeWindowMs);
-    else text.Add("UNCONFIRMED no uniquely attributable damage");
+    } else {
+        text.Add("%s %s", record.outcome == ShotLogOutcome::Miss ? "MISS" : "UNCONFIRMED", ShotLogReasonText(record.reason));
+        if (record.reason == ShotLogReason::Unknown) text.Add(": %s", ShotLogDiagnosticText(record.diagnostic));
+    }
     char normalized[48]{}, weapon[64]{};
     Normalize(record.weapon, normalized); Name(normalized, weapon);
     text.Add(" | weapon %s", weapon);
@@ -503,12 +654,8 @@ bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capaci
         text.Add(" | delay %lldms", record.damage[0].receiptDelayMs);
         if (record.reorderedEvent) text.Add(" (receipt order)");
     } else if (record.closeReason == ShotLogCloseReason::Settled) {
-        if (record.ambiguousEvents) text.Add(" | ambiguous event attribution");
-        if (record.trajectory == ShotLogTrajectory::MissesRecordedCapsule) text.Add(" | impact segment misses recorded capsule");
-        else if (record.trajectory == ShotLogTrajectory::IntersectsRecordedCapsule) text.Add(" | impact segment crosses recorded capsule");
-        else if (!record.uniqueImpacts) text.Add(" | impact missing or not uniquely mapped");
-        else text.Add(" | impact observed; trajectory unknown");
-        if (record.possibleLateEvent) text.Add(" | possible late event");
+        if (record.reason == ShotLogReason::Spread) text.Add(" | capsule miss %.2fu", record.missDistance);
+        if (record.kind == ShotLogRecordKind::CommandAttempt) text.Add(" | no fire event after %llums", ShotLogFireAckWindowMs);
     }
     if (record.damageOverflow) text.Add(" | additional damage events logged separately");
     CloseText(text, record);

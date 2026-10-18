@@ -21,9 +21,9 @@ double Clamp(double value) noexcept { return std::clamp(value, 0.0, 1.0); }
 
 // Minimize |w + s*u - t*v|^2 over the unit square. Its minimum lies at the
 // stationary point or on one of four edges, including zero-length segments.
-bool Intersects(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
+double DistanceSquared(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
     const double directionLength = std::sqrt(Dot(direction, direction));
-    if (!std::isfinite(directionLength) || directionLength < 1e-15) return false;
+    if (!std::isfinite(directionLength) || directionLength < 1e-15) return INFINITY;
     const Vector u = Mul(direction, range / directionLength);
     const Vector v = Sub(Copy(capsule.end), Copy(capsule.start));
     const Vector w = Sub(origin, Copy(capsule.start));
@@ -43,8 +43,11 @@ bool Intersects(Vector origin, Vector direction, double range, const AimCapsule&
         const double t = (a * e - b * d) / determinant;
         if (s >= 0 && s <= 1 && t >= 0 && t <= 1) consider(s, t);
     }
+    return minimum;
+}
+bool Intersects(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
     const double radiusSquared = static_cast<double>(capsule.radius) * capsule.radius;
-    return minimum <= radiusSquared + std::max(1e-12, radiusSquared * 1e-10);
+    return DistanceSquared(origin, direction, range, capsule) <= radiusSquared + std::max(1e-12, radiusSquared * 1e-10);
 }
 double RadicalInverse(unsigned index, unsigned base) noexcept {
     double value = 0, fraction = 1.0 / base;
@@ -70,6 +73,14 @@ bool AimRayIntersectsCapsule(const AimVector& origin, const AimVector& direction
                              float range, const AimCapsule& capsule) noexcept {
     return Finite(origin) && Finite(direction) && Capsule(capsule) && std::isfinite(range) &&
         range > 0 && range <= 1000000 && Intersects(Copy(origin), Copy(direction), range, capsule);
+}
+
+float AimRayCapsuleMissDistance(const AimVector& origin, const AimVector& direction,
+                               float range, const AimCapsule& capsule) noexcept {
+    if (!Finite(origin) || !Finite(direction) || !Capsule(capsule) || !std::isfinite(range) ||
+        range <= 0 || range > 1000000) return -1;
+    const double squared = DistanceSquared(Copy(origin), Copy(direction), range, capsule);
+    return std::isfinite(squared) ? static_cast<float>(std::max(0.0, std::sqrt(squared) - capsule.radius)) : -1;
 }
 
 AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept {

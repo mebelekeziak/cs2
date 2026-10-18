@@ -341,6 +341,39 @@ void TestStopAndUnlockedSink() {
     Expect(Count("AIM_SHOT #") == 2 && Has("AIM_SHOT #2 MISS") && Has("HC 88%") && Has("sequence=43"),
         "metadata captured from the unlocked sink belongs to the next observed shot");
 }
+void TestReasonOutput() {
+    Start();
+    auto metadata = Metadata(); metadata.capsule = {{100, 0, -2}, {100, 0, 2}, 1};
+    ShotLoggingCapture(metadata); Deliver(Fire());
+    auto impact = Impact(); impact.position = {200, 4, 0}; Deliver(impact); FlushAt(1321);
+    Expect(Has("AIM_SHOT #1 MISS spread") && Has("capsule miss 1.00u") && !Has("no uniquely attributable damage"),
+        "runtime emits a short spread reason with useful geometry instead of generic uncertainty");
+    Expect(Has("reason=\"spread\" diagnostic=\"impact ray missed saved capsule\" inferred=1") &&
+        Has("aim_ray_valid=1 aim_intersects=1 geometry_impacts=1 short_impacts=0 spread_miss_impacts=1") && Has("seed_known=0"),
+        "file reason details distinguish geometric inference from unavailable native seed evidence");
+    Expect(Count("AIM_SHOT_GEOMETRY") == 1 && Has("furthest_impact=(200.0000,4.0000,0.0000)"),
+        "file geometry retains the copied capsule, aim and furthest impact used for diagnostics");
+
+    Start(); metadata = Metadata(); metadata.attackPublished = true;
+    ShotLoggingCapture(metadata); FlushAt(2060);
+    Expect(Count("AIM_SHOT cmd #") == 0, "runtime command timeout includes its full acknowledgement ordering allowance");
+    FlushAt(2061);
+    Expect(Count("AIM_SHOT cmd #") == 1 && Has("cmd #42 UNCONFIRMED unregistered shot") &&
+        Has("native_fire=0 reason=\"unregistered shot\"") && Has("attack_published=1"),
+        "runtime command-only timeout is distinguished from native fire in both human and file output");
+    Expect(ShotLogGetCounters().fires == 0 && ShotLogGetCounters().unregistered == 1,
+        "command-only timeout never increments actual native-fire accounting");
+    FlushAt(3000);
+    Expect(Count("AIM_SHOT cmd #") == 1, "runtime emits one timeout per issued command");
+
+    Start(); ShotLoggingCapture(metadata); Deliver(Fire()); FlushAt(2061);
+    Expect(Has("AIM_SHOT #1 MISS no impact") && Count("AIM_SHOT cmd #") == 0,
+        "an observed native fire with missing effects says no impact instead of unregistered shot");
+
+    Start(); ShotLoggingCapture(Metadata()); Deliver(Fire()); Deliver(Fire(1050, 4)); Deliver(Hurt(1060)); FlushAt(1361);
+    Expect(Has("UNCONFIRMED shot overlap") && Has("AIM_HIT HIT BOT Delta") && Has("shot overlap (2 possible shots"),
+        "overlapping fire reports actual damage separately with an understandable mapping explanation");
+}
 }
 
 bool ShotEventsPrepare(ShotEventsLogCallback, ShotEventsValueCallback callback) noexcept {
@@ -373,6 +406,7 @@ int main() {
     TestSettings();
     TestTransientLocalLoss();
     TestStopAndUnlockedSink();
+    TestReasonOutput();
     captureFromSink = false;
     ShotLoggingStop("test complete");
     ShotLogSetSettings({});

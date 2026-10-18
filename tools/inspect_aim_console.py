@@ -14,6 +14,9 @@ from verify_sky_draw import DEFAULT, ROOT, mapped, require_bytes
 TIER0_HASH = "990ea56bf1626d299ba54b64b423f2e409bd592bb737c7a5edf7972ad5c7143e"
 CLIENT_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
 MSG_RVA = 0x7EE60
+COLOR_MSG_RVA = 0x7F710
+COLOR_EXPORT = "?ConColorMsg@@YAXAEBVColor@@PEBDZZ"
+COLOR_PROLOGUE = "4c8bdc498953104d8943184d894b205355574881ec90080000"
 PROLOGUE = "48894c240848895424104c894424184c894c2420574881ec40080000"
 CHECKS = {
     "msg_varargs_prologue": (MSG_RVA, PROLOGUE),
@@ -21,10 +24,17 @@ CHECKS = {
     "msg_varargs_from_saved_rdx": (0x7EEB8, "488db42458080000"),
     "msg_vsnprintf_arguments": (0x7EECA, "4889742428488d54243033f64c8bcb41b8000800004889742420488b084883c901e8f00e2300"),
     "msg_dispatch_formatted_line": (0x7EF11, "8b15dde63200488d44243048897424284533c941b8020000004889442420488bcfe8d98e0a00"),
+    "color_varargs_prologue": (COLOR_MSG_RVA, COLOR_PROLOGUE),
+    "color_format_rdx_color_rcx": (0x7F737, "488bda488bf9"),
+    "color_varargs_from_saved_r8": (0x7F753, "488bcb498d7318"),
+    "color_read_four_bytes": (0x7F7A6, "8b07"),
+    "color_attach_copied_rgba": (0x7F7DB, "894424304c8d4c2440488d4424304889442460"),
+    "color_dispatch_formatted_line": (0x7F7EE, "8b15b8dd3200488d842480000000488974242841b802000000488bcd4889442420e8fc850a00"),
 }
 CALLERS = {
     "client_msg_string_1": (0x153C4F, "488bd0488d0d47209701ff15399d9501"),
     "client_msg_string_2": (0x153C72, "488bd0488d0d34209701ff15169d9501"),
+    "client_color_stack_rgba_and_format": (0x1C6149, "c744244034ebd5ff488d4c2440488d15438d9001ff1595748e01"),
 }
 
 
@@ -79,13 +89,16 @@ def import_slot(image, raw, nt, dll, name):
 
 def verify_source(path, timestamp, size):
     text = re.sub(r"//[^\n]*|/\*.*?\*/", "", path.read_text(encoding="utf-8-sig"), flags=re.S)
-    for name, expected in (("Tier0Timestamp", timestamp), ("Tier0ImageSize", size), ("MsgRva", MSG_RVA)):
+    for name, expected in (("Tier0Timestamp", timestamp), ("Tier0ImageSize", size), ("MsgRva", MSG_RVA), ("ColorMsgRva", COLOR_MSG_RVA)):
         values = re.findall(rf"\b{name}\s*=\s*(0[xX][0-9a-fA-F]+|[0-9]+)\s*;", text)
         if len(values) != 1 or int(values[0], 0) != expected:
             raise SystemExit(f"Console source constant mismatch: {name}")
-    arrays = re.findall(r"\bMsgPrologue\[\]\s*\{([^}]*)\}", text, flags=re.S)
-    if len(arrays) != 1 or bytes(int(value, 0) for value in re.findall(r"0x[0-9a-fA-F]+|\d+", arrays[0])) != bytes.fromhex(PROLOGUE):
-        raise SystemExit("Console source MsgPrologue mismatch")
+    for name, expected in (("MsgPrologue", PROLOGUE), ("ColorMsgPrologue", COLOR_PROLOGUE)):
+        arrays = re.findall(rf"\b{name}\[\]\s*\{{([^}}]*)\}}", text, flags=re.S)
+        if len(arrays) != 1 or bytes(int(value, 0) for value in re.findall(r"0x[0-9a-fA-F]+|\d+", arrays[0])) != bytes.fromhex(expected):
+            raise SystemExit(f"Console source {name} mismatch")
+    if f'GetProcAddress(module, "{COLOR_EXPORT}")' not in text:
+        raise SystemExit("Console source color export mismatch")
 
 
 def main():
@@ -104,6 +117,8 @@ def main():
     size = struct.unpack_from("<I", raw, nt + 24 + 56)[0]
     if export(image, raw, nt, "Msg") != MSG_RVA:
         raise SystemExit("Named Msg export moved")
+    if export(image, raw, nt, COLOR_EXPORT) != COLOR_MSG_RVA:
+        raise SystemExit("Named ConColorMsg export moved")
     require_bytes(image, CHECKS)
     verify_source(args.source, timestamp, size)
     client_raw, client, _, client_nt = mapped(client_path)
@@ -111,17 +126,24 @@ def main():
     if client_hash != CLIENT_HASH:
         raise SystemExit("Installed client hash changed; native console callers need renewed evidence")
     slot = import_slot(client, client_raw, client_nt, "tier0.dll", "Msg")
+    color_slot = import_slot(client, client_raw, client_nt, "tier0.dll", COLOR_EXPORT)
     require_bytes(client, CALLERS)
     for lea, call, expected_format in ((0x153C52, 0x153C59, "T     %s\n"), (0x153C75, 0x153C7C, "UWT1  %s\n")):
         format_rva = lea + 7 + struct.unpack_from("<i", client, lea + 3)[0]
         target = call + 6 + struct.unpack_from("<i", client, call + 2)[0]
         if target != slot or string(client, format_rva) != expected_format:
             raise SystemExit("Native Msg caller no longer passes RCX=format, RDX=string")
+    if 0x1C615D + 6 + struct.unpack_from("<i", client, 0x1C615D + 2)[0] != color_slot:
+        raise SystemExit("Native ConColorMsg caller no longer uses the verified import")
+    color_format = 0x1C6156 + 7 + struct.unpack_from("<i", client, 0x1C6156 + 3)[0]
     result = {
         "status": "pass", "tier0": str(tier0_path), "tier0_sha256": tier0_hash,
         "client": str(client_path), "client_sha256": client_hash,
         "timestamp": hex(timestamp), "image_size": hex(size), "export": "Msg", "export_rva": hex(MSG_RVA),
         "abi": "AMD64 native variadic printf: RCX=const char* format, RDX=first vararg; return value unused",
+        "color_export": COLOR_EXPORT, "color_export_rva": hex(COLOR_MSG_RVA),
+        "color_abi": "RCX=reference to four RGBA bytes, RDX=format, R8=first vararg; return value unused",
+        "color_native_format": string(client, color_format),
         "native_format_buffer_bytes": 0x800, "checked_native_paths": list(CHECKS) + list(CALLERS),
         "source": str(args.source), "source_sha256": hashlib.sha256(args.source.read_bytes()).hexdigest(),
         "observed_live_console": False,

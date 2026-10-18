@@ -21,6 +21,10 @@ struct AimHitchanceResult {
 // Finite shot segment, including tangencies and starts inside the capsule.
 bool AimRayIntersectsCapsule(const AimVector& origin, const AimVector& direction,
                              float range, const AimCapsule& capsule) noexcept;
+// Closest clearance of the finite segment from the capsule surface. Zero for
+// intersection/tangency, -1 for invalid inputs.
+float AimRayCapsuleMissDistance(const AimVector& origin, const AimVector& direction,
+                               float range, const AimCapsule& capsule) noexcept;
 // Fixed four-dimensional low-discrepancy samples; does not touch native RNG.
 // Evaluates every requested sample. Geometric selected-capsule probability only.
 AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept;

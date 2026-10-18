@@ -142,6 +142,7 @@ void NativeBuilder(void* input, int slot, void* command) {
 
 struct World {
     std::vector<unsigned char> client = std::vector<unsigned char>(cs2_offsets::ClientImageSize);
+    std::array<unsigned char, 0x40> weaponIdentity{};
     std::uintptr_t Base() noexcept { return reinterpret_cast<std::uintptr_t>(client.data()); }
     std::uintptr_t InputAddress() noexcept { return Base() + cmd::Input; }
     void* Input() noexcept { return reinterpret_cast<void*>(InputAddress()); }
@@ -173,6 +174,8 @@ struct World {
         ShotLogSetSettings({});
         weapon = {};
         weapon.weapon = 0x444000; weapon.identity = 0x445000; weapon.services = 0x446000;
+        weapon.identity = Address(weaponIdentity);
+        Put(weapon.identity + cs2_offsets::CEntityIdentity::m_designerName, reinterpret_cast<std::uintptr_t>("weapon_ak47"));
         weapon.data = 0x447000; weapon.handle = 0x8008;
         weapon.range = 1000; weapon.clip = 30; weapon.ready = true;
         weapon.name = "fixture rifle"; weapon.reason = "ready";
@@ -219,7 +222,7 @@ void GateChecks(World& world) {
         accepted.Index() == -1 && !(accepted.Presence() & cmd::command::Attack1Present),
         "automatic primary buttons exist before the builder; native builder retains index ownership");
     world.History(accepted);
-    Expect(shotMetadata.size() == 1 && shotMetadata[0].automatic && shotMetadata[0].chanceValid &&
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].automatic && shotMetadata[0].chanceValid && shotMetadata[0].attackPublished &&
         shotMetadata[0].commandSequence == 37 && shotMetadata[0].hitchance == 100 &&
         shotMetadata[0].source.pawn == 0x8003 && shotMetadata[0].targetPawn == 0x8004,
         "successful automatic history publishes copied aim context without claiming an actual shot");
@@ -248,7 +251,7 @@ void GateChecks(World& world) {
     world.Prepare(manual); world.History(manual);
     Expect(recorderCalls == 0 && Equal(manual.Buttons(), manualButtons) && Equal(manual.History(), Desired()),
         "physical/manual command primary remains available to existing silent aim below the automatic threshold");
-    Expect(shotMetadata.size() == 1 && !shotMetadata[0].automatic && shotMetadata[0].chanceValid &&
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].automatic && shotMetadata[0].chanceValid && shotMetadata[0].attackPublished &&
         shotMetadata[0].hitchance == 0, "manual aimed history captures its actual zero-percent estimate");
 
     world.Reset();
@@ -258,8 +261,17 @@ void GateChecks(World& world) {
     Put(Address(manualStale.command) + move::command::Buttons, staleButtons);
     world.Prepare(manualStale); world.History(manualStale);
     Expect(Equal(manualStale.History(), Desired()) && shotMetadata.size() == 1 &&
-        !shotMetadata[0].chanceValid && !shotMetadata[0].capsuleValid && !*shotMetadata[0].weapon,
+        !shotMetadata[0].chanceValid && !shotMetadata[0].capsuleValid && !shotMetadata[0].attackPublished && !*shotMetadata[0].weapon,
         "manual fire remains available when logging revalidation marks stale weapon/geometry metadata unknown");
+
+    world.Reset();
+    Command cooldown;
+    weapon.ready = false;
+    auto cooldownButtons = cooldown.originalButtons; cooldownButtons.down |= 1;
+    Put(Address(cooldown.command) + move::command::Buttons, cooldownButtons);
+    world.Prepare(cooldown); world.History(cooldown);
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].attackPublished,
+        "manual held primary during weapon cooldown cannot create unregistered-shot attempts");
 
     world.Reset();
     Command loggingChanged;

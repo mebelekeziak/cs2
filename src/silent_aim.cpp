@@ -246,6 +246,7 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
     metadata.chanceValid = decision.chance.valid && volumeCurrent && weaponCurrent;
     metadata.spread = decision.weapon.spread; metadata.inaccuracy = decision.weapon.inaccuracy;
     metadata.range = decision.weapon.range; metadata.automatic = automatic;
+    metadata.attackPublished = weaponCurrent && decision.weapon.ready && *metadata.weapon;
     ShotLoggingCapture(metadata);
 }
 bool Cancel(Pending& request, void* input, void* command) noexcept {

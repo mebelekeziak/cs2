@@ -1,6 +1,6 @@
 # Native aim telemetry console sink
 
-Static verification date: October 16, 2026. Client feature; no dedicated server
+Static verification date: October 18, 2026. Client feature; no dedicated server
 or plugin framework is involved. No game was started or installed file changed.
 
 The installed files are below
@@ -34,6 +34,30 @@ at `0x153C72/0x153C75/0x153C7C` passes the format `UWT1  %s\n`.
 These callers and the callee establish the native variadic printf interface;
 no guessed C++ virtual method or signature is used.
 
+### Native color output
+
+The same installed tier0 exports `?ConColorMsg@@YAXAEBVColor@@PEBDZZ` at
+RVA `0x7F710`. Its complete 25-byte prologue saves RDX, R8 and R9 into argument
+home slots. `0x7F737` retains RDX as the format and `0x7F73A` retains RCX as the
+color pointer. `0x7F756` points the varargs list at the original R8 home slot.
+At `0x7F7A6`, a DWORD load copies the color; `0x7F7DB–0x7F7E9` attaches those
+four bytes to logging metadata before dispatch at `0x7F80F`.
+
+The installed client's IAT slot is `0x1AAD5F8`. At `0x1C6149`, it constructs
+color value `0xFFD5EB34` in four stack bytes, passes their address in RCX at
+`0x1C6151`, the format in RDX at `0x1C6156`, and calls the imported export at
+`0x1C615D`. The frozen verifier checks each producer/consumer window and the
+decoded import target. Research disassembly is retained in
+`logs/shot-reasons-color-research.txt`.
+
+Valve's published [Color declaration](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/public/Color.h)
+describes four bytes in RGBA order; its [console declaration](https://github.com/ValveSoftware/source-sdk-2013/blob/master/src/public/tier0/dbg.h)
+documents the color-reference/format/varargs interface. Those older Source SDK
+declarations provide supporting context; the installed CS2 export, native
+caller and callee above establish the current boundary. No SDK implementation
+is copied or linked. This project uses an independent four-byte value struct,
+with a compile-time size assertion.
+
 ## Runtime ownership and bounds
 
 `AimConsoleInitialize` must run outside DllMain. It checks the loaded tier0
@@ -42,6 +66,16 @@ and the complete 28-byte variadic prologue. Every write acquires a temporary
 loader reference and repeats those checks, including the cached module/export
 identity, before calling. The temporary reference is released afterward; this
 feature does not permanently pin or unload the engine module.
+
+The optional color export receives its own executable-span, named-export RVA
+and full-prologue checks, repeated before each colored call while the same
+temporary module reference is held. If it is absent, changed or invalidated,
+the verified plain `Msg` path still prints. A colored record uses exactly one
+call with `color, "%s", line`, so no partial-line color state can leak into
+other messages. Hits are green, misses red, unconfirmed results/warnings amber,
+status cyan, and verbose diagnostics gray. Classification reads only the fixed
+record prefix and outcome position; player names cannot change the palette.
+The workspace file writer receives the original text, with no escape codes.
 
 The sink only runs from telemetry consumers. Input hooks keep enqueueing bounded
 records; they perform no console/file I/O. Each emitted record contains at most
@@ -66,5 +100,7 @@ python tools/inspect_aim_console.py --output logs/hitchance/aim-console-static.j
 `aim_console_checks` substitutes only the external native target and exercises
 printf formatting, literal percent text, control bytes, bounded records,
 per-write source invalidation, failed initialization, and cooperative stop
-during an in-progress native call. Installed binary/source contracts are
+during an in-progress native call. It also checks each native color, opacity,
+colored printf/control handling, optional-color invalidation/plain fallback,
+and shutdown while a colored call executes. Installed binary/source contracts are
 checked separately by `inspect_aim_console.py`.

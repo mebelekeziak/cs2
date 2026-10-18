@@ -93,10 +93,9 @@ void BasicChecks() {
         "observed impact segment can miss the copied capsule without inventing a physical cause");
     if (!records.empty()) {
         const auto miss = Format(records[0]);
-        Expect(miss.find("MISS no confirmed damage in 250ms") != std::string::npos &&
-            miss.find("impact segment misses recorded capsule") != std::string::npos &&
-            miss.find("spread") == std::string::npos && miss.find("resolver") == std::string::npos &&
-            miss.find("prediction") == std::string::npos, "MISS text reports observed evidence without asserting spread/resolver/prediction");
+        Expect(miss.find("MISS unknown: impact outside saved spread cone") != std::string::npos &&
+            miss.find("MISS spread") == std::string::npos && miss.find("resolver") == std::string::npos &&
+            miss.find("prediction") == std::string::npos, "implausible impact direction has a concrete unknown detail instead of a guessed cause");
     }
     ShotLogInitialize(Local, 900); ShotLogOnFire(Fire()); ShotLogAdvance(1311);
     records = Drain();
@@ -104,7 +103,7 @@ void BasicChecks() {
         "actual fire remains loggable without an aim candidate or impact");
     if (!records.empty()) {
         const auto unknown = Format(records[0]);
-        Expect(unknown.find("HC unknown") != std::string::npos && unknown.find("impact missing") != std::string::npos,
+        Expect(unknown.find("HC unknown") != std::string::npos && unknown.find("MISS no impact") != std::string::npos,
             "unknown metadata and missing impact stay explicit in clean output");
     }
     ShotLogInitialize(Local, 900); ShotLogAddMetadata(Metadata()); ShotLogOnFire(Fire());
@@ -161,8 +160,8 @@ void CorrelationChecks() {
         "rapid-fire ambiguity retains a separate confirmed-damage evidence line");
     if (!records.empty()) {
         const auto line = Format(records[0]);
-        Expect(line.find("AIM_HIT AMBIGUOUS Mayer in chest for 34 (66 HP)") == 0 &&
-            line.find("shot mapping unknown") != std::string::npos,
+        Expect(line.find("AIM_HIT HIT Mayer in chest for 34 (66 HP)") == 0 &&
+            line.find("shot overlap (2 possible shots #1..#2)") != std::string::npos,
             "ambiguous damage text never invents a per-shot hit claim");
     }
     ShotLogAdvance(1411); records = Drain();
@@ -321,6 +320,137 @@ void CapacityChecks() {
         "closed-history rollover quarantines incomplete evidence instead of enabling a new false unique attribution");
 }
 
+void ReasonChecks() {
+    const auto resolve = [](ShotLogMetadata metadata, AimVector position) {
+        ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire());
+        ShotLogOnImpact(Impact(1005, 2, position)); ShotLogAdvance(1311);
+        auto records = Drain();
+        Expect(records.size() == 1, "reason scenario settles exactly one native shot");
+        return records.empty() ? ShotLogRecord{} : records[0];
+    };
+    auto narrow = Metadata(); narrow.capsule.radius = 1;
+    auto record = resolve(narrow, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Spread && record.aimRayValid && record.aimIntersectsCapsule &&
+        record.geometryImpacts == 1 && record.spreadMissImpacts == 1 && record.missDistance > .99f && record.missDistance < 1.01f,
+        "spread requires aim intersection, actual ray miss, and deviation inside the captured cone");
+    Expect(Format(record).find("MISS spread") != std::string::npos && Format(record).find("capsule miss 1.00u") != std::string::npos,
+        "console spread reason stays short and exposes the capsule clearance");
+    auto perfect = narrow; perfect.hits = perfect.samples; perfect.hitchance = 100;
+    record = resolve(perfect, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Spread, "100 percent sampled HC does not invent a deterministic seed misprediction");
+    auto noChance = narrow; noChance.chanceValid = false;
+    record = resolve(noChance, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown, "invalid cone model cannot claim spread");
+    auto noSpread = narrow; noSpread.spread = noSpread.inaccuracy = 0;
+    record = resolve(noSpread, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown, "a zero-spread snapshot cannot blame a divergent impact on spread");
+    auto away = narrow; away.aim.yaw = 90;
+    record = resolve(away, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::AimMissedCapsule,
+        "aim already missing the saved capsule is not spread");
+    record = resolve(narrow, {200, 100, 0});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::OutsideSpreadCone,
+        "trajectory outside the weapon cone remains unknown with an explicit explanation");
+    record = resolve(narrow, {50, 0, 0});
+    Expect(record.reason == ShotLogReason::ImpactShort && record.shortImpacts == 1 && record.missDistance == 0 &&
+        record.trajectory == ShotLogTrajectory::MissesRecordedCapsule,
+        "short segment whose continuation crosses the capsule is distinguished from spread");
+    Expect(Format(record).find("MISS impact short") != std::string::npos, "short impact is described without inventing world material or penetration evidence");
+    record = resolve(narrow, {200, 0, 0});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::ImpactCrossedCapsule,
+        "capsule crossing without damage does not claim resolver, lagcomp, or damage rejection");
+    record = resolve(narrow, {});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::InvalidTrajectory,
+        "zero-length impact has an explicit invalid-direction diagnostic");
+    auto badAim = narrow; badAim.aim.yaw = std::numeric_limits<float>::infinity();
+    record = resolve(badAim, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::InvalidAim,
+        "nonfinite aim cannot create a spread or short-impact conclusion");
+    auto badRange = narrow; badRange.range = -1;
+    record = resolve(badRange, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown, "invalid weapon range cannot create a physical reason");
+    auto noCapsule = narrow; noCapsule.capsuleValid = false;
+    record = resolve(noCapsule, {200, 4, 0});
+    Expect(record.diagnostic == ShotLogDiagnostic::NoCapsule, "missing target geometry is stated plainly");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(narrow); ShotLogOnFire(Fire());
+    ShotLogOnImpact(Impact(1005, 2, {50, 0, 0})); ShotLogOnImpact(Impact(1010, 3, {200, 0, 0}));
+    ShotLogAdvance(1311); auto records = Drain();
+    Expect(records.size() == 1 && records[0].diagnostic == ShotLogDiagnostic::ImpactCrossedCapsule,
+        "a later penetration impact crossing the target prevents a false short-impact result");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(narrow); ShotLogOnFire(Fire());
+    ShotLogOnImpact(Impact(1005, 2, {50, 0, 0})); ShotLogOnImpact(Impact(1010, 3, {200, 4, 0}));
+    ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::Unknown && records[0].diagnostic == ShotLogDiagnostic::MixedImpacts,
+        "conflicting short and missed impacts stay unknown");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(narrow); ShotLogOnFire(Fire()); ShotLogOnFire(Fire(1010, 3));
+    ShotLogOnImpact(Impact(1020, 4, {200, 4, 0})); ShotLogAdvance(1321); records = Drain();
+    Expect(records.size() == 2 && records[0].reason == ShotLogReason::ShotOverlap && records[1].reason == ShotLogReason::ShotOverlap &&
+        Format(records[0]).find("UNCONFIRMED shot overlap") != std::string::npos,
+        "competing shots get a plain overlap reason without borrowing an impact for spread");
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire()); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::NoImpact, "observed fire without impact is no impact, not an unregistered attack");
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire()); ShotLogOnImpact(Impact(1260)); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::LateEvent,
+        "a lone late impact says late event rather than incorrectly claiming shot overlap");
+
+    const AimCapsule sphere{{100, 0, 0}, {100, 0, 0}, 4};
+    Expect(std::abs(AimRayCapsuleMissDistance({}, {1, 0, 0}, 50, sphere) - 46) < .001f &&
+        AimRayCapsuleMissDistance({}, {1, 0, 0}, 200, sphere) == 0 &&
+        AimRayCapsuleMissDistance({}, {}, 200, sphere) == -1,
+        "capsule distance handles a spherical capsule, short endpoint, intersection, and invalid direction");
+}
+
+void AttemptChecks() {
+    auto published = Metadata(); published.attackPublished = true;
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogAdvance(2050);
+    Expect(Drain().empty() && ShotLogGetCounters().fires == 0, "published attack preserves inclusive fire-acknowledgement and reorder boundary");
+    ShotLogAdvance(2051); auto records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::CommandAttempt && records[0].id == 0 &&
+        records[0].outcome == ShotLogOutcome::Unconfirmed && records[0].reason == ShotLogReason::UnregisteredShot &&
+        ShotLogGetCounters().unregistered == 1 && ShotLogGetCounters().fires == 0,
+        "published attack with no observed fire creates one command timeout without allocating an actual-shot ID");
+    if (!records.empty()) Expect(Format(records[0]).find("AIM_SHOT cmd #1 UNCONFIRMED unregistered shot") == 0,
+        "timeout identifies its command separately from native shot numbering");
+    ShotLogAdvance(5000); Expect(Drain().empty(), "command timeouts are never emitted twice");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(Metadata()); ShotLogAdvance(5000);
+    Expect(Drain().empty(), "estimate-only metadata cannot time out as an issued attack");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogOnFire(Fire()); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot && ShotLogGetCounters().unregistered == 0,
+        "observed native fire suppresses the issued-command timeout");
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire(980)); ShotLogAddMetadata(published); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot,
+        "fire delivered before command capture within the reorder bound also suppresses the timeout");
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire(980)); ShotLogAdvance(1291); Drain();
+    ShotLogAddMetadata(published); ShotLogAdvance(2051);
+    Expect(Drain().empty(), "recent retired fire history also acknowledges reordered command capture");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogOnFire(Fire(1990)); ShotLogAdvance(2301); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot && !records[0].metadataKnown,
+        "delayed fire at the acknowledgement boundary suppresses timeout without inheriting stale aim metadata");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogOnFire(Fire(1000, 1, "deagle")); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 2 && ShotLogGetCounters().unregistered == 1,
+        "another weapon's fire cannot acknowledge a published attack");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    auto duplicate = published; duplicate.receiptMs = 1500; ShotLogAddMetadata(duplicate); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 1 && records[0].fireMs == 990, "rebuilding the same command cannot postpone or duplicate its original attack timeout");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); auto competing = published; competing.commandSequence = 2;
+    ShotLogAddMetadata(competing); ShotLogOnFire(Fire()); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 1 && records[0].metadataAmbiguous && ShotLogGetCounters().unregistered == 0,
+        "one fire with competing command candidates avoids falsely timing out either command");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogReset({2, Local.controller, Local.pawn}, 1000); records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::Interrupted && ShotLogGetCounters().unregistered == 0,
+        "lifecycle interruption cannot fabricate an unregistered-shot timeout");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogStop(1000); records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::Interrupted, "cooperative stop interrupts outstanding attack observation");
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogSetEnabled(false, 1000); ShotLogAdvance(5000);
+    Expect(Drain().empty() && ShotLogGetCounters().abandonedDisabled == 1, "disabling logging abandons attempts without emitting a timeout");
+    ShotLogInitialize(Local, 900);
+    for (int i = 0; i < 65; ++i) { auto sample = published; sample.commandSequence = i + 1; ShotLogAddMetadata(sample); }
+    records = Drain();
+    Expect(records.size() == 1 && records[0].reason == ShotLogReason::TrackingOverflow && ShotLogGetCounters().unregistered == 0,
+        "attempt ring eviction reports capacity instead of pretending a timeout elapsed");
+}
+
 void FormattingChecks() {
     ShotLogInitialize(Local, 900); ShotLogOnFire(Fire());
     auto hostile = Hurt(); Text(hostile.victimName, " \rMayer\n|%n\t\x1b"); hostile.hitgroup = 123;
@@ -366,7 +496,7 @@ void FormattingChecks() {
 }
 
 int main() {
-    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); FormattingChecks();
+    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); AttemptChecks(); FormattingChecks();
     std::printf("Shot log checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;
 }

@@ -15,15 +15,23 @@ std::atomic<bool> block{false};
 HANDLE entered = nullptr, releasePrint = nullptr;
 char observed[2048]{};
 bool fixedFormat = true;
+bool colorValid = true;
+unsigned coloredCalls = 0;
+AimConsoleColor observedColor{};
 bool Valid() noexcept { return valid.load(); }
-void Print(const char* format, ...) {
+bool ColorValid() noexcept { return colorValid; }
+void Observe(const char* format, va_list args) {
     fixedFormat = fixedFormat && std::strcmp(format, "%s") == 0;
-    va_list args;
-    va_start(args, format);
     std::vsnprintf(observed, sizeof(observed), format, args);
-    va_end(args);
     ++calls;
     if (block.load()) { SetEvent(entered); WaitForSingleObject(releasePrint, 10000); }
+}
+void Print(const char* format, ...) {
+    va_list args; va_start(args, format); Observe(format, args); va_end(args);
+}
+void ColorPrint(const AimConsoleColor& color, const char* format, ...) {
+    observedColor = color; ++coloredCalls;
+    va_list args; va_start(args, format); Observe(format, args); va_end(args);
 }
 void Expect(bool ok, const char* description) {
     std::printf("%s %s\n", ok ? "PASS" : "FAIL", description);
@@ -60,6 +68,47 @@ int main() {
     AimConsoleWrite("AIM_STALE");
     Expect(calls == 3, "native target validity is rechecked for every write");
     valid = true;
+
+    AimConsoleTestSetTarget(Print, Valid, ColorPrint, ColorValid);
+    Expect(AimConsoleInitialize(), "verified color target initializes with plain fallback available");
+    struct ColorCase { const char* text; unsigned r, g, b; };
+    const ColorCase colors[]{
+        {"AIM_SHOT #1 HIT Mayer in head for 40 (60 HP)", 120, 230, 160},
+        {"AIM_HIT HIT Mayer in chest for 34 (66 HP) | shot overlap", 120, 230, 160},
+        {"AIM_SHOT #2 MISS spread | target HIT victim", 255, 120, 120},
+        {"AIM_SHOT #3 UNCONFIRMED shot overlap", 255, 205, 110},
+        {"AIM_SHOT cmd #42 UNCONFIRMED unregistered shot", 255, 205, 110},
+        {"AIM_SHOT_LOG_READY native listeners registered", 115, 210, 240},
+        {"AIM_CONSOLE_READY native sink", 115, 210, 240},
+        {"AIM_SHOT_LOG_UNAVAILABLE native verification failed", 255, 120, 120},
+        {"AIM_SHOT_LOG_WARNING bounded capacity", 255, 205, 110},
+        {"AIM_SHOT_DETAIL outcome=0", 160, 170, 185},
+        {"AIM_SHOT_REASON reason=spread", 160, 170, 185},
+        {"AIM_SHOT #bad HIT fake format", 160, 170, 185}
+    };
+    for (const auto& item : colors) {
+        const auto before = calls.load(); const auto beforeColor = coloredCalls;
+        AimConsoleWrite(item.text);
+        Expect(calls == before + 1 && coloredCalls == beforeColor + 1 && fixedFormat &&
+            observedColor.r == item.r && observedColor.g == item.g && observedColor.b == item.b && observedColor.a == 255 &&
+            std::string(observed) == std::string(item.text) + '\n',
+            "native colored record keeps one literal text line and the expected outcome palette");
+    }
+    AimConsoleWrite("AIM_SHOT #4 HIT %n\r\n\x1b[31m");
+    Expect(fixedFormat && std::strcmp(observed, "AIM_SHOT #4 HIT %n   [31m\n") == 0,
+        "colored printf keeps percent text literal and strips embedded console control codes");
+    const auto beforeFallback = coloredCalls;
+    colorValid = false;
+    AimConsoleWrite("AIM_SHOT #5 MISS no impact");
+    Expect(coloredCalls == beforeFallback && std::strcmp(observed, "AIM_SHOT #5 MISS no impact\n") == 0,
+        "invalidated optional color target falls back to the verified plain native sink");
+    AimConsoleTestSetTarget(Print, Valid, ColorPrint, ColorValid);
+    Expect(AimConsoleInitialize(), "missing color availability does not disable console logging");
+    AimConsoleWrite("AIM_SHOT #6 MISS no impact");
+    Expect(coloredCalls == beforeFallback, "unavailable color at initialization continues through plain output");
+    colorValid = true;
+    AimConsoleTestSetTarget(Print, Valid, ColorPrint, ColorValid);
+    Expect(AimConsoleInitialize(), "colored sink can initialize freshly before shutdown checks");
 
     entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     releasePrint = CreateEventW(nullptr, TRUE, FALSE, nullptr);

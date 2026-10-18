@@ -189,6 +189,7 @@ rediscovery. Geometry changes from landmarks to authored centers when available.
 | `aim_occlusion_offsets::ShotMask`, `ShotExclude` | `0x1C300B`, `0x4000000000`, collision masks | Native bullet filter producer `0x887F60` onward: layer 3, flags `0x0F`, additional byte `+0x39` bits `0x02` |
 | `aim_occlusion_offsets::TraceEntity`, `TraceHitFlag` | `0x08`, `0xBB`, result members | Native entity comparison and DidHit consumer; shared fraction is `+0xAC`; zero shape bounds select a ray |
 | Native `tier0!Msg` | `0x7EE60`, named export | Variadic prologue and client `%s` format callers; runtime export/module verification in `aim_console.cpp` |
+| Native `tier0!ConColorMsg` | `0x7F710`, export `?ConColorMsg@@YAXAEBVColor@@PEBDZZ` | RCX points to four RGBA bytes; RDX format, R8 first vararg. Client caller `0x1C6149` constructs a four-byte stack color. Optional color validation in `aim_console.cpp`; plain `Msg` fallback |
 
 Autofire prepares before anti aim and the original movement finalizer. It scopes
 a native input press and lets the native recorder and subsequent history builder

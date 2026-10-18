@@ -10,6 +10,7 @@ inline constexpr std::uint64_t ShotLogMetadataWindowMs = 250;
 inline constexpr std::uint64_t ShotLogOutcomeWindowMs = 250;
 inline constexpr std::uint64_t ShotLogReorderWindowMs = 60;
 inline constexpr std::uint64_t ShotLogLateGuardMs = 1000;
+inline constexpr std::uint64_t ShotLogFireAckWindowMs = 1000;
 inline constexpr unsigned ShotLogPendingCapacity = 64;
 inline constexpr unsigned ShotLogCompletedCapacity = 64;
 inline constexpr unsigned ShotLogDamageCapacity = 8;
@@ -32,6 +33,9 @@ struct ShotLogMetadata {
     float hitchance = 0, spread = 0, inaccuracy = 0, range = 0;
     unsigned hits = 0, samples = 0;
     bool automatic = false, chanceValid = false, capsuleValid = false;
+    // Set only after publishing a ready primary attack. Estimates and held
+    // attacks during cooldown must not produce unregistered-shot timeouts.
+    bool attackPublished = false;
 };
 
 // deliveryId optionally identifies a copied delivery occurrence. Repeating the
@@ -57,9 +61,15 @@ struct ShotLogHurt {
 };
 
 enum class ShotLogOutcome { Hit, Miss, Unconfirmed };
-enum class ShotLogRecordKind { Shot, AmbiguousHit, UnmatchedHit };
+enum class ShotLogRecordKind { Shot, AmbiguousHit, UnmatchedHit, CommandAttempt };
 enum class ShotLogCloseReason { Settled, SourceChanged, Stopped, Capacity };
 enum class ShotLogTrajectory { Unknown, IntersectsRecordedCapsule, MissesRecordedCapsule };
+enum class ShotLogReason { None, Spread, ImpactShort, NoImpact, UnregisteredShot,
+    ShotOverlap, LateEvent, Interrupted, TrackingOverflow, Unknown };
+enum class ShotLogDiagnostic { None, NoFireEvent, NoImpactEvent, OverlappingEvents,
+    LateDelivery, SourceChanged, Stopped, Capacity, NoMetadata, OverlappingMetadata,
+    NoCapsule, InvalidAim, AimMissedCapsule, ImpactMissedCapsule, ImpactBeforeCapsule,
+    ImpactCrossedCapsule, OutsideSpreadCone, MixedImpacts, InvalidTrajectory };
 struct ShotLogDamage {
     std::uint32_t victimController = UINT32_MAX, victimPawn = UINT32_MAX;
     char victimName[64]{};
@@ -79,14 +89,20 @@ struct ShotLogRecord {
     ShotLogOutcome outcome = ShotLogOutcome::Unconfirmed;
     ShotLogCloseReason closeReason = ShotLogCloseReason::Settled;
     ShotLogTrajectory trajectory = ShotLogTrajectory::Unknown;
+    ShotLogReason reason = ShotLogReason::Unknown;
+    ShotLogDiagnostic diagnostic = ShotLogDiagnostic::None;
+    bool aimRayValid = false, aimIntersectsCapsule = false;
+    unsigned geometryImpacts = 0, shortImpacts = 0, spreadMissImpacts = 0;
+    float missDistance = -1, impactDistance = 0, impactAngle = 0, spreadCone = 0;
+    AimVector furthestImpact{};
     std::array<ShotLogDamage, ShotLogDamageCapacity> damage{};
-    unsigned damageCount = 0, uniqueImpacts = 0, ambiguousEvents = 0;
+    unsigned damageCount = 0, uniqueImpacts = 0, ambiguousEvents = 0, overlappingEvents = 0;
     bool damageOverflow = false, evidenceLost = false, possibleLateEvent = false, reorderedEvent = false;
 };
 struct ShotLogCounters {
     std::uint64_t fires = 0, completed = 0, duplicates = 0, ignoredSource = 0, invalid = 0;
     std::uint64_t pendingOverflow = 0, closedOverflow = 0, eventOverflow = 0, metadataOverflow = 0, completedDropped = 0;
-    std::uint64_t dedupEvictions = 0, lateEvents = 0, orphanEvents = 0, abandonedDisabled = 0;
+    std::uint64_t dedupEvictions = 0, lateEvents = 0, orphanEvents = 0, abandonedDisabled = 0, unregistered = 0;
 };
 
 // Initialize is a fresh tracker (IDs/counters reset). Reset closes current
@@ -106,7 +122,8 @@ void ShotLogOnHurt(const ShotLogHurt& event) noexcept;
 // still add candidates. HIT requires at least one uniquely attributable hurt.
 // Overlapping candidates and late-event guards are never resolved by target
 // preference or FIFO. MISS means no confirmed damage in this receipt window,
-// not proof of spread, prediction, obstruction or resolver failure.
+// not proof of a server-side cause. Spread is a geometric inference against
+// the copied capsule and cone. Short impacts do not prove world occlusion.
 // Every ambiguous/unmatched hurt also produces a separate evidence record, so
 // confirmed damage is visible even when no shot can honestly claim it.
 void ShotLogAdvance(std::uint64_t nowMs) noexcept;
@@ -116,3 +133,5 @@ ShotLogCounters ShotLogGetCounters() noexcept;
 // One bounded human line, no trailing newline. Names/control bytes are cleaned;
 // native printf consumers must still pass this line through a literal "%s".
 bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capacity) noexcept;
+const char* ShotLogReasonText(ShotLogReason reason) noexcept;
+const char* ShotLogDiagnosticText(ShotLogDiagnostic diagnostic) noexcept;

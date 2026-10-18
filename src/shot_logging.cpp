@@ -134,7 +134,7 @@ void Drain() noexcept {
         char line[1536]{};
         ShotLogFormat(record, line, sizeof(line));
         if (*line) sink(line);
-        char detail[1536]{};
+        char detail[2048]{};
         std::snprintf(detail, sizeof(detail),
             "AIM_SHOT_DETAIL id=%llu kind=%u outcome=%u lifecycle=%llu controller=0x%08x pawn=0x%08x fire_ms=%llu settled_ms=%llu event_ms=%llu candidates=%u candidate_ids=%llu..%llu metadata=%u ambiguous_metadata=%u metadata_age_ms=%llu sequence=%d weapon_handle=0x%08x target_controller=0x%08x target_pawn=0x%08x automatic=%u chance_valid=%u hc=%.2f hits=%u samples=%u spread=%.7f inaccuracy=%.7f range=%.1f impacts=%u damage_events=%u ambiguous_events=%u trajectory=%u evidence_lost=%u late=%u reordered=%u close_reason=%u",
             record.id, static_cast<unsigned>(record.kind), static_cast<unsigned>(record.outcome), record.source.lifecycle,
@@ -146,6 +146,25 @@ void Drain() noexcept {
             record.metadata.range, record.uniqueImpacts, record.damageCount, record.ambiguousEvents, static_cast<unsigned>(record.trajectory),
             record.evidenceLost, record.possibleLateEvent, record.reorderedEvent, static_cast<unsigned>(record.closeReason));
         sink(detail);
+        std::snprintf(detail, sizeof(detail),
+            "AIM_SHOT_REASON id=%llu sequence=%d native_fire=%u reason=\"%s\" diagnostic=\"%s\" inferred=%u attack_published=%u aim_ray_valid=%u aim_intersects=%u geometry_impacts=%u short_impacts=%u spread_miss_impacts=%u miss_distance=%.4f impact_distance=%.4f impact_angle_deg=%.4f spread_cone_deg=%.4f overlapping_events=%u fire_ack_timeout_ms=%llu seed_known=0",
+            record.id, record.metadata.commandSequence, record.kind == ShotLogRecordKind::Shot,
+            ShotLogReasonText(record.reason), ShotLogDiagnosticText(record.diagnostic), record.reason == ShotLogReason::Spread,
+            record.metadata.attackPublished, record.aimRayValid, record.aimIntersectsCapsule,
+            record.geometryImpacts, record.shortImpacts, record.spreadMissImpacts, record.missDistance,
+            record.impactDistance, record.impactAngle, record.spreadCone, record.overlappingEvents, ShotLogFireAckWindowMs);
+        sink(detail);
+        if (record.metadataKnown) {
+            const auto& metadata = record.metadata;
+            std::snprintf(detail, sizeof(detail),
+                "AIM_SHOT_GEOMETRY id=%llu sequence=%d capsule_valid=%u eye=(%.4f,%.4f,%.4f) aim=(%.4f,%.4f,%.4f) capsule_start=(%.4f,%.4f,%.4f) capsule_end=(%.4f,%.4f,%.4f) capsule_radius=%.4f furthest_impact=(%.4f,%.4f,%.4f)",
+                record.id, metadata.commandSequence, metadata.capsuleValid,
+                metadata.eye.x, metadata.eye.y, metadata.eye.z, metadata.aim.pitch, metadata.aim.yaw, metadata.aim.roll,
+                metadata.capsule.start.x, metadata.capsule.start.y, metadata.capsule.start.z,
+                metadata.capsule.end.x, metadata.capsule.end.y, metadata.capsule.end.z, metadata.capsule.radius,
+                record.furthestImpact.x, record.furthestImpact.y, record.furthestImpact.z);
+            sink(detail);
+        }
         for (unsigned index = 0; index < record.damageCount && index < record.damage.size(); ++index) {
             const auto& damage = record.damage[index];
             std::snprintf(detail, sizeof(detail),

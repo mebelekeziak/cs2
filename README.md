@@ -455,25 +455,57 @@ regenerates its CRC. Native recorder arena/timing caches are not rewound.
 
 **Realtime debugging:** **Aim > Shot logs** defaults on. The console and
 `logs/overlay-<run>.log` receive one result per observed local native
-`weapon_fire` event, including manual fire. Aim requests alone do not count as
-shots. Typical output:
+`weapon_fire` event, including manual fire. Published, ready attacks that receive
+no fire event also produce a separate command timeout; they never count as native
+shots or consume shot IDs. Typical output:
 
 ```text
 AIM_SHOT #1 HIT Mayer in chest for 34 (66 HP) | weapon ak47 | target Mayer [0x00008006] | HC 78% (200/256) | delay 22ms
-AIM_SHOT #2 MISS no confirmed damage in 250ms | weapon ak47 | HC unknown | impact missing or not uniquely mapped
+AIM_SHOT #2 MISS spread | weapon ak47 | target Mayer [0x00008006] | HC 78% (200/256) | capsule miss 1.00u
+AIM_SHOT #3 MISS no impact | weapon ak47 | HC unknown
+AIM_SHOT #4 UNCONFIRMED shot overlap | weapon ak47 | HC unknown
+AIM_SHOT cmd #42 UNCONFIRMED unregistered shot | weapon ak47 | target Mayer [0x00008006] | HC 78% (200/256) | no fire event after 1000ms
 ```
+
+Console result lines use **green for confirmed damage**, **red for misses**,
+**amber for unconfirmed results and warnings**, **cyan for logger status**, and
+**gray for verbose diagnostics**. Colors use the installed native color-print
+export, with one bounded call per line; the workspace file remains plain text.
+If that optional export cannot be verified, the verified plain console sink
+continues working. Outcome words remain visible alongside the colors.
 
 Results settle after a 250ms outcome window plus a 60ms ordering allowance.
 Damage, remaining HP and hitgroup come from native damage events. Hitchance and
 intended target come from a recent compatible weapon/command snapshot; they can
 be unknown. Receipt delay is a local event timing measurement, not network ping.
-The events contain no shot ID: overlapping bursts or late events can make the
-mapping ambiguous. Such shots say `UNCONFIRMED`; separate `AIM_HIT AMBIGUOUS`
-lines preserve confirmed damage without assigning it arbitrarily. A `MISS`
-means no confirmed damage within the window. An observed impact may also report
-whether its segment crosses the recorded target capsule; this does not establish
-spread, obstruction, prediction or server rejection as the cause. Lifecycle
-changes and cooperative stop close unfinished records as unconfirmed. A lost
+Reasons use short labels, with numerical evidence in `AIM_SHOT_DETAIL`,
+`AIM_SHOT_REASON` and `AIM_SHOT_GEOMETRY` file records (also visible with verbose
+diagnostics):
+
+| Reason | Evidence |
+| --- | --- |
+| `spread` | Unspread aim crosses the saved capsule; every mapped impact ray misses it within the saved spread/inaccuracy cone. Reports closest capsule clearance. This is an inference against the copied snapshot. |
+| `impact short` | Every mapped impact ends before the capsule, although its extended direction crosses it. A later impact that reaches the capsule prevents this reason. |
+| `no impact` | Native fire was observed, with no mapped impact or hurt within the result window. |
+| `unregistered shot` | A published, ready attack has no compatible observed native fire within 1000ms plus the 60ms ordering allowance. The line names the command rather than inventing a shot ID. |
+| `shot overlap` | An effect fits multiple possible shots. Damage remains visible separately as `AIM_HIT HIT ...` with the possible shots. |
+| `late event` | Evidence exceeds the timing allowance without multiple shot candidates. |
+| `interrupted` | Source/lifecycle changed or logging stopped before settlement. |
+| `tracking overflow` | Bounded tracking storage lost required evidence. |
+| `unknown: ...` | A specific explanation follows: missing aim context/capsule, aim missing the capsule, impact outside the saved cone, impact crossing without damage, conflicting impacts, or unavailable direction. |
+
+The events contain no shot ID, so overlapping bursts and late-event guards still
+retain uncertainty instead of choosing a shot by FIFO or intended target. A
+`MISS` means no confirmed damage within the receipt window. A short impact does
+not identify world geometry, material or penetration; an unregistered command
+reports missing local event observation, not proof of server rejection. The
+project has no verified server seed, resolver, lagcomp/backtrack model, local
+prediction comparison or penetration/damage scan, so their proposed reasons
+are omitted. Even 100% sampled hitchance does not prove a seed misprediction.
+Command rebuilds share one timeout; competing compatible commands suppress
+timeouts when a fire could acknowledge any of them. Cooldown-only manual input
+and estimates cannot create attack timeouts. Lifecycle changes and cooperative
+stop close unfinished observations as unconfirmed. A lost
 local snapshot retains only copied full handles for up to one second to preserve
 late damage/death evidence; a new valid pawn or lifecycle event resets immediately.
 Native events have no lifecycle cookie, so a delayed same-pawn event across
@@ -582,6 +614,17 @@ were rejected. The software D3D11 preview was inspected in
 zero delay imports. These are static and standalone observations; native event
 delivery and the new shot logger's in-game output await an offline client check.
 The working autofire correction was checkpointed as `5aa11f3` before this stage.
+
+**Reason/color follow-up, October 18:** both public and diagnostic x64 Release
+builds succeed with **36/36 CTest suites passing in each**. Regressions cover
+spread cone/aim/impact geometry, short and later penetration impacts, overlapping
+and late evidence, command timeouts, command rebuilds, lifecycle/stop/disable,
+capacity loss, native outcome colors and plain fallback. Installed event,
+weapon and plain/color console contracts pass their static verifiers; reports
+and build/test logs are `logs/shot-reasons-*`. Both payloads remain AMD64 with
+zero static TLS and delay imports. Actual in-game event attribution and console
+color appearance remain unobserved; verification used standalone native-boundary
+substitutes and installed-file inspection.
 
 Restart CS2 normally before loading the new DLL through **Load Overlay.cmd**
 if a previous copy is resident. Open **Aim**, enable silent aim, set the minimum
