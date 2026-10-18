@@ -7,6 +7,7 @@
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
+#include "player_chams_settings.h"
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
@@ -327,6 +328,84 @@ void CameraControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void EditChamsColor(const char* control, bool iridescent) {
+    const auto before = PlayerChamsGetSettings();
+    const ImGuiID swatch = ImHashStr("##ColorButton", 0, Body()->GetID(control));
+    ClickControl("player chams color swatch", 0.5f, Body(), swatch);
+    ImGuiContext& context = *ImGui::GetCurrentContext();
+    const bool opened = !context.OpenPopupStack.empty() && context.OpenPopupStack.back().Window;
+    Expect(opened, "player chams RGBA swatch opens a color picker");
+    if (!opened) return;
+    ImGuiWindow* popup = context.OpenPopupStack.back().Window;
+    const ImGuiID picker = popup->GetID("##picker");
+    const auto saturation = ControlRect("chams saturation/value", popup, ImHashStr("sv", 0, picker));
+    Click({ saturation.Min.x + saturation.GetWidth() * 0.7f,
+            saturation.Min.y + saturation.GetHeight() * 0.3f });
+    const auto alpha = ControlRect("chams alpha", popup, ImHashStr("alpha", 0, picker));
+    Click({ alpha.GetCenter().x, alpha.Min.y + alpha.GetHeight() * 0.75f });
+    const auto edited = PlayerChamsGetSettings();
+    const float* value = iridescent ? edited.iridescentColor : edited.color;
+    const float* oldValue = iridescent ? before.iridescentColor : before.color;
+    bool rgbChanged = false;
+    bool otherColorUnchanged = true;
+    for (int channel = 0; channel < 4; ++channel) {
+        if (channel < 3) rgbChanged |= value[channel] != oldValue[channel];
+        otherColorUnchanged &= iridescent ? edited.color[channel] == before.color[channel]
+                                         : edited.iridescentColor[channel] == before.iridescentColor[channel];
+    }
+    Expect(rgbChanged && value[3] > 0.15f && value[3] < 0.35f && otherColorUnchanged,
+        "player chams RGBA picker publishes color and opacity without changing the other material color");
+    Click({ Menu()->Pos.x + 5, Menu()->Pos.y + 5 });
+}
+void PlayerChamsControls() {
+    const auto savedEsp = EspGetSettings();
+    const auto savedCamera = ThirdPersonGetSettings();
+    const auto savedModel = ModelSwapGetSettings();
+    auto disabledEsp = savedEsp;
+    disabledEsp.enabled = false;
+    EspSetSettings(disabledEsp);
+    ClickControl("Player chams");
+    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{}, "player chams open with disabled flat defaults");
+    ClickControl("##PlayerChamsStyle");
+    ClickControl("Chams on teammates");
+    ClickControl("Chams on local player");
+    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{} && ImGui::GetCurrentContext()->OpenPopupStack.empty(),
+        "disabled player chams master blocks material and target controls");
+    ClickControl("Enable player chams");
+    Expect(PlayerChamsGetSettings().enabled && !EspGetSettings().enabled,
+        "player chams enable independently while ESP is disabled");
+    const auto flatText = SubmittedMenuText();
+    Expect(flatText.find("Flat color") != std::string::npos && flatText.find("Iridescent color") == std::string::npos,
+        "flat chams expose only the selected material's flat RGBA color");
+    EditChamsColor("##PlayerChamsColor", false);
+    SelectEspCombo("##PlayerChamsStyle", "Iridescent", 1);
+    const auto iridescentText = SubmittedMenuText();
+    Expect(PlayerChamsGetSettings().style == PlayerChamsStyle::Iridescent &&
+        iridescentText.find("Iridescent color") != std::string::npos && iridescentText.find("Flat color") == std::string::npos,
+        "iridescent material selection exposes only its own RGBA tint");
+    EditChamsColor("##PlayerChamsIridescentColor", true);
+    ClickControl("Chams on teammates");
+    ClickControl("Chams on local player");
+    const auto edited = PlayerChamsGetSettings();
+    Expect(edited.teammates && edited.localPlayer && edited.enabled,
+        "player chams teammate and local-player targets publish independently");
+    SelectEspCombo("##PlayerChamsStyle", "Flat", 0);
+    const auto flat = PlayerChamsGetSettings();
+    Expect(flat.style == PlayerChamsStyle::Flat && flat.color[3] == edited.color[3] &&
+        flat.iridescentColor[3] == edited.iridescentColor[3] && flat.teammates && flat.localPlayer,
+        "switching back to flat preserves both custom colors and target switches");
+    ClickControl("Enable player chams");
+    ClickControl("Reset player chams");
+    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{},
+        "player chams reset works while disabled and restores every material and target default");
+    Expect(EspGetSettings() == disabledEsp && ThirdPersonGetSettings() == savedCamera && ModelSwapGetSettings() == savedModel,
+        "player chams edits preserve ESP, camera and player-model settings");
+    ClickControl("Player chams");
+    PlayerChamsSetSettings(edited); // Exercise persistence through the mouse-driven config flow.
+    EspSetSettings(savedEsp);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void ZoomControls() {
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
@@ -500,6 +579,7 @@ int main() {
     ThirdPersonResetSettings();
     ZoomResetSettings();
     ShotLogSetSettings({});
+    PlayerChamsResetSettings();
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -528,6 +608,7 @@ int main() {
     CameraControls();
     ZoomControls();
     PlayerModelControls();
+    PlayerChamsControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -834,6 +915,7 @@ int main() {
     const auto savedAntiAim = AntiAimGetSettings();
     const auto savedShotLog=ShotLogGetSettings();
     const auto savedModel=ModelSwapGetSettings();
+    const auto savedChams=PlayerChamsGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -845,11 +927,12 @@ int main() {
     SilentAimSetSettings({});
     ShotLogSetSettings({});
     ModelSwapResetSettings();
+    PlayerChamsResetSettings();
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings() == savedAntiAim && ThirdPersonGetSettings() == savedCamera &&
            ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
-           ModelSwapGetSettings() == savedModel,
-           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging and player model settings");
+           ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams,
+           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging, player model and chams settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -898,6 +981,7 @@ int main() {
     ZoomResetSettings();
     ShotLogSetSettings({});
     ModelSwapResetSettings();
+    PlayerChamsResetSettings();
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

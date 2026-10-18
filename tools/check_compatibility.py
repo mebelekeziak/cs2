@@ -53,6 +53,7 @@ def component_commands(game):
         ("third_person", "inspect_third_person.py", ["--client", client]),
         ("scoped_zoom", "inspect_zoom.py", ["--client", client]),
         ("model_swap", "inspect_model_swap.py", ["--game", str(game)]),
+        ("player_chams", "verify_player_chams.py", ["--game", str(game)]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
         ("aim_hitboxes", "inspect_silent_aim_hitboxes.py", ["--client", client]),
         ("aim_geometry", "inspect_aim_geometry.py", ["--client", client,
@@ -123,6 +124,9 @@ def main():
                     ROOT / "src/silent_aim.cpp", ROOT / "src/silent_aim_command.cpp", ROOT / "src/silent_aim_target.cpp",
                     ROOT / "src/shot_events.cpp", ROOT / "src/shot_log.cpp", ROOT / "src/shot_logging.cpp",
                     ROOT / "src/model_swap.cpp", ROOT / "src/model_catalog.cpp", ROOT / "src/model_resource_validation.cpp",
+                    ROOT / "src/player_chams.cpp", ROOT / "src/player_chams_material.cpp",
+                    ROOT / "src/client_frame.cpp",
+                    ROOT / "tools/verify_player_chams_materials.py",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]
     snapshot["source_sha256"] = {

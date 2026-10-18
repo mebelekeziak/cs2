@@ -8,6 +8,7 @@
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
+#include "player_chams_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -42,6 +43,32 @@ int main() {
     const auto secondPath = directory / (second + ".cfg");
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
+    const PlayerChamsSettings chamsDefaults;
+    Expect(PlayerChamsGetSettings() == chamsDefaults, "player chams start disabled with flat material and independent target toggles");
+    auto invalidChams = chamsDefaults;
+    invalidChams.enabled = true;
+    invalidChams.teammates = true;
+    invalidChams.localPlayer = true;
+    invalidChams.style = static_cast<PlayerChamsStyle>(99);
+    invalidChams.color[0] = -1;
+    invalidChams.color[1] = 2;
+    invalidChams.color[2] = std::numeric_limits<float>::quiet_NaN();
+    invalidChams.color[3] = std::numeric_limits<float>::infinity();
+    invalidChams.iridescentColor[0] = std::numeric_limits<float>::quiet_NaN();
+    invalidChams.iridescentColor[1] = -std::numeric_limits<float>::infinity();
+    invalidChams.iridescentColor[2] = -2;
+    invalidChams.iridescentColor[3] = 2;
+    PlayerChamsSetSettings(invalidChams);
+    const auto boundedChams = PlayerChamsGetSettings();
+    Expect(boundedChams.enabled && boundedChams.teammates && boundedChams.localPlayer &&
+        boundedChams.style == PlayerChamsStyle::Flat && boundedChams.color[0] == 0 && boundedChams.color[1] == 1 &&
+        boundedChams.color[2] == chamsDefaults.color[2] && boundedChams.color[3] == chamsDefaults.color[3] &&
+        boundedChams.iridescentColor[0] == chamsDefaults.iridescentColor[0] &&
+        boundedChams.iridescentColor[1] == chamsDefaults.iridescentColor[1] &&
+        boundedChams.iridescentColor[2] == 0 && boundedChams.iridescentColor[3] == 1,
+        "player chams reject unknown style, clamp finite RGBA and default nonfinite channels independently");
+    PlayerChamsResetSettings();
+    Expect(PlayerChamsGetSettings() == chamsDefaults, "player chams reset restores every field");
     const ThirdPersonSettings cameraDefaults;
     Expect(ThirdPersonGetSettings() == cameraDefaults, "third person starts disabled at default distance with collision");
     const auto boundedCamera = ThirdPersonSanitizeSettings({true, -1, -99, 99, false});
@@ -85,6 +112,10 @@ int main() {
         "default preset explicitly saves human shot logs enabled and verbose console diagnostics disabled");
     Expect(defaults.find("model_swap.enabled=0\nmodel_swap.model=\n") != std::string::npos,
         "default preset saves disabled player model and an empty path");
+    Expect(defaults.find("player_chams.enabled=0\nplayer_chams.teammates=0\nplayer_chams.localPlayer=0\nplayer_chams.style=0\n") != std::string::npos &&
+        defaults.find("player_chams.color.3=1\n") != std::string::npos &&
+        defaults.find("player_chams.iridescentColor.3=1\n") != std::string::npos,
+        "default preset explicitly saves player chams modes, target toggles and RGBA channels");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -124,6 +155,12 @@ int main() {
     expectedModel.enabled = true;
     Expect(ModelSwapSetModel(expectedModel, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl"), "prepare selected custom model");
     ModelSwapSetSettings(expectedModel);
+    PlayerChamsSettings expectedChams{true, true, true, PlayerChamsStyle::Iridescent};
+    for (int channel = 0; channel < 4; ++channel) {
+        expectedChams.color[channel] = (channel + 1) / 8.0f;
+        expectedChams.iridescentColor[channel] = (channel + 4) / 8.0f;
+    }
+    PlayerChamsSetSettings(expectedChams);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
@@ -132,7 +169,8 @@ int main() {
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
-        ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{},
+        ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{} &&
+        PlayerChamsGetSettings() == chamsDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
@@ -142,6 +180,8 @@ int main() {
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\n") != std::string::npos,
         "scoped zoom master, no zoom, fractional second level and blended sensitivity roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
+    Expect(PlayerChamsGetSettings() == expectedChams,
+        "player chams master, teammate and local targets, iridescent style and all RGBA channels roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
         "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
@@ -203,6 +243,12 @@ int main() {
         "version=1\nmodel_swap.enabled=0\naim.enabled=0\nmodel_swap.model=C:/outside.vmdl\n",
         "version=1\nmodel_swap.model=agents/bad.vmdl_c\n",
         "version=1\nmodel_swap.model=agents/first.vmdl\nmodel_swap.model=agents/second.vmdl\n",
+        "version=1\nplayer_chams.enabled=2\n", "version=1\nplayer_chams.teammates=true\n",
+        "version=1\nplayer_chams.localPlayer=2\n", "version=1\nplayer_chams.style=1.5\n",
+        "version=1\nplayer_chams.color.0=nan\n", "version=1\nplayer_chams.color.3=inf\n",
+        "version=1\nplayer_chams.iridescentColor.2=-inf\n", "version=1\nplayer_chams.iridescentColor.3=0.5oops\n",
+        "version=1\nplayer_chams.style=0\nplayer_chams.style=1\n",
+        "version=1\naim.enabled=0\nplayer_chams.enabled=0\nplayer_chams.color.0=nan\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -220,6 +266,15 @@ int main() {
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
+    Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
+    Write(badPath, "version=1\nplayer_chams.enabled=1\nplayer_chams.style=-99\nplayer_chams.color.0=-2\nplayer_chams.color.3=2\nplayer_chams.iridescentColor.2=-2\n");
+    auto expectedBoundedChams = chamsDefaults;
+    expectedBoundedChams.enabled = true;
+    expectedBoundedChams.color[0] = 0;
+    expectedBoundedChams.color[3] = 1;
+    expectedBoundedChams.iridescentColor[2] = 0;
+    Expect(LocalConfigLoad(bad, error) && PlayerChamsGetSettings() == expectedBoundedChams,
+        "player chams config bounds both colors and falls back to flat for unknown style while defaulting missing targets");
     Write(badPath, "version=1\nanti_aim.enabled=1\n");
     Expect(LocalConfigLoad(bad, error) && AntiAimGetSettings() == AntiAimSettings{true},
         "older enabled-only anti aim preset preserves static backwards yaw and downward pitch");

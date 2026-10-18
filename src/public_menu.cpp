@@ -7,6 +7,7 @@
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
+#include "player_chams_settings.h"
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
@@ -433,6 +434,27 @@ void DrawPublicMenu() {
                 }
                 reset = ImGui::Button("Reset ESP appearance", { -1, 0 });
                 ImGui::Separator();
+                if (ImGui::CollapsingHeader("Player chams", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    auto chams = PlayerChamsGetSettings();
+                    bool chamsChanged = FeatureCheckbox("Enable player chams", chams.enabled);
+                    ImGui::BeginDisabled(!chams.enabled);
+                    ImGui::TextUnformatted("Material");
+                    int style = static_cast<int>(chams.style);
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::Combo("##PlayerChamsStyle", &style, "Flat\0Iridescent\0")) {
+                        chams.style = static_cast<PlayerChamsStyle>(style);
+                        chamsChanged = true;
+                    }
+                    if (chams.style == PlayerChamsStyle::Iridescent)
+                        chamsChanged |= color("Iridescent color", "##PlayerChamsIridescentColor", chams.iridescentColor);
+                    else
+                        chamsChanged |= color("Flat color", "##PlayerChamsColor", chams.color);
+                    chamsChanged |= FeatureCheckbox("Chams on teammates", chams.teammates);
+                    chamsChanged |= FeatureCheckbox("Chams on local player", chams.localPlayer);
+                    ImGui::EndDisabled();
+                    if (chamsChanged) PlayerChamsSetSettings(chams);
+                    if (ImGui::Button("Reset player chams", { -1, 0 })) PlayerChamsResetSettings();
+                }
                 if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
                     ThirdPersonSettings camera = ThirdPersonGetSettings();
                     bool cameraChanged = FeatureCheckbox("Enable third person", camera.enabled);

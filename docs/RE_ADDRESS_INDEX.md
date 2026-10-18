@@ -467,3 +467,32 @@ The verifier also checks shipped server event producers and VPK event schemas.
 The adapter registers on the native command owner, copies fields synchronously,
 and retains an inert listener after cooperative stop. Correlation windows and
 capsule comparisons are diagnostics, not proof of a spread or prediction cause.
+
+## Player chams: client ownership and scene packets
+
+Header: [player_chams_offsets.h](../include/player_chams_offsets.h).
+Verifier: [verify_player_chams.py](../tools/verify_player_chams.py).
+Evidence: [player chams contracts](../tools/CS2_PLAYER_CHAMS_EVIDENCE.md).
+
+The installed October 18 baseline uses the same scene/client hashes listed
+above. `CAnimatableSceneObjectDesc` primary vtable `scenesystem+0x5E5C90`,
+slot `+0x20`, resolves generation callback `+0x7D7C0`. Its four native arguments
+are descriptor, scene object, generation args and draw list. New packet records
+have stride `0x70`, source `+0x18`, material `+0x20`, view variant `+0x28` and
+packed RGBA `+0x50`. These contracts belong to animated objects; the aggregate
+world renderer has different stream/color consumers.
+
+The client creation producer at `+0xAC5799..+0xAC5859` associates the scene
+object's `+0x110` interface with skeleton `+0x130`, and writes the pawn's native
+serialized owner handle at scene `+0xC0`. Handle construction subtracts
+identity `m_flags & 1` from the serial before joining the index. Runtime checks
+also require reciprocal controller/pawn ownership, matching skeleton interface,
+life/dormancy and current local-team identity. A matching object class alone
+does not establish a player.
+
+Player material creation and model swaps share the verified client stage-8
+owner through [client_frame.cpp](../src/client_frame.cpp); the native callback
+runs first, nested stages forward without dispatch, and each subscriber keeps
+its own stop barrier. The material feature does not depend on a model pack or
+on enabling model swapping. Material/shader creation contracts are recorded
+in the linked chams evidence and material header/verifier.

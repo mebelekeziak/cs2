@@ -41,6 +41,7 @@
 #include "world_postprocess.h"
 #include "world_sky.h"
 #include "world_materials.h"
+#include "player_chams.h"
 #include "world_lighting_switches.h"
 #include "world_lighting.h"
 #include "world_environment_lighting.h"
@@ -260,6 +261,7 @@ void CleanupOnRenderThread(const char* reason) {
     ModelSwapStop(reason);
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
+    PlayerChamsStop(reason);
     WorldLightingSwitchesStop(reason);
     WorldLightingStop(reason);
     WorldEnvironmentLightingStop(reason);
@@ -488,6 +490,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();
+    PlayerChamsFlushTelemetry();
     WorldLightingSwitchesFlushTelemetry();
     WorldLightingFlushTelemetry();
     WorldEnvironmentLightingFlushTelemetry();
@@ -554,6 +557,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
+        ImGui::Text("Player chams: %s", PlayerChamsStatus());
         ImGui::Text("Local light switches: %s", WorldLightingSwitchesStatus());
         ImGui::Text("Local light color: %s", WorldLightingStatus());
         ImGui::Text("Sun/lightmaps: %s", WorldEnvironmentLightingStatus());
@@ -663,6 +667,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ModelSwapStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
+            PlayerChamsStop("stopped before selecting render chain");
             WorldLightingSwitchesStop("stopped before selecting render chain");
             WorldLightingStop("stopped before selecting render chain");
             WorldEnvironmentLightingStop("stopped before selecting render chain");
@@ -756,6 +761,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool modelSwapPrepared = ModelSwapPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
+    const bool playerChamsPrepared = PlayerChamsPrepare(&EspLog);
     const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
     const bool lightingPrepared = WorldLightingPrepare(&EspLog);
     const bool environmentLightingPrepared = WorldEnvironmentLightingPrepare(&EspLog);
@@ -774,6 +780,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ModelSwapStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
+        PlayerChamsStop("partial hook activation failure");
         WorldLightingSwitchesStop("partial hook activation failure");
         WorldLightingStop("partial hook activation failure");
         WorldEnvironmentLightingStop("partial hook activation failure");
@@ -793,6 +800,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (modelSwapPrepared) ModelSwapActivate();
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
+    if (playerChamsPrepared) PlayerChamsActivate();
     if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
     if (lightingPrepared) WorldLightingActivate();
     if (environmentLightingPrepared) WorldEnvironmentLightingActivate();
@@ -814,6 +822,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ModelSwapStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
+    PlayerChamsStop("explicit overlay stop request");
     WorldLightingSwitchesStop("explicit overlay stop request");
     WorldLightingStop("explicit overlay stop request");
     WorldEnvironmentLightingStop("explicit overlay stop request");

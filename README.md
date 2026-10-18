@@ -3,13 +3,52 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-one
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-two
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Player chams
+
+Under **Visuals**, open **Player chams** and turn on **Enable player chams**.
+Choose **Flat** for a solid unlit material or **Iridescent** for the character
+shader's angle-dependent effect. Customize the selected style's **Flat color**
+or **Iridescent color**, including alpha. Both style tints save independently.
+Enemy players are selected by default. **Chams on teammates** and **Chams on local player** independently
+extend the selection; use third person to inspect your own player.
+
+Chams starts disabled, works independently of ESP and saves with local configs.
+**Reset player chams** restores disabled defaults. Existing presets without
+chams fields also restore these defaults. The existing build and
+**Load Overlay.cmd** workflow applies; restart CS2 normally before loading a
+rebuilt DLL when an older copy remains resident. Cooperative stop retains code
+until process exit: **stopped and resident is not physically unloaded**.
+
+The player scene, resource and shader contracts are documented in
+[player chams evidence](tools/CS2_PLAYER_CHAMS_EVIDENCE.md). Check the installed
+files with `python tools/verify_player_chams.py` or the combined compatibility
+command. Standalone menu previews, without starting CS2:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\player-chams-flat-menu.bmp 13 100000
+.\build\Release\public_menu_preview.exe .\logs\player-chams-iridescent-menu.bmp 14 100000
+```
+
+**Verification, October 18, 2026:** public and diagnostic x64 Release builds
+succeed, with **47/47 CTest suites passing in each**. The player adapter runs
+136 ownership/packet/lifecycle checks; material creation runs 77 lifecycle and
+failure checks. Shared-owner, mouse-driven menu and config checks also pass.
+Both menu previews were inspected. Both payloads retain zero static TLS and
+delay imports. All **22 installed-file compatibility components** pass,
+including player ownership, native material creation and eight exact shader/
+texture assets; 33 deliberately incorrect chams contracts are rejected.
+No CS2 client or server was launched. Live appearance, animation and alpha
+blending remain unobserved. Original packet pass order is preserved, so correct
+sorting of overlapping translucent players is not established; opaque alpha is
+the default. First enable can pause while native resources are requested.
 
 ## Local player model
 
@@ -230,7 +269,7 @@ rejected. With the preview build enabled, reproduce the Camera image with:
 ## Local configs
 
 Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
-to save all current Visuals (including Camera, Scoped zoom and Player model), Movement, World, Lighting and Aim settings. Select
+to save all current Visuals (including Player chams, Camera, Scoped zoom and Player model), Movement, World, Lighting and Aim settings. Select
 a saved preset and click **Load config** to apply it. Type a different name to
 save another preset; **Refresh list** picks up files added outside the menu.
 Loading replaces current options, including feature enable switches. Presets

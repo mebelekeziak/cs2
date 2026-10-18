@@ -1,4 +1,5 @@
 #include "model_swap.h"
+#include "client_frame.h"
 #include "model_swap_offsets.h"
 #include "model_swap_settings.h"
 #include "model_catalog.h"
@@ -17,9 +18,7 @@ namespace off = model_swap_offsets;
 namespace ent = cs2_offsets;
 namespace bone = silent_aim_hitbox_offsets;
 using Path = std::array<char, 260>;
-using FrameFn = void (*)(void*, int);
 using SetFn = void (*)(void*, const char*);
-FrameFn originalFrame = nullptr;
 SetFn setModel = nullptr;
 std::uintptr_t client = 0;
 std::uintptr_t host = 0, resourceSystem = 0, tier0 = 0;
@@ -29,7 +28,6 @@ using PurgeFn = void (*)(void*, int);
 InitializeNameFn initializeName = nullptr;
 LoadFn loadResource = nullptr;
 PurgeFn purgeName = nullptr;
-DWORD frameTls = TLS_OUT_OF_INDEXES;
 SRWLOCK stateLock = SRWLOCK_INIT;
 bool prepared = false;
 std::atomic<bool> active{false}, stopped{false};
@@ -291,12 +289,7 @@ void Update() noexcept {
     assignments.fetch_add(1,std::memory_order_relaxed);
     ModelSwapSetRuntimeStatus("Selected local player model assigned. Use third person to inspect.");
 }
-void HookFrame(void* owner, int stage) noexcept {
-    // Forward all native stages, including nested and stopped callbacks.
-    if (frameTls==TLS_OUT_OF_INDEXES || TlsGetValue(frameTls)) { originalFrame(owner,stage); return; }
-    bool scope=true;
-    if (!TlsSetValue(frameTls,&scope)) { originalFrame(owner,stage); return; }
-    originalFrame(owner,stage);
+void OwnerFrame(void* owner, int stage) noexcept {
     if (stage==off::ApplyStage) {
         std::uintptr_t table=0;
         if (CurrentClient() && Read(reinterpret_cast<std::uintptr_t>(owner),table) && table==client+off::FrameVtable) {
@@ -309,8 +302,8 @@ void HookFrame(void* owner, int stage) noexcept {
             ReleaseSRWLockExclusive(&stateLock);
         }
     }
-    TlsSetValue(frameTls,nullptr);
 }
+
 }
 
 bool ModelSwapPrepare(ModelSwapLogCallback callback) noexcept {
@@ -363,12 +356,8 @@ bool ModelSwapPrepare(ModelSwapLogCallback callback) noexcept {
             return false;
         }
     } catch (...) { ModelSwapSetRuntimeStatus("Cannot discover the installed character pack."); return false; }
-    frameTls=TlsAlloc();
-    if (frameTls==TLS_OUT_OF_INDEXES) { ModelSwapSetRuntimeStatus("Player model callback storage unavailable."); return false; }
     setModel=reinterpret_cast<SetFn>(client+off::SetModel);
-    auto* target=reinterpret_cast<void*>(client+off::FrameStage);
-    if (MH_CreateHook(target,reinterpret_cast<void*>(&HookFrame),reinterpret_cast<void**>(&originalFrame))!=MH_OK ||
-        !originalFrame || MH_QueueEnableHook(target)!=MH_OK) {
+    if (!ClientFrameSubscribe(&OwnerFrame, logger)) {
         ModelSwapSetRuntimeStatus("Player model hook preparation failed."); return false;
     }
     prepared=true;
@@ -388,7 +377,7 @@ void ModelSwapActivate() noexcept {
 }
 void ModelSwapStop(const char* reason) noexcept {
     active.store(false,std::memory_order_release);
-    if (frameTls!=TLS_OUT_OF_INDEXES && TlsGetValue(frameTls)) {
+    if (ClientFrameInCallback()) {
         // A blocking native load can pump callbacks on this thread. Such a stop
         // request must not try to acquire the lock its outer frame already owns.
         stopped.store(true,std::memory_order_release);
@@ -424,12 +413,13 @@ void ModelSwapFlushTelemetry() noexcept {
 
 #ifdef CS2_MODEL_SWAP_CHECKS
 void ModelSwapTestConfigure(std::uintptr_t base, ModelSwapFrameFn frame, ModelSwapSetFn setter, ModelSwapLoadFn loader) noexcept {
-    if (frameTls==TLS_OUT_OF_INDEXES) frameTls=TlsAlloc();
-    client=base; originalFrame=frame; setModel=setter; owned={};
+    ClientFrameTestConfigure(base,frame);
+    ClientFrameSubscribe(&OwnerFrame);
+    client=base; setModel=setter; owned={};
     testRuntime=true; testAvailable=true; testLoad=loader; prepared=true; active.store(false); stopped.store(false);
     calls.store(0); assignments.store(0); restores.store(0); failures.store(0); invalidations.store(0);
     ModelSwapResetSettings();
 }
-void ModelSwapTestFrame(void* owner, int stage) noexcept { HookFrame(owner,stage); }
+void ModelSwapTestFrame(void* owner, int stage) noexcept { ClientFrameTestDispatch(owner,stage); }
 void ModelSwapTestSetAvailable(bool value) noexcept { testAvailable=value; }
 #endif
