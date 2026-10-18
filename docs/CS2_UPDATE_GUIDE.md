@@ -152,7 +152,7 @@ ctest --test-dir build-diagnostic -C Release --output-on-failure
 ```
 
 For first-time configuration, see the [README build instructions](../README.md).
-The current baseline has 40 CTest suites per variant. Passing these tests does
+The current baseline has 41 CTest suites per variant. Passing these tests does
 not certify a new binary or a successful hop/rendered player.
 
 Use a fresh normal client process and the documented launcher. Loading at the

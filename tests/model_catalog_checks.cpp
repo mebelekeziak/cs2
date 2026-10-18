@@ -12,6 +12,16 @@
 
 namespace {
 int failures = 0;
+volatile LONG cppExceptions{};
+LONG CALLBACK CountCppExceptions(EXCEPTION_POINTERS* exception) {
+    if (exception && exception->ExceptionRecord && exception->ExceptionRecord->ExceptionCode == 0xe06d7363)
+        InterlockedIncrement(&cppExceptions);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+struct ExceptionWatch {
+    PVOID handler = AddVectoredExceptionHandler(1, CountCppExceptions);
+    ~ExceptionWatch() { if (handler) RemoveVectoredExceptionHandler(handler); }
+};
 void Expect(bool condition, const char* label) {
     std::printf("%s %s\n", condition ? "PASS" : "FAIL", label);
     failures += !condition;
@@ -38,6 +48,8 @@ void Model(const std::filesystem::path& path, std::string_view reference = "anim
 }
 
 int wmain(int argc, wchar_t** argv) {
+    ExceptionWatch exceptionWatch;
+    Expect(exceptionWatch.handler != nullptr, "first-chance C++ exception monitoring is installed");
     if (argc == 3 && std::wcscmp(argv[1], L"--scan") == 0) {
         std::string error;
         if (!ModelCatalogDiscover(std::filesystem::path(argv[2]), error)) {
@@ -45,13 +57,14 @@ int wmain(int argc, wchar_t** argv) {
             return 1;
         }
         const auto catalog = ModelCatalogSnapshot();
-        std::printf("catalog_entries=%zu\n", catalog ? catalog->size() : 0);
+        std::printf("catalog_entries=%zu cpp_exceptions=%ld\n", catalog ? catalog->size() : 0, cppExceptions);
         if (catalog) {
             for (const auto& entry : *catalog)
                 if (entry.path.starts_with("agents/models/hmn_ag2/zenless_zone_zero/"))
                     std::printf("zenless_model=%s\n", entry.path.c_str());
         }
-        return catalog && !catalog->empty() ? 0 : 1;
+        Expect(cppExceptions == 0, "installed catalog rejects unsuitable models without C++ exceptions");
+        return !failures && catalog && !catalog->empty() ? 0 : 1;
     }
     if (argc != 1) {
         std::fprintf(stderr, "Usage: model_catalog_checks [--scan <game/csgo directory>]\n");
@@ -123,6 +136,15 @@ int wmain(int argc, wchar_t** argv) {
     const auto oldSnapshot = catalog;
     Expect(!ModelCatalogDiscover(root / "missing", error) && !error.empty() && ModelCatalogSnapshot() == oldSnapshot,
         "failed discovery retains the complete previous snapshot");
+    const auto invalidVpk = root / "pak01_dir.vpk";
+    std::ofstream(invalidVpk, std::ios::binary).put('x');
+    Expect(!ModelCatalogDiscover(root, error) && !error.empty() && ModelCatalogSnapshot() == oldSnapshot,
+        "invalid VPK fails discovery without publishing a partial catalog");
+    std::filesystem::remove(invalidVpk);
+    const auto rootFile = root / "not_a_directory";
+    std::ofstream(rootFile).put('x');
+    Expect(!ModelCatalogDiscover(rootFile, error) && !error.empty() && ModelCatalogSnapshot() == oldSnapshot,
+        "file root fails discovery with the previous snapshot intact");
     const auto external = root / "outside";
     Model(external / "escaped.vmdl_c");
     // Junction/reparse creation is available without developer-mode symlinks.
@@ -138,6 +160,7 @@ int wmain(int argc, wchar_t** argv) {
     Model(root / "agents/new/new.vmdl_c");
     Expect(ModelCatalogDiscover(root, error) && ModelCatalogSnapshot()->size() == 6 && oldSnapshot && oldSnapshot->size() == 5,
         "refresh replaces catalog atomically while existing readers keep a stable snapshot");
+    Expect(cppExceptions == 0, "malformed models and failed catalog scans raise zero first-chance C++ exceptions");
     std::filesystem::remove_all(root);
     return failures ? 1 : 0;
 }

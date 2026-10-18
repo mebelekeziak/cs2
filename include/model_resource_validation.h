@@ -6,6 +6,8 @@
 
 // Disk-only discovery helper. Build once per catalog refresh, outside native
 // callbacks/DllMain. VPK data archives and resource mesh payloads are not read.
+// Expected metadata/I/O rejections return false; they must not use C++ throws
+// as control flow inside the manually mapped payload.
 class ModelResourceIndex {
 public:
     bool Build(const std::filesystem::path& csgoRoot, std::string& error);

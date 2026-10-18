@@ -351,12 +351,14 @@ bool ModelSwapPrepare(ModelSwapLogCallback callback) noexcept {
     }
     initializeName=reinterpret_cast<InitializeNameFn>(host+off::InitializeResourceName);
     loadResource=reinterpret_cast<LoadFn>(resourceSystem+off::BlockingLoad);
+    if (logger) logger("MODEL_SWAP_CATALOG_BEGIN disk-only pack discovery; native model loading has not started");
     try {
         wchar_t path[32768]{};
         const auto length=GetModuleFileNameW(reinterpret_cast<HMODULE>(client),path,static_cast<DWORD>(std::size(path)));
         std::string error;
         if (!length || length>=std::size(path) || !ModelCatalogDiscover(std::filesystem::path(path).parent_path().parent_path().parent_path(),error)) {
             ModelSwapSetRuntimeStatus("Cannot discover the installed character pack.");
+            if (logger) logger("MODEL_SWAP_CATALOG_FAILED; model swap unavailable; remaining overlay startup continues");
             if (logger && !error.empty()) logger(error.c_str());
             return false;
         }

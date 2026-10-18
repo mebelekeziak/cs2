@@ -68,6 +68,22 @@ compatibility checks** pass in `logs/compatibility/20261018T125010645709Z/`;
 retain zero static TLS and delay imports. No client/server was launched, and
 live character appearance and animation remain unobserved.
 
+**Startup crash correction, October 18:** the user's matching dump identifies
+an unsupported-model rejection during catalog discovery. That rejection threw
+a C++ exception whose image-base lookup failed in the manually mapped payload,
+before hooks activated or any character loaded. Expected metadata/filesystem
+errors now return status directly. The unchanged production mapper reproduces
+the old failure in an isolated catalog fixture; the corrected fixture and
+installed-pack scan complete with zero first-chance C++ exceptions. See
+[startup crash evidence](tools/CS2_MODEL_STARTUP_CRASH.md). The pack's model
+filters and native loading contracts remain in place. Rebuild through the same
+commands and restart CS2 normally before using **Load Overlay.cmd** again.
+Public and diagnostic Release builds each pass **41/41 CTest suites**, including
+the mapped catalog regression; the parser runs 75 rejection/validity checks.
+The installed catalog still has 739 entries. Both payloads retain zero static
+TLS and delay imports. No CS2 client/server was started for this correction;
+live character appearance remains unobserved.
+
 ## Scoped weapon zoom
 
 Under **Visuals**, scroll down, open **Scoped zoom**, then enable **Override

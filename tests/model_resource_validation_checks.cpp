@@ -1,18 +1,30 @@
 #include "model_resource_validation.h"
 
 #include <Windows.h>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 using Bytes = std::vector<std::uint8_t>;
 int checks{}, failures{};
+volatile LONG cppExceptions{};
+LONG CALLBACK CountCppExceptions(EXCEPTION_POINTERS* exception) {
+    if (exception && exception->ExceptionRecord && exception->ExceptionRecord->ExceptionCode == 0xe06d7363)
+        InterlockedIncrement(&cppExceptions);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+struct ExceptionWatch {
+    PVOID handler = AddVectoredExceptionHandler(1, CountCppExceptions);
+    ~ExceptionWatch() { if (handler) RemoveVectoredExceptionHandler(handler); }
+};
 void Check(bool condition, const char* message) {
     ++checks;
     if (!condition) { ++failures; std::printf("FAIL %s\n", message); }
@@ -67,6 +79,8 @@ Bytes Vpk(unsigned version = 2, std::uint16_t archive = 0x7fff, unsigned length 
 }
 
 int main(int argc, char** argv) {
+    ExceptionWatch exceptionWatch;
+    Check(exceptionWatch.handler != nullptr, "first-chance C++ exception monitoring is installed");
     if (argc == 3 && std::string(argv[1]) == "--scan") {
         ModelResourceIndex index; std::string error;
         const std::filesystem::path root(argv[2]);
@@ -80,8 +94,10 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        std::printf("Compiled model direct-reference scan: %u accepted / %u scanned\n", accepted, scanned);
-        return 0;
+        std::printf("Compiled model direct-reference scan: %u accepted / %u scanned; cpp_exceptions=%ld\n",
+                    accepted, scanned, cppExceptions);
+        Check(cppExceptions == 0, "installed model validation rejects resources without C++ exceptions");
+        return failures ? 1 : 0;
     }
     const auto fixtureParent = std::filesystem::absolute(std::filesystem::current_path());
     const auto fixture = fixtureParent / ("model-resource-fixture-" + std::to_string(GetCurrentProcessId()));
@@ -112,6 +128,9 @@ int main(int argc, char** argv) {
     Check(!index.Validate(model, reason), "dependency traversal rejected");
     Write(model, Model({graph, "C:/outside.vmat"}));
     Check(!index.Validate(model, reason), "absolute dependency rejected");
+    Write(model, Model({graph, std::string("agents/") + static_cast<char>(0xff) + ".vmat"}));
+    Check(!index.Validate(model, reason) && reason.starts_with("Missing model dependency:"),
+          "invalid dependency encoding fails without throwing a path conversion exception");
     Write(model, Model({graph}));
     Write(fixture / "outside.vmdl_c", Model({graph}));
     Check(!index.Validate(fixture / "outside.vmdl_c", reason), "model outside root rejected");
@@ -130,6 +149,25 @@ int main(int argc, char** argv) {
     Check(!index.Validate(model, reason), "unterminated reference rejected");
     Write(model, {1, 2, 3});
     Check(!index.Validate(model, reason), "truncated header rejected");
+    for (std::size_t length = 0; length < 16; ++length) {
+        Write(model, Bytes(length));
+        Check(!index.Validate(model, reason) && !reason.empty(), "every short model header fails with a diagnostic");
+    }
+    for (std::uint32_t length = 0; length < 8; ++length) {
+        malformed = Model({graph});
+        Put(malformed, 24, length); Write(model, malformed);
+        Check(!index.Validate(model, reason) && reason == "Truncated resource metadata",
+              "short RERL header cannot be parsed using zero-filled fallback fields");
+    }
+    malformed = Model({graph}); std::memcpy(malformed.data() + 16, "DATA", 4); Write(model, malformed);
+    Check(!index.Validate(model, reason) && reason == "Compiled model has no external references",
+          "missing reference block remains a diagnosed rejection");
+    malformed = Model({graph}); Put(malformed, 8, std::uint32_t{0}); Write(model, malformed);
+    Check(!index.Validate(model, reason) && reason == "Invalid compiled model block table",
+          "block table cannot overlap the model header");
+    malformed = Model({graph}); Put(malformed, 44, (std::numeric_limits<std::int64_t>::max)()); Write(model, malformed);
+    Check(!index.Validate(model, reason) && reason == "Invalid compiled model reference offset",
+          "positive overflowing reference offset rejected");
     Write(model, Model({graph}));
     auto tailed = Model({graph}); tailed.insert(tailed.end(), {0xdd, 0xee, 0xff});
     Write(model, tailed);
@@ -162,6 +200,21 @@ int main(int argc, char** argv) {
     Check(!index.Build(root, reason), "oversized VPK inline section rejected");
     Write(core / "pak01_dir.vpk", {1, 2, 3});
     Check(!index.Build(root, reason), "truncated VPK header rejected");
+    malformed = Vpk(); malformed[28] = 0;
+    Write(core / "pak01_dir.vpk", malformed);
+    Check(!index.Build(root, reason) && reason == "Unexpected VPK directory tail",
+          "premature VPK tree terminator rejected");
+    malformed = Vpk(); malformed[28] = 1;
+    // Force the first VPK string to consume the entire tree without a terminator.
+    std::fill(malformed.begin() + 28, malformed.end(), static_cast<std::uint8_t>('x'));
+    Write(core / "pak01_dir.vpk", malformed);
+    Check(!index.Build(root, reason) && reason == "Invalid metadata string", "unterminated VPK tree string rejected");
+    // The parser must never continue with default values after a failed header read.
+    for (std::size_t length = 0; length < 12; ++length) {
+        Write(core / "pak01_dir.vpk", Bytes(length));
+        Check(!index.Build(root, reason) && !reason.empty(), "every short VPK header fails with a diagnostic");
+    }
+    Check(cppExceptions == 0, "all valid and rejected metadata paths raise zero first-chance C++ exceptions");
     // Only remove the unique directory created immediately above this test.
     if (fixture.parent_path() == fixtureParent && fixture.filename().wstring().starts_with(L"model-resource-fixture-"))
         std::filesystem::remove_all(fixture);
