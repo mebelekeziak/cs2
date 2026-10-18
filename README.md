@@ -3,7 +3,7 @@
 x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all seventeen
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all nineteen
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -416,7 +416,7 @@ settings do not control aim acquisition.
 
 **Autofire** starts off. Enable it to request primary fire when the current
 estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
-ready. **Spread samples** controls the complete estimate (64–1024, initially
+ready, with a clear direct line of fire to the selected target. **Spread samples** controls the complete estimate (64–1024, initially
 256). All three controls save in local configs; older presets restore these
 defaults. Manual primary fire stays available at any threshold, including when
 the weapon or geometry cannot be modeled. Autofire does not suppress manual input.
@@ -490,19 +490,40 @@ file/console status. Callbacks copy/enqueue bounded values; render-owner output
 performs sink I/O outside tracker locks. Listener storage remains resident and
 inert after stop until normal process exit.
 
-Hitchance is a current geometric estimate. It does not trace walls, predict
-damage/penetration, model other players as blockers, refresh animations or add
-lag compensation. A target behind a wall can still reach 100% and trigger
-autofire. Native shot-time interpolation, future recoil/spread changes and server
-timing can differ from this snapshot; the percentage is not measured hit
-registration.
+Autofire separately traces the direct eye-to-capsule-center path on the native
+command owner, before requesting fire and again before publishing its aimed
+history. Obstructed or unavailable traces prevent a request; newly blocked paths
+cancel the owned automatic attack and regenerate its native CRC. Source, target,
+geometry, weapon and settings are revalidated after tracing. No clear-path result
+is cached across callbacks. Manual primary input remains available.
+
+This is a conservative occlusion check: all cover blocks automatic fire,
+including penetrable walls. It does not simulate penetration or predict damage,
+choose another target when the selected one is blocked, or trace every spread
+sample. Hitchance remains a geometric selected-capsule estimate. Native shot-time
+interpolation, future recoil/spread changes and server timing can differ from
+this snapshot; a clear center path and high percentage do not guarantee a hit.
 
 Contracts and rediscovery:
 [weapon model](tools/CS2_AIM_WEAPON_EVIDENCE.md),
 [authored geometry](tools/CS2_AIM_GEOMETRY_EVIDENCE.md),
 [native autofire](tools/CS2_AUTOFIRE_EVIDENCE.md),
+[autofire occlusion](tools/CS2_AIM_OCCLUSION_EVIDENCE.md),
 [console](tools/CS2_AIM_CONSOLE_EVIDENCE.md),
 [shot result events](tools/CS2_SHOT_EVENTS_EVIDENCE.md).
+
+**Occlusion verification, October 18, 2026:** public and diagnostic x64 Release
+builds succeed, with **36/36 CTest suites passing in each**. Native-callback
+substitutes cover world/entity blockers, selected-pawn hits, native blocking flags,
+near-endpoint cover, invalid results, missing/changed managers and native faults.
+Integrated command tests cover fresh request/publication traces, late cover,
+cancellation with native CRC regeneration, rebuilds and physical-primary
+takeover. Both DLLs retain zero static TLS and delay imports. These are static
+and standalone results: all nineteen installed-file checks pass in
+`logs/compatibility/20261018T091353099219Z/`, and all 21 deliberately incorrect
+occlusion-header contracts were rejected. No live wall-response test is claimed. Restart CS2
+normally before loading the rebuilt DLL through **Load Overlay.cmd** if an older
+copy is resident; stopped and resident is not physically unloaded.
 
 **Verification, October 16, 2026:** public and diagnostic x64 Release builds
 succeed, with **31/31 CTest suites passing in each**. The new suites include

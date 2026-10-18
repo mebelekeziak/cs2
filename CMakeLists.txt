@@ -23,7 +23,7 @@ add_library(imgui_dx11 STATIC
 target_include_directories(imgui_dx11 PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
 add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp
-  src/aim_console.cpp src/aim_hitchance.cpp src/aim_weapon.cpp
+  src/aim_console.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
   src/third_person.cpp src/third_person_settings.cpp src/third_person_view.cpp
@@ -67,8 +67,10 @@ if(BUILD_TESTING)
   add_executable(silent_aim_autofire_checks tests/silent_aim_autofire_checks.cpp src/silent_aim_command.cpp)
   add_executable(aim_weapon_checks tests/aim_weapon_checks.cpp src/aim_weapon.cpp)
   target_compile_definitions(aim_weapon_checks PRIVATE CS2_AIM_WEAPON_CHECKS)
+  add_executable(aim_occlusion_checks tests/aim_occlusion_checks.cpp src/aim_occlusion.cpp)
+  target_compile_definitions(aim_occlusion_checks PRIVATE CS2_AIM_OCCLUSION_CHECKS)
   add_executable(aim_hitchance_checks tests/aim_hitchance_checks.cpp src/aim_hitchance.cpp src/silent_aim_target.cpp src/silent_aim_math.cpp)
-  foreach(target aim_console_checks silent_aim_autofire_checks aim_weapon_checks aim_hitchance_checks)
+  foreach(target aim_console_checks silent_aim_autofire_checks aim_weapon_checks aim_hitchance_checks aim_occlusion_checks)
     target_include_directories(${target} PRIVATE include)
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(${target} PRIVATE /W4 /Zc:threadSafeInit-)

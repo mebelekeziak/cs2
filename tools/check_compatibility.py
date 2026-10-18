@@ -57,6 +57,7 @@ def component_commands(game):
             "--animation", str(game / "bin/win64/animationsystem.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk")]),
         ("aim_weapon", "inspect_aim_weapon.py", ["--client", client]),
         ("autofire", "inspect_autofire.py", ["--client", client]),
+        ("aim_occlusion", "inspect_aim_occlusion.py", ["--client", client]),
         ("aim_console", "inspect_aim_console.py", ["--game", str(game)]),
         ("shot_events", "inspect_shot_events.py", ["--client", client,
             "--server", str(game / "csgo/bin/win64/server.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk"),

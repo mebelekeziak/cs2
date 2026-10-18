@@ -447,8 +447,8 @@ void DrawPublicMenu() {
                 changed |= ImGui::SliderInt("##AimSamples", &settings.samples, 64, 1024);
                 ImGui::EndDisabled();
                 ImGui::Separator();
-                ImGui::TextWrapped("Autofire shoots when estimated hitchance meets the minimum. Manual fire remains available.");
-                ImGui::TextWrapped("Hitchance estimates spread against the selected hitbox. Walls and server timing can still prevent a hit.");
+                ImGui::TextWrapped("Autofire requires a clear direct path and minimum hitchance. Manual fire remains available.");
+                ImGui::TextWrapped("Cover blocks autofire, including penetrable walls. Hitchance estimates spread; server timing can still prevent a hit.");
                 ImGui::TextDisabled("F10  Silent aim");
                 ImGui::Separator();
                 shotLogChanged |= FeatureCheckbox("Shot logs", shotLog.enabled);

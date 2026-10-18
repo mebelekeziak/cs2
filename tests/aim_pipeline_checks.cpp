@@ -5,6 +5,7 @@
 #include "silent_aim_offsets.h"
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
+#include "aim_occlusion.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -26,6 +27,8 @@ namespace move = movement_offsets;
 unsigned failures = 0, checks = 0, recorderCalls = 0, builderCalls = 0, checksumCalls = 0;
 bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volumeCurrent = true;
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
+bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
+unsigned traceCalls = 0;
 bool recorderSawNativePress = false, builderSawPrimary = false, checksumSawCancelledPrimary = false;
 std::vector<std::string> telemetry;
 std::vector<ShotLogMetadata> shotMetadata;
@@ -164,6 +167,7 @@ struct World {
         selectAvailable = targetCurrent = volumeAvailable = volumeCurrent = true;
         weaponAvailable = weaponCurrent = checksumAvailable = true;
         badHistory = false;
+        pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         telemetry.clear();
         shotMetadata.clear(); shotPumps = 0;
         ShotLogSetSettings({});
@@ -365,8 +369,8 @@ void PreparationDiagnosticsChecks(World& world) {
 
 void CancellationChecks(World& world) {
     constexpr const char* names[]{"target", "volume", "weapon", "settings", "disabled", "autofire off",
-        "focus", "stopped", "source", "history"};
-    for (int invalidation = 0; invalidation < 10; ++invalidation) {
+        "focus", "stopped", "source", "history", "occlusion", "trace unavailable", "trace invalidates state"};
+    for (int invalidation = 0; invalidation < 13; ++invalidation) {
         world.Reset();
         Command command;
         world.Prepare(command);
@@ -384,6 +388,9 @@ void CancellationChecks(World& world) {
         case 7: SilentAimStop("pipeline regression"); break;
         case 8: Put(world.Base() + cs2_offsets::globals::dwLocalPlayerPawn, std::uintptr_t{0x334000}); break;
         case 9: badHistory = true; break;
+        case 10: pathClear = false; break;
+        case 11: pathAvailable = false; break;
+        case 12: changeDuringTrace = true; break;
         }
         world.History(command);
         Expect(Equal(command.Buttons(), command.ExpectedAfterChanges()) && command.Index() == -1 &&
@@ -464,6 +471,55 @@ void OwnershipChecks(World& world) {
     Expect(recorderCalls == 0 && Equal(beforeCommit.Buttons(), beforeCommit.originalButtons),
         "weapon identity is revalidated immediately before the native request");
 }
+
+void OcclusionChecks(World& world) {
+    for (int mode = 0; mode < 3; ++mode) {
+        world.Reset();
+        Command command;
+        const auto inputBefore = world.InputBytes();
+        const auto commandBefore = command.command;
+        if (mode == 0) pathClear = false;
+        if (mode == 1) pathAvailable = false;
+        if (mode == 2) changeDuringTrace = true;
+        world.Prepare(command);
+        Expect(traceCalls == 1 && recorderCalls == 0 && command.command == commandBefore &&
+            world.InputBytes() == inputBefore, "blocked, unavailable or invalidated trace prevents native fire request");
+    }
+    world.Reset();
+    Command clear;
+    world.Prepare(clear); world.History(clear);
+    Expect(traceCalls == 2 && recorderCalls == 1 && Equal(clear.History(), Desired()),
+        "clear path is traced freshly before request and again before history publication");
+
+    world.Reset();
+    Command rebuild;
+    world.Prepare(rebuild); world.History(rebuild);
+    pathClear = false;
+    world.Prepare(rebuild);
+    Expect(recorderCalls == 1 && Equal(rebuild.Buttons(), rebuild.originalButtons) && rebuild.Index() == -1,
+        "same-command rebuild removes the earlier owned pulse when cover blocks the replacement request");
+
+    world.Reset();
+    Command manual;
+    auto settings = SilentAimGetSettings(); settings.autofire = false; SilentAimSetSettings(settings);
+    pathClear = false;
+    world.Prepare(manual);
+    Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(manual);
+    Expect(traceCalls == 0 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1),
+        "occlusion gate leaves manual primary input and manual aiming available");
+
+    world.Reset();
+    Command takeover;
+    world.Prepare(takeover);
+    Put(world.InputAddress() + fire::InputNativeButtons, MovementButtons{1, 1, 0});
+    pathClear = false;
+    world.History(takeover);
+    Expect((takeover.Buttons().down & 1) && takeover.Index() == 0 && checksumCalls == 0 &&
+        Equal(takeover.History(), Command::PhysicalView),
+        "new cover cancels automatic aiming without clearing physical primary takeover");
+}
 }
 
 // Replace only engine-dependent snapshots and effects. The integrated suite
@@ -497,6 +553,13 @@ bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot&
     return weaponAvailable;
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
+bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept { context = {client, true}; return true; }
+AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget&, const AimTargetVolume&) noexcept {
+    ++traceCalls;
+    if (changeDuringTrace) weaponCurrent = false;
+    return {pathAvailable, pathAvailable && pathClear, pathClear ? 1.0f : 0.25f,
+        !pathAvailable ? "occlusion trace unavailable" : pathClear ? "direct path clear" : "target occluded"};
+}
 bool MovementRefinalizeCommand(void*, void* command) noexcept {
     ++checksumCalls;
     const auto address = reinterpret_cast<std::uintptr_t>(command);
@@ -517,6 +580,7 @@ int main() {
     PreparationDiagnosticsChecks(world);
     CancellationChecks(world);
     OwnershipChecks(world);
+    OcclusionChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

@@ -157,22 +157,26 @@ back to the first current entry. Never synthesize attack indices, rewrite the
 retained ring or alter base/camera angles. Missing/invalid history is a no-op.
 Bone names resolve per model and callback; no cached numerical indices or forced
 animation refresh. Missing selected bones/pose data skip the player. These are
-animated landmarks, not authored hitbox-volume centers. No visibility trace,
-recoil/spread correction, penetration or damage system is provided.
+animated landmarks, not authored hitbox-volume centers. Manual firing does not
+require a visibility trace. No recoil/spread correction, penetration or damage
+system is provided.
 
 ### Hitchance and autofire extension
 
 The combined compatibility bundle also checks
 [weapon contracts](../tools/inspect_aim_weapon.py),
 [authored capsules](../tools/inspect_aim_geometry.py),
-[native attack requests](../tools/inspect_autofire.py) and
+[native attack requests](../tools/inspect_autofire.py),
+[direct-path occlusion](../tools/inspect_aim_occlusion.py) and
 [console output](../tools/inspect_aim_console.py).
 The manual firing path above remains available; automatic requests additionally
 require a current supported weapon, authored volume, sufficient sampled estimate
-and native readiness. See the corresponding
+and native readiness, plus a fresh direct-path trace before request and history
+publication. See the corresponding
 [weapon](../tools/CS2_AIM_WEAPON_EVIDENCE.md),
 [geometry](../tools/CS2_AIM_GEOMETRY_EVIDENCE.md),
-[autofire](../tools/CS2_AUTOFIRE_EVIDENCE.md) and
+[autofire](../tools/CS2_AUTOFIRE_EVIDENCE.md),
+[occlusion](../tools/CS2_AIM_OCCLUSION_EVIDENCE.md) and
 [console](../tools/CS2_AIM_CONSOLE_EVIDENCE.md) evidence for exact field and ABI
 rediscovery. Geometry changes from landmarks to authored centers when available.
 
@@ -181,6 +185,9 @@ rediscovery. Geometry changes from landmarks to authored centers when available.
 | `aim_autofire_offsets::RecordHistory` | `0xD055C0`, client function RVA | Native history builder's initial recorder; primary event producer/consumer and native attack-index ownership |
 | `aim_geometry_offsets` | Model mesh / selected-set / `CHitBox` layouts | Model helper `0x1773030`; named schema in `animationsystem.dll`; enabled-mesh consumer and capsule transform consumers |
 | `aim_weapon_offsets` | Native spread/inaccuracy/readiness/punch and explicit firearm vtables | Named weapon/service schema, firearm RTTI, native shot spread law and punch consumers |
+| `aim_occlusion_offsets::InitializeFilter` | `0x352920`, client function RVA | Complete filter constructor called by BulletServices at `0x887F71`; shared synchronous ray uses `third_person_offsets::TraceShape` |
+| `aim_occlusion_offsets::ShotMask`, `ShotExclude` | `0x1C300B`, `0x4000000000`, collision masks | Native bullet filter producer `0x887F60` onward: layer 3, flags `0x0F`, additional byte `+0x39` bits `0x02` |
+| `aim_occlusion_offsets::TraceEntity`, `TraceHitFlag` | `0x08`, `0xBB`, result members | Native entity comparison and DidHit consumer; shared fraction is `+0xAC`; zero shape bounds select a ray |
 | Native `tier0!Msg` | `0x7EE60`, named export | Variadic prologue and client `%s` format callers; runtime export/module verification in `aim_console.cpp` |
 
 Autofire prepares before anti aim and the original movement finalizer. It scopes
@@ -188,6 +195,9 @@ a native input press and lets the native recorder and subsequent history builder
 choose serialized indices. Cancellation restores owned primary fields and reruns
 the original checksum finalizer. It does not rewind native allocation/timing
 caches, retain a physical attack latch, or perform physical DLL unload.
+Newly obstructed or unavailable paths cancel owned automatic attacks through
+that same checksum path. The occlusion check conservatively blocks all cover;
+it does not simulate penetration or change manual input.
 
 ## Anti aim: client.dll
 

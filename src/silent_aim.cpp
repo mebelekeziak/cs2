@@ -7,6 +7,7 @@
 #include "aim_autofire_offsets.h"
 #include "aim_hitchance.h"
 #include "aim_weapon.h"
+#include "aim_occlusion.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -27,6 +28,7 @@ HistoryFn original = nullptr;
 std::uintptr_t client = 0;
 AimBoneContext bones{};
 AimWeaponContext weaponContext{};
+AimOcclusionContext occlusionContext{};
 AimRecordHistoryFn recordHistory = nullptr;
 bool weaponPrepared = false, autofirePrepared = false, finalizerReady = false;
 SilentAimLogCallback logger = nullptr;
@@ -41,7 +43,7 @@ AimCommandDiagnostics commandDiagnostics{};
 AimTargetDiagnostics targetDiagnostics{};
 ULONGLONG lastReport = 0;
 ULONGLONG lastSummary = 0; // Render owner only.
-std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0;
+std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0, occlusionRejected = 0;
 AimAutofireDiagnostics fireDiagnostics{};
 AimViewDiagnostics viewDiagnostics{};
 std::uint64_t prepareCalls = 0, prepareEvaluated = 0, viewRejected = 0, prepareBlocked = 0;
@@ -52,6 +54,7 @@ struct Decision {
     AimTargetVolume volume{};
     AimWeaponSnapshot weapon{};
     AimHitchanceResult chance{};
+    AimOcclusionResult occlusion{};
     SilentAimSettings settings{};
     const char* reason = "not evaluated";
     bool selected = false;
@@ -174,19 +177,35 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
     char message[1280]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\"; selected-capsule snapshot, no wall/damage prediction",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\"; selected-capsule snapshot, direct-path autofire gate, no penetration/damage prediction",
         handle, static_cast<int>(decision.settings.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
         decision.weapon.spread, decision.weapon.inaccuracy, decision.weapon.recoilIndex,
         decision.weapon.aimPunch.pitch, decision.weapon.aimPunch.yaw, decision.weapon.aimPunch.roll,
-        decision.weapon.range, decision.weapon.clip, action, decision.reason);
+        decision.weapon.range, decision.weapon.clip, action, decision.reason,
+        decision.occlusion.valid, decision.occlusion.clear, decision.occlusion.fraction, decision.occlusion.reason);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
     return SameSource(decision.source) && SilentAimTargetValid(decision.source, decision.target) &&
         SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
         AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
+}
+bool Reachable(Decision& decision) noexcept {
+    if (!Current(decision)) { decision.reason = "target or weapon changed before occlusion check"; return false; }
+    decision.occlusion = AimOcclusionCheck(occlusionContext, decision.source, decision.target, decision.volume);
+    if (!decision.occlusion.valid || !decision.occlusion.clear) {
+        ++occlusionRejected;
+        decision.reason = decision.occlusion.reason; return false;
+    }
+    // Native tracing can invoke callbacks. Do not publish from state invalidated
+    // by that call, or reuse a clear path from command preparation at history time.
+    if (!ClientCurrent() || !active.load(std::memory_order_acquire) || !Foreground() ||
+        !(SilentAimGetSettings() == decision.settings) || !Current(decision)) {
+        decision.reason = "aim state changed during occlusion check"; return false;
+    }
+    return true;
 }
 template<std::size_t N> void CopyNativeText(std::uintptr_t address, char (&text)[N]) noexcept {
     if (!address) return;
@@ -268,13 +287,14 @@ void Process(void* input, void* command) noexcept {
             !SilentAimTargetValid(decision.source, decision.target) ? "target changed" :
             !SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) ? "hitbox geometry changed" :
             !AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) ? "weapon changed" :
+            !Reachable(decision) ? decision.reason :
             !SilentAimReadShot(address, shot, &commandDiagnostics) ? commandDiagnostics.reason :
             !SilentAimWriteShot(shot, decision.target.solution.angles) ? "history changed before angle write" : nullptr;
         if (rejection) {
             decision.reason = rejection;
             ++writeRejected;
             const bool cancelledCompletely = Cancel(*request, input, command);
-            Report(decision, cancelledCompletely ? "automatic shot cancelled: state/history changed" :
+            Report(decision, cancelledCompletely ? "automatic shot cancelled: state/history/path changed" :
                 "automatic cancellation incomplete; aim stopped", true); return;
         }
         ++shots; ++edited; ++fired; request->waiting = false;
@@ -354,6 +374,7 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     prepared = true;
     bones = {client, reinterpret_cast<AimBoneLookup>(client + bone::LookupBone)};
     weaponPrepared = AimWeaponPrepare(client, weaponContext);
+    AimOcclusionPrepare(client, occlusionContext);
     namespace fire = aim_autofire_offsets;
     std::array<unsigned char, sizeof(fire::RecordHistoryBytes)> recorderBytes{};
     autofirePrepared = MovementCopy(client + fire::RecordHistory, recorderBytes.data(), recorderBytes.size()) &&
@@ -364,8 +385,8 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     if (logger) {
         char message[384]{};
         std::snprintf(message, sizeof(message),
-            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u; current authored capsules; native spread/inaccuracy/punch snapshot; autofire starts off; command finalizer required for native CRC",
-            weaponPrepared, autofirePrepared);
+            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u; current authored capsules; native spread/inaccuracy/punch snapshot; fresh direct-path check before request and publication; autofire starts off; command finalizer required for native CRC",
+            weaponPrepared, autofirePrepared, occlusionContext.prepared);
         logger(message);
     }
     return true;
@@ -415,6 +436,7 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
             else if (settings.autofire && request && decision.chance.valid &&
                 decision.chance.percent >= settings.hitchance && decision.weapon.ready) {
                 if (!Current(decision)) action = "target or weapon changed before request";
+                else if (!Reachable(decision)) action = decision.reason;
                 else {
                     request->decision = decision;
                     if (SilentAimStartAutofire(reinterpret_cast<std::uintptr_t>(input), address,
@@ -467,14 +489,15 @@ void SilentAimFlushTelemetry() noexcept {
         static_cast<unsigned long long>(target.model), static_cast<unsigned long long>(target.pose), target.boneCount, target.boneIndex);
     ReleaseSRWLockShared(&mutationLock);
     logger(message);
-    char fireMessage[768]{};
+    char fireMessage[1024]{};
     AcquireSRWLockShared(&mutationLock);
     std::snprintf(fireMessage, sizeof(fireMessage),
-        "AIM_FIRE_DIAGNOSTICS decisions=%llu requested=%llu published=%llu cancelled=%llu below_chance=%llu autofire=%u minimum=%.2f samples=%d native_recorder=%u weapon_model=%u finalizer=%u last_valid=%u last_estimated=%.2f last_hits=%u last_samples=%u fire_reason=%s sequence=%d native_index=%d last_action=\"%s\" last_reason=\"%s\"; publication is not observed hit registration",
+        "AIM_FIRE_DIAGNOSTICS decisions=%llu requested=%llu published=%llu cancelled=%llu below_chance=%llu autofire=%u minimum=%.2f samples=%d native_recorder=%u weapon_model=%u finalizer=%u last_valid=%u last_estimated=%.2f last_hits=%u last_samples=%u fire_reason=%s sequence=%d native_index=%d last_action=\"%s\" last_reason=\"%s\" occlusion_ready=%u occlusion_rejected=%llu last_path_valid=%u last_path_clear=%u last_path_reason=\"%s\"; publication is not observed hit registration",
         decisions, requested, fired, cancelled, chanceRejected, settings.autofire, settings.hitchance, settings.samples,
         autofirePrepared, weaponPrepared, finalizerReady, lastDecision.chance.valid, lastDecision.chance.percent,
         lastDecision.chance.hits, lastDecision.chance.samples, fireDiagnostics.reason, fireDiagnostics.sequence, fireDiagnostics.nativeIndex,
-        lastObservedAction, lastDecision.reason);
+        lastObservedAction, lastDecision.reason, occlusionContext.prepared, occlusionRejected,
+        lastDecision.occlusion.valid, lastDecision.occlusion.clear, lastDecision.occlusion.reason);
     ReleaseSRWLockShared(&mutationLock);
     logger(fireMessage);
     char prepareMessage[768]{};
@@ -497,8 +520,9 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
     lastEventReport = 0; lastObservedAction = "not evaluated";
     weaponContext.client = base;
+    occlusionContext = {base, true};
     callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
-    decisions = requested = fired = cancelled = chanceRejected = 0;
+    decisions = requested = fired = cancelled = chanceRejected = occlusionRejected = 0;
     commandDiagnostics = {}; targetDiagnostics = {}; fireDiagnostics = {};
     viewDiagnostics = {}; prepareCalls = prepareEvaluated = viewRejected = prepareBlocked = 0;
     prepareStage = "not_called"; logger = callback; lastSummary = 0;
