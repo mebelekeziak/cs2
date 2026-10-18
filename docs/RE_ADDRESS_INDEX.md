@@ -224,6 +224,7 @@ Details: [command/view evidence](../tools/CS2_ANTI_AIM_EVIDENCE.md).
 | `InputAngles` | `0x688`, input member, inline float3 | Native reset stores at `0xB6CA5C/0xB6CA64`; producer uses input-slot state `+0x228/+0x460` |
 | `InputPreviousButtons`, `InputCurrentButtons` | `0x250`, `0x258`, input members, uint64 masks | Native replay stores command down to previous at `0xB6CA09`; producer combines previous/current at `0xB66924`/`0xB6690A` |
 | `CommandLookup` | `0x9444A0`, function RVA | Native replay calls it at `0xB6C9BC`; ABI `command*(controller*, int sequence)`, sequence-checked 150-command ring with `0x98` stride |
+| `GameRules`, `FreezePeriod` | `0x25651D0`, pointer RVA; `0x40`, bool member | Native RIP-relative rules load at `0x817FA0`; `C_CSGameRules` schema registration `0x2212A78`, field array `0x2211E20`, named `m_bFreezePeriod` |
 | `Attack`, `Attack2`, `Use` | `1`, `0x800`, `0x20`, uint64 button masks | Named `IN_ATTACK`, `IN_ATTACK2`, `IN_USE` native enum records |
 | `base::Up`, `UpPresent` | `0x60`, base member; `0x100`, presence mask | Native producer `0xB663D0`, ingestion `0xA77658` |
 

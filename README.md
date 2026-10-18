@@ -367,7 +367,11 @@ rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
 ## Configurable anti aim
 
 Under **Aim**, enable **Enable anti aim**. It starts disabled and is saved with
-configs. Scroll below the logging controls for the anti aim settings:
+configs. Warmup works normally. During each round's starting freeze/countdown,
+new anti-aim angle edits pause automatically and resume on the first command
+after that period ends. Missing or unreadable round state also pauses new edits.
+The toggle stays enabled; retained-command movement/view compensation continues.
+Scroll below the logging controls for the anti aim settings:
 
 - **Yaw mode:** Static, Jitter, Spin or Random.
 - **Yaw base:** View relative follows your mouse heading; World absolute starts

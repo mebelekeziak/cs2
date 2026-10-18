@@ -376,3 +376,28 @@ held-edge checks. Missing/reused/wrong-sequence ring slots reject without
 changing the caller output. Existing 6,144 copied-command/subtick handoffs
 continue to run. These checks establish copied-value behavior and the installed
 client contracts, not observed live movement or authoritative server physics.
+
+## Round-start freeze period, October 18, 2026
+
+New angle edits now wait while `C_CSGameRules::m_bFreezePeriod` is true.
+Warmup remains permitted; there is no match-start or warmup prerequisite.
+The native RIP-relative load at `client+0x817FA0` (`48 8B 05 29 D2 D4 01`)
+resolves the rules pointer at `client+0x25651D0`. Named schema registration
+`0x2212A78` identifies `C_CSGameRules` and its 98-entry field array at
+`0x2211E20`; `m_bFreezePeriod` supplies byte offset `0x40`. These are the same
+installed client and existing weapon-readiness contracts. The anti-aim verifier
+now independently checks the registration, field and global-load operand
+against the anti-aim header.
+
+The command owner rereads this state each command, so every later round pauses
+again and edits resume immediately after freeze ends. Null/unreadable rules or
+non-boolean freeze bytes pause new edits. Retained command history, physical
+movement handoffs and replay compensation remain available during the pause;
+the user's enable setting is unchanged. No new hook or loading requirement is
+introduced.
+
+Standalone checks cover warmup, entering/leaving freeze, later-round reentry,
+rules replacement, invalid and inaccessible state, and recovery. Public and
+diagnostic Release builds each pass all 42 CTest suites. Installed-file anti-aim
+verification passes. No CS2 client/server was launched for this change; live
+round behavior remains unobserved.

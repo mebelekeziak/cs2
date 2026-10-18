@@ -77,6 +77,24 @@ def verify_source(image, base, header):
         return int(matches[0], 0)
     def rip(site):
         return site + 7 + struct.unpack_from("<i", image, site + 3)[0]
+    # Decode the named game-rules schema and the existing native rules load.
+    registration, fields, count = 0x2212A78, 0x2211E20, 98
+    def pointer(at):
+        return struct.unpack_from("<Q", image, at)[0] - base
+    def string(at):
+        if not 0 <= at < len(image):
+            raise SystemExit("Invalid game-rules schema string pointer")
+        end = image.find(0, at, min(at + 256, len(image)))
+        if end < 0:
+            raise SystemExit("Unterminated game-rules schema string")
+        return bytes(image[at:end]).decode("ascii")
+    if (string(pointer(registration)) != "C_CSGameRules" or pointer(registration + 0x28) != fields or
+            struct.unpack_from("<H", image, registration + 0x1C)[0] != count):
+        raise SystemExit("Game-rules schema registration differs")
+    named_fields = {string(pointer(fields + i * 32)): struct.unpack_from("<I", image, fields + i * 32 + 16)[0]
+                    for i in range(count)}
+    if named_fields.get("m_bFreezePeriod") != 0x40 or image[0x817FA0:0x817FA7] != bytes.fromhex("488b0529d2d401"):
+        raise SystemExit("Native round-freeze contract differs")
     expected = {
         "Input": rip(0xEE574), "InputVtable": rip(0xEE58C),
         "Replay": 0xCEA280, "ReplaySlot": 8,
@@ -84,6 +102,7 @@ def verify_source(image, base, header):
         "InputPreviousButtons": struct.unpack_from("<I", image, 0xB6CA0C)[0],
         "InputCurrentButtons": struct.unpack_from("<I", image, 0xB6690D)[0],
         "CommandLookup": 0xB6C9BC + 5 + struct.unpack_from("<i", image, 0xB6C9BD)[0],
+        "GameRules": rip(0x817FA0), "FreezePeriod": named_fields["m_bFreezePeriod"],
         "Up": image[0xB663DB], "UpPresent": struct.unpack_from("<I", image, 0xB663D3)[0],
     }
     # Independently connect the game-specific vtable to its native base reset.

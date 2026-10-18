@@ -2,6 +2,7 @@
 #include "anti_aim_boundary.h"
 #include "anti_aim_history.h"
 #include "anti_aim_view.h"
+#include "anti_aim_round.h"
 #include "movement_offsets.h"
 #include "silent_aim_offsets.h"
 #include <Windows.h>
@@ -576,6 +577,45 @@ void HistoricalHandoffs() {
     Expect(pipeline && epochs,
            "source epoch resets reject stale publications before sequence reuse without inheriting old movement history");
 }
+void RoundReadiness() {
+    namespace off = anti_aim_offsets;
+    using Round = AntiAimRoundState;
+    auto* client = static_cast<unsigned char*>(VirtualAlloc(nullptr,
+        off::GameRules + sizeof(std::uintptr_t), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Expect(client != nullptr, "round-state fixture allocated");
+    if (!client) return;
+    std::array<unsigned char, 0x100> rules{}, replacement{};
+    const auto base = reinterpret_cast<std::uintptr_t>(client);
+    const auto rulesSlot = base + off::GameRules;
+    Expect(AntiAimReadRoundState(0) == Round::Unavailable &&
+           AntiAimReadRoundState(base) == Round::Unavailable, "missing client/rules cannot enable angle edits");
+    Put(rulesSlot, Address(rules));
+    // Warmup and match-start fields are deliberately irrelevant: only freeze
+    // blocks the round, so enabling mid-warmup does not await a later event.
+    rules[0x41] = 1;
+    Expect(AntiAimReadRoundState(base) == Round::Playable, "warmup permits anti aim before the match starts");
+    rules[0x41] = 0;
+    rules[off::FreezePeriod] = 1;
+    Expect(AntiAimReadRoundState(base) == Round::FreezePeriod, "round-start countdown blocks angle edits");
+    rules[off::FreezePeriod] = 0;
+    Expect(AntiAimReadRoundState(base) == Round::Playable, "first command after freeze permits angle edits");
+    rules[off::FreezePeriod] = 1;
+    Expect(AntiAimReadRoundState(base) == Round::FreezePeriod, "later rounds pause again without latched readiness");
+    Put(rulesSlot, Address(replacement));
+    Expect(AntiAimReadRoundState(base) == Round::Playable, "replacement game rules are read on the next command");
+    replacement[off::FreezePeriod] = 255;
+    Expect(AntiAimReadRoundState(base) == Round::Unavailable, "malformed freeze state cannot enable angle edits");
+    Put(rulesSlot, std::uintptr_t{1});
+    Expect(AntiAimReadRoundState(base) == Round::Unavailable, "unreadable game rules cannot enable angle edits");
+    DWORD old = 0;
+    const bool protectedSlot = VirtualProtect(reinterpret_cast<void*>(rulesSlot), sizeof(std::uintptr_t), PAGE_NOACCESS, &old) != 0;
+    Expect(protectedSlot && AntiAimReadRoundState(base) == Round::Unavailable, "inaccessible rules slot rejects without crashing");
+    if (protectedSlot) VirtualProtect(reinterpret_cast<void*>(rulesSlot), sizeof(std::uintptr_t), old, &old);
+    Put(rulesSlot, Address(rules));
+    rules[off::FreezePeriod] = 0;
+    Expect(AntiAimReadRoundState(base) == Round::Playable, "readiness recovers after unavailable state");
+    VirtualFree(client, 0, MEM_RELEASE);
+}
 void Rejections() {
     const auto settings = Settings();
     for (int configuration = 0; configuration < 4; ++configuration) {
@@ -624,6 +664,6 @@ void Rejections() {
 }
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); Rejections();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections();
     return failures ? 1 : 0;
 }

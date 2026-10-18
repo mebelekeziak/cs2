@@ -4,6 +4,7 @@
 #include "anti_aim_view.h"
 #include "anti_aim_boundary.h"
 #include "anti_aim_history.h"
+#include "anti_aim_round.h"
 #include "movement_command.h"
 #include "anti_aim_settings.h"
 #include "anti_aim_offsets.h"
@@ -294,7 +295,13 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
         if (Foreground() && (GetAsyncKeyState(VK_END) & 0x8000)) { stopped = true; active.store(false, std::memory_order_release); }
         const auto options = AntiAimGetSettings();
         const bool enabled = active.load(std::memory_order_acquire) && options.enabled && Foreground();
-        if (enabled || protectReplay) {
+        const auto round = enabled ? AntiAimReadRoundState(client) : AntiAimRoundState::Unavailable;
+        const bool roundReady = round == AntiAimRoundState::Playable;
+        const char* roundReason = round == AntiAimRoundState::FreezePeriod ?
+            "round freeze period; awaiting round start" : "round state unavailable";
+        // Retained outgoing commands still need physical movement handoff and
+        // replay protection while new angle edits wait for the round to start.
+        if ((enabled && roundReady) || protectReplay) {
             Source current{};
             const auto address = reinterpret_cast<std::uintptr_t>(command);
             int sequence = 0;
@@ -312,7 +319,7 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                     ++rejected; State("previous command movement unavailable");
                 } else {
                     Source walking{};
-                    const bool transform = enabled && ReadSource(walking, true) && walking == current && !Action(address);
+                    const bool transform = enabled && roundReady && ReadSource(walking, true) && walking == current && !Action(address);
                     if (transform) entry.valid = AntiAimApplyCommand(address, entry.patch, options, &reason, &commandDiagnostics);
                     float targetForward = physicalForward, targetLeft = physicalLeft;
                     if (entry.valid) {
@@ -342,11 +349,12 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                         lastOutgoingPresence = entry.patch.editedAnglePresence;
                         State("configured angles; local view preserved");
                     } else if (transform) { ++rejected; State(reason ? reason : "unsupported command; unchanged"); }
-                    else State(stopped ? "stopped; physical movement handoff" : enabled ? "attack/movement passthrough" : "disabled; physical movement handoff");
+                    else State(stopped ? "stopped; physical movement handoff" : !enabled ? "disabled; physical movement handoff" :
+                        !roundReady ? roundReason : "attack/movement passthrough");
                     if (entry.boundary.valid && entry.boundary.appended) ++boundaryEdits;
                 }
             }
-        } else State(stopped ? "stopped and resident" : "disabled");
+        } else State(stopped ? "stopped and resident" : enabled ? roundReason : "disabled");
         // Prediction can deep-copy this command and later replay an older
         // rebuild. Publish copied values separately from restoration pointers.
         Source current{};
