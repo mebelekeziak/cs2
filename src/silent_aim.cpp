@@ -4,6 +4,10 @@
 #include "silent_aim_settings.h"
 #include "silent_aim_offsets.h"
 #include "silent_aim_hitbox_offsets.h"
+#include "aim_autofire_offsets.h"
+#include "aim_hitchance.h"
+#include "aim_weapon.h"
+#include "movement.h"
 #include "cs2_offsets.h"
 #include "movement_memory.h"
 #include "movement_telemetry.h"
@@ -12,6 +16,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 namespace {
 namespace off = silent_aim_offsets;
@@ -19,6 +24,9 @@ using HistoryFn = void (*)(void*, int, void*);
 HistoryFn original = nullptr;
 std::uintptr_t client = 0;
 AimBoneContext bones{};
+AimWeaponContext weaponContext{};
+AimRecordHistoryFn recordHistory = nullptr;
+bool weaponPrepared = false, autofirePrepared = false, finalizerReady = false;
 SilentAimLogCallback logger = nullptr;
 std::atomic<bool> active{false};
 std::atomic<const char*> state{"silent aim not initialized"};
@@ -31,6 +39,33 @@ AimCommandDiagnostics commandDiagnostics{};
 AimTargetDiagnostics targetDiagnostics{};
 ULONGLONG lastReport = 0;
 ULONGLONG lastSummary = 0; // Render owner only.
+std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0;
+AimAutofireDiagnostics fireDiagnostics{};
+struct Decision {
+    AimSource source{};
+    AimTarget target{};
+    AimTargetVolume volume{};
+    AimWeaponSnapshot weapon{};
+    AimHitchanceResult chance{};
+    SilentAimSettings settings{};
+    const char* reason = "not evaluated";
+    bool selected = false;
+};
+struct Pending {
+    AimAutofirePatch patch{};
+    Decision decision{};
+    bool waiting = false;
+};
+std::array<Pending, 256> requests{};
+Decision lastDecision{};
+#ifdef CS2_AIM_PIPELINE_CHECKS
+bool testRuntime = false, testForeground = true;
+#endif
+const char* lastDecisionReason = "not evaluated";
+std::uint32_t lastDecisionTarget = UINT32_MAX;
+ULONGLONG lastDecisionReport = 0;
+ULONGLONG lastEventReport = 0;
+const char* lastObservedAction = "not evaluated";
 
 template<class T> bool Read(std::uintptr_t address, T& value) noexcept {
     return MovementCopy(address, &value, sizeof(value));
@@ -41,47 +76,183 @@ bool Source(AimSource& source) noexcept {
         Read(client + cs2_offsets::globals::dwLocalPlayerController, source.controller) && source.controller &&
         Read(client + cs2_offsets::globals::dwLocalPlayerPawn, source.pawn) && source.pawn;
 }
-void Process(void* input, void* command) noexcept {
-    ++callbacks;
-    if (reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client ||
-        reinterpret_cast<std::uintptr_t>(input) != client + off::Input) {
-        active.store(false, std::memory_order_release);
-        stopped = true; Status("client/input changed; silent aim stopped"); return;
-    }
+bool SameSource(const AimSource& before) noexcept {
+    AimSource current{};
+    return Source(current) && current.system == before.system && current.controller == before.controller && current.pawn == before.pawn;
+}
+bool ClientCurrent() noexcept {
+#ifdef CS2_AIM_PIPELINE_CHECKS
+    if (testRuntime) return true;
+#endif
+    return reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) == client;
+}
+bool Foreground() noexcept {
+#ifdef CS2_AIM_PIPELINE_CHECKS
+    if (testRuntime) return testForeground;
+#endif
     DWORD foreground = 0;
     const auto window = GetForegroundWindow();
     GetWindowThreadProcessId(window, &foreground);
-    if (!window || foreground != GetCurrentProcessId() || IsIconic(window)) {
-        Status("game unfocused"); return;
-    }
-    if (GetAsyncKeyState(VK_END) & 0x8000) {
+    return window && foreground == GetCurrentProcessId() && !IsIconic(window);
+}
+bool Usable(void* input) noexcept {
+    if (!ClientCurrent() ||
+        reinterpret_cast<std::uintptr_t>(input) != client + off::Input) {
         active.store(false, std::memory_order_release);
-        stopped = true; Status("stopped and resident"); return;
+        stopped = true; Status("client/input changed; silent aim stopped"); return false;
     }
+    if (!Foreground()) { Status("game unfocused"); return false; }
+    if (
+#ifdef CS2_AIM_PIPELINE_CHECKS
+        !testRuntime &&
+#endif
+        (GetAsyncKeyState(VK_END) & 0x8000)) {
+        active.store(false, std::memory_order_release);
+        stopped = true; Status("stopped and resident"); return false;
+    }
+    return active.load(std::memory_order_acquire);
+}
+Pending* Request(std::uintptr_t command) noexcept {
+    int sequence = 0;
+    if (!Read(command + movement_offsets::command::Sequence, sequence) || sequence <= 0) return nullptr;
+    return &requests[static_cast<unsigned>(sequence) % requests.size()];
+}
+Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings) noexcept {
+    Decision result{};
+    result.settings = settings;
+    ++decisions;
+    if (!Source(result.source)) {
+        ++sourceRejected; result.reason = "local source unavailable"; return result;
+    }
+    if (!SilentAimSelectTarget(result.source, view, settings.fov, settings.hitbox, bones, result.target, &targetDiagnostics)) {
+        result.reason = "no enemy in aim FOV"; return result;
+    }
+    result.selected = true; ++selected;
+    const char* geometryReason = "geometry unavailable";
+    const bool geometry = SilentAimReadTargetVolume(result.source, result.target, result.volume, geometryReason);
+    if (geometry) {
+        const auto centered = SilentAimSolve(result.target.eye, result.volume.center, view, settings.fov);
+        if (!centered.valid) { result.reason = "hitbox center outside FOV"; return result; }
+        result.target.solution = centered;
+    }
+    if (!weaponPrepared || !AimWeaponRead(weaponContext, result.source, result.weapon)) {
+        result.reason = weaponPrepared ? result.weapon.reason : "weapon model verification unavailable"; return result;
+    }
+    if (!geometry) { result.reason = geometryReason; return result; }
+    AimHitchanceInput cone{};
+    cone.eye = result.target.eye;
+    cone.angles = {result.target.solution.angles.pitch + result.weapon.aimPunch.pitch,
+        result.target.solution.angles.yaw + result.weapon.aimPunch.yaw,
+        result.target.solution.angles.roll + result.weapon.aimPunch.roll};
+    cone.capsule = result.volume.capsule;
+    cone.spread = result.weapon.spread; cone.inaccuracy = result.weapon.inaccuracy;
+    cone.range = result.weapon.range; cone.recoilIndex = result.weapon.recoilIndex;
+    cone.samples = static_cast<unsigned>(settings.samples); cone.negev = result.weapon.negev;
+    cone.forceMaxRadius = result.weapon.forceMaxRadius; cone.fixedSpreadAngle = result.weapon.fixedSpreadAngle;
+    result.chance = AimEstimateHitchance(cone);
+    if (!result.chance.valid) result.reason = result.chance.reason;
+    else if (result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
+    else if (!result.weapon.ready) result.reason = result.weapon.reason;
+    else result.reason = settings.autofire ? "autofire eligible" : "manual mode";
+    return result;
+}
+void Report(const Decision& decision, const char* action, bool event = false) noexcept {
+    lastDecision = decision;
+    lastObservedAction = action;
+    const auto now = GetTickCount64();
+    const auto handle = decision.selected ? decision.target.enemy.pawnHandle : UINT32_MAX;
+    const bool changed = std::strcmp(lastDecisionReason, action) || lastDecisionTarget != handle;
+    // Continuous estimates are capped at 5 Hz. Decision transitions and native
+    // shot requests are capped at 20 Hz; no callback performs sink I/O.
+    auto& reportTime = event ? lastEventReport : lastDecisionReport;
+    if (reportTime && now - reportTime < ((changed || event) ? 50u : 200u)) return;
+    reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
+    char message[1280]{};
+    std::snprintf(message, sizeof(message),
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\"; selected-capsule snapshot, no wall/damage prediction",
+        handle, static_cast<int>(decision.settings.hitbox), decision.chance.valid,
+        decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
+        decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
+        decision.weapon.spread, decision.weapon.inaccuracy, decision.weapon.recoilIndex,
+        decision.weapon.aimPunch.pitch, decision.weapon.aimPunch.yaw, decision.weapon.aimPunch.roll,
+        decision.weapon.range, decision.weapon.clip, action, decision.reason);
+    MovementTelemetryPush(message);
+}
+bool Current(const Decision& decision) noexcept {
+    return SameSource(decision.source) && SilentAimTargetValid(decision.source, decision.target) &&
+        SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
+        AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
+}
+bool Cancel(Pending& request, void* input, void* command) noexcept {
+    const bool restored = SilentAimCancelAutofire(request.patch, &fireDiagnostics);
+    bool checksum = true;
+    if (fireDiagnostics.commandRestored) {
+        checksum = MovementRefinalizeCommand(input, command);
+        if (!checksum) {
+            active.store(false, std::memory_order_release); stopped = true;
+            Status("autofire cancellation checksum unavailable; stopped");
+        }
+        ++cancelled;
+    }
+    if (!restored) {
+        active.store(false, std::memory_order_release); stopped = true;
+        Status("autofire ownership changed; stopped");
+    }
+    request.waiting = false;
+    return restored && checksum;
+}
+void Process(void* input, void* command) noexcept {
+    ++callbacks;
+    const auto address = reinterpret_cast<std::uintptr_t>(command);
+    auto* request = Request(address);
+    int sequence = 0;
+    const bool automatic = request && request->waiting && request->patch.command == address &&
+        request->patch.input == reinterpret_cast<std::uintptr_t>(input) &&
+        Read(address + movement_offsets::command::Sequence, sequence) && request->patch.sequence == sequence;
+    const bool restored = !automatic || SilentAimFinishAutofireHistory(request->patch, &fireDiagnostics);
+    const bool usable = Usable(input);
     const auto settings = SilentAimGetSettings();
+    if (automatic) {
+        AimShot shot{};
+        auto decision = request->decision;
+        const char* rejection = !restored ? "input ownership changed" : !usable ? "aim stopped or game unfocused" :
+            !settings.enabled ? "silent aim disabled" : !settings.autofire ? "autofire disabled" :
+            !(settings == decision.settings) ? "aim settings changed" :
+            !SameSource(decision.source) ? "local source changed" :
+            !SilentAimTargetValid(decision.source, decision.target) ? "target changed" :
+            !SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) ? "hitbox geometry changed" :
+            !AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) ? "weapon changed" :
+            !SilentAimReadShot(address, shot, &commandDiagnostics) ? commandDiagnostics.reason :
+            !SilentAimWriteShot(shot, decision.target.solution.angles) ? "history changed before angle write" : nullptr;
+        if (rejection) {
+            decision.reason = rejection;
+            ++writeRejected;
+            const bool cancelledCompletely = Cancel(*request, input, command);
+            Report(decision, cancelledCompletely ? "automatic shot cancelled: state/history changed" :
+                "automatic cancellation incomplete; aim stopped", true); return;
+        }
+        ++shots; ++edited; ++fired; request->waiting = false;
+        Status("autofire primary-fire history updated");
+        Report(decision, "automatic primary published", true); return;
+    }
+    if (!usable) return;
     if (!settings.enabled) { Status("disabled"); return; }
     AimShot shot{};
-    if (!SilentAimReadShot(reinterpret_cast<std::uintptr_t>(command), shot, &commandDiagnostics)) {
+    if (!SilentAimReadShot(address, shot, &commandDiagnostics)) {
         Status("awaiting primary-fire history"); return;
     }
     ++shots;
-    AimSource source{}, current{};
-    AimTarget target{};
-    if (!Source(source)) {
-        ++sourceRejected; Status("local source unavailable"); return;
-    }
-    if (!SilentAimSelectTarget(source, shot.view, settings.fov, settings.hitbox, bones, target, &targetDiagnostics)) {
-        Status("no enemy in aim FOV"); return;
-    }
-    ++selected;
-    if (!Source(current) || current.system != source.system || current.controller != source.controller ||
-        current.pawn != source.pawn || !SilentAimTargetValid(source, target) ||
+    const auto decision = Evaluate(shot.view, settings);
+    if (!decision.selected) { Status(decision.reason); Report(decision, decision.reason); return; }
+    const auto& target = decision.target;
+    if (!SameSource(decision.source) || !SilentAimTargetValid(decision.source, target) ||
         !SilentAimWriteShot(shot, target.solution.angles)) {
         ++writeRejected;
         Status("source/history changed; shot unchanged"); return;
     }
     ++edited;
     Status("primary-fire history updated");
+    Report(decision, "manual primary aimed", true);
     const auto now = GetTickCount64();
     if (!lastReport || now - lastReport >= 2000) {
         lastReport = now;
@@ -96,9 +267,10 @@ void Process(void* input, void* command) noexcept {
 void HookHistory(void* input, int slot, void* command) noexcept {
     historyCalls.fetch_add(1, std::memory_order_relaxed);
     original(input, slot, command);
-    if (!active.load(std::memory_order_acquire)) return;
+    if (slot != 0) return;
     AcquireSRWLockExclusive(&mutationLock);
-    if (active.load(std::memory_order_acquire)) Process(input, command);
+    // Pending requests must be cancelled even after disable/focus loss/stop.
+    Process(input, command);
     ReleaseSRWLockExclusive(&mutationLock);
 }
 }
@@ -133,13 +305,67 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     }
     prepared = true;
     bones = {client, reinterpret_cast<AimBoneLookup>(client + bone::LookupBone)};
+    weaponPrepared = AimWeaponPrepare(client, weaponContext);
+    namespace fire = aim_autofire_offsets;
+    std::array<unsigned char, sizeof(fire::RecordHistoryBytes)> recorderBytes{};
+    autofirePrepared = MovementCopy(client + fire::RecordHistory, recorderBytes.data(), recorderBytes.size()) &&
+        !std::memcmp(recorderBytes.data(), fire::RecordHistoryBytes, recorderBytes.size());
+    if (autofirePrepared) recordHistory = reinterpret_cast<AimRecordHistoryFn>(client + fire::RecordHistory);
     Status("awaiting history hook activation");
     if (logger) logger("AIM_BUILD_VERIFIED native history slot=25; primary-fire history edited after original; dynamic named bones from copied pose; no camera/base/movement writes");
+    if (logger) {
+        char message[384]{};
+        std::snprintf(message, sizeof(message),
+            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u; current authored capsules; native spread/inaccuracy/punch snapshot; autofire starts off; command finalizer required for native CRC",
+            weaponPrepared, autofirePrepared);
+        logger(message);
+    }
     return true;
 }
-void SilentAimActivate() noexcept {
+void SilentAimActivate(bool commandHookReady) noexcept {
     AcquireSRWLockExclusive(&mutationLock);
+    finalizerReady = commandHookReady;
     if (prepared && !stopped) active.store(true, std::memory_order_release);
+    ReleaseSRWLockExclusive(&mutationLock);
+}
+void SilentAimPrepareCommand(void* input, void* command) noexcept {
+    AcquireSRWLockExclusive(&mutationLock);
+    const auto address = reinterpret_cast<std::uintptr_t>(command);
+    auto* request = Request(address);
+    const bool identity = client && reinterpret_cast<std::uintptr_t>(input) == client + off::Input &&
+        ClientCurrent();
+    bool restored = true;
+    if (identity && request && request->patch.active)
+        restored = SilentAimRestoreAutofireRebuild(reinterpret_cast<std::uintptr_t>(input), address, request->patch, &fireDiagnostics);
+    if (!restored) {
+        active.store(false, std::memory_order_release); stopped = true;
+        Status("autofire rebuild ownership unavailable; stopped");
+    }
+    if (request && !request->patch.active) *request = {};
+    if (restored && Usable(input)) {
+        const auto settings = SilentAimGetSettings();
+        AimAngles view{};
+        if (!settings.enabled) Status("disabled");
+        else if (!SilentAimReadView(address, view)) Status("native physical view unavailable");
+        else {
+            auto decision = Evaluate(view, settings);
+            const char* action = decision.reason;
+            if (settings.autofire && (!autofirePrepared || !finalizerReady)) action = "native autofire contract unavailable";
+            else if (settings.autofire && request && decision.chance.valid &&
+                decision.chance.percent >= settings.hitchance && decision.weapon.ready) {
+                if (!Current(decision)) action = "target or weapon changed before request";
+                else {
+                    request->decision = decision;
+                    if (SilentAimStartAutofire(reinterpret_cast<std::uintptr_t>(input), address,
+                        recordHistory, request->patch, &fireDiagnostics)) {
+                        request->waiting = true; ++requested; action = "automatic primary requested";
+                    } else action = fireDiagnostics.reason;
+                }
+            }
+            Status(action);
+            Report(decision, action);
+        }
+    }
     ReleaseSRWLockExclusive(&mutationLock);
 }
 void SilentAimStop(const char* reason) noexcept {
@@ -179,4 +405,30 @@ void SilentAimFlushTelemetry() noexcept {
         static_cast<unsigned long long>(target.model), static_cast<unsigned long long>(target.pose), target.boneCount, target.boneIndex);
     ReleaseSRWLockShared(&mutationLock);
     logger(message);
+    char fireMessage[768]{};
+    AcquireSRWLockShared(&mutationLock);
+    std::snprintf(fireMessage, sizeof(fireMessage),
+        "AIM_FIRE_DIAGNOSTICS decisions=%llu requested=%llu published=%llu cancelled=%llu below_chance=%llu autofire=%u minimum=%.2f samples=%d native_recorder=%u weapon_model=%u finalizer=%u last_valid=%u last_estimated=%.2f last_hits=%u last_samples=%u fire_reason=%s sequence=%d native_index=%d last_action=\"%s\" last_reason=\"%s\"; publication is not observed hit registration",
+        decisions, requested, fired, cancelled, chanceRejected, settings.autofire, settings.hitchance, settings.samples,
+        autofirePrepared, weaponPrepared, finalizerReady, lastDecision.chance.valid, lastDecision.chance.percent,
+        lastDecision.chance.hits, lastDecision.chance.samples, fireDiagnostics.reason, fireDiagnostics.sequence, fireDiagnostics.nativeIndex,
+        lastObservedAction, lastDecision.reason);
+    ReleaseSRWLockShared(&mutationLock);
+    logger(fireMessage);
 }
+
+#ifdef CS2_AIM_PIPELINE_CHECKS
+void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTestRecordFn recorder) noexcept {
+    testRuntime = true; testForeground = true;
+    client = base; original = builder; recordHistory = recorder;
+    active.store(true); stopped = false; prepared = weaponPrepared = autofirePrepared = finalizerReady = true;
+    requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
+    lastEventReport = 0; lastObservedAction = "not evaluated";
+    weaponContext.client = base;
+    callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
+    decisions = requested = fired = cancelled = chanceRejected = 0;
+    commandDiagnostics = {}; targetDiagnostics = {}; fireDiagnostics = {};
+}
+void SilentAimTestHistory(void* input, void* command) noexcept { HookHistory(input, 0, command); }
+void SilentAimTestForeground(bool foreground) noexcept { testForeground = foreground; }
+#endif

@@ -15,6 +15,7 @@
 #include "public_menu.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "silent_aim_settings.h"
 #include <cstdio>
 #include <cwchar>
 
@@ -83,6 +84,7 @@ int wmain(int argc, wchar_t** argv) {
     io.DisplaySize = { static_cast<float>(width), static_cast<float>(height) };
     io.DeltaTime = 1.0f / 60.0f;
     ConfigurePublicMenuStyle();
+    if (selectedTab == 4) SilentAimSetSettings({true, 5, AimHitbox::Chest, true, 70, 256});
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150});
     if (!ImGui_ImplDX11_Init(device.Get(), context.Get())) {

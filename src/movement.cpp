@@ -1,5 +1,6 @@
 #include "movement.h"
 #include "anti_aim.h"
+#include "silent_aim.h"
 #include "movement_math.h"
 #include "movement_jump.h"
 #include "movement_jump_trace.h"
@@ -830,6 +831,7 @@ void HookFinalize(void* input, void* command) noexcept {
     }
     // Original rebuilds move_crc using the modified native buttons, then normal
     // command production copies those buttons to the network protobuf itself.
+    if (commandReady) SilentAimPrepareCommand(input, command);
     AntiAimFinishCommand(input, command);
     // Requests are compared against native ingestion in outgoing command space.
     int antiSequence = 0;
@@ -954,3 +956,9 @@ void MovementStop(const char* reason) noexcept {
 }
 const char* MovementStatus() noexcept { return status.load(std::memory_order_acquire); }
 void MovementFlushTelemetry() noexcept { MovementTelemetryDrain(); }
+bool MovementRefinalizeCommand(void* input, void* command) noexcept {
+    if (!original || !command || reinterpret_cast<std::uintptr_t>(input) != client + off::Input ||
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client) return false;
+    original(input, command);
+    return true;
+}

@@ -2,6 +2,7 @@
 #include "silent_aim_math.h"
 #include <cstdint>
 #include <array>
+#include "movement_command.h"
 
 struct AimHistoryAngle { std::uintptr_t entry = 0, angles = 0; AimAngles view{}; };
 
@@ -25,3 +26,42 @@ struct AimCommandDiagnostics {
 bool SilentAimReadShot(std::uintptr_t command, AimShot& shot,
     AimCommandDiagnostics* diagnostics = nullptr) noexcept;
 bool SilentAimWriteShot(const AimShot& shot, const AimAngles& angles) noexcept;
+// Read the current native base view even when no attack is present. Call before
+// anti aim emits a new command pose, after its prior owned patch is restored.
+bool SilentAimReadView(std::uintptr_t command, AimAngles& view) noexcept;
+
+using AimRecordHistoryFn = void (*)(void*, int);
+struct AimAutofireDiagnostics {
+    const char* reason = "not_requested";
+    int sequence = 0, events = 0, processed = 0, nativeIndex = -1, nativeHistory = 0;
+    bool requested = false, inputRestored = false, commandRestored = false;
+};
+struct AimAutofirePatch {
+    std::uintptr_t input = 0, command = 0;
+    int sequence = 0, originalInputIndex = -1, nativeIndex = -1;
+    int originalCommandIndex = -1, eventCount = 0;
+    std::uint32_t originalCommandPresence = 0;
+    MovementButtons before{}, applied{};
+    bool active = false, inputPending = false;
+};
+// Current engine owner only, slot zero, before native command CRC finalization
+// and anti aim emission. The verified native recorder owns history allocation
+// and index choice. A successful patch can be retained as a copied ownership
+// record; only re-encountered current callback addresses may be dereferenced.
+bool SilentAimStartAutofire(std::uintptr_t input, std::uintptr_t command,
+    AimRecordHistoryFn record, AimAutofirePatch& patch,
+    AimAutofireDiagnostics* diagnostics = nullptr) noexcept;
+// After the original history builder: restore the temporary input index before
+// any later callback; command attack and its native index stay for publication.
+bool SilentAimFinishAutofireHistory(AimAutofirePatch& patch,
+    AimAutofireDiagnostics* diagnostics = nullptr) noexcept;
+// Cancel only an owned request, preserving all unrelated command bits. If the
+// native finalizer already ran, its original callback MUST run again afterward
+// before command publication to regenerate the native movement CRC.
+bool SilentAimCancelAutofire(AimAutofirePatch& patch,
+    AimAutofireDiagnostics* diagnostics = nullptr) noexcept;
+// Before rebuilding a current command, retire its old owned pulse if still
+// present. Address/sequence changes abandon copied state without dereferencing
+// cached engine addresses. Physical primary takeover is always preserved.
+bool SilentAimRestoreAutofireRebuild(std::uintptr_t input, std::uintptr_t command,
+    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics = nullptr) noexcept;

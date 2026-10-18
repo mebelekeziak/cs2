@@ -1,6 +1,7 @@
 #include "silent_aim_target.h"
 #include "silent_aim_target_offsets.h"
 #include "silent_aim_hitbox_offsets.h"
+#include "aim_geometry_offsets.h"
 #include "cs2_offsets.h"
 #include "movement_memory.h"
 #include <array>
@@ -160,6 +161,7 @@ bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, A
     std::uintptr_t currentScene = 0, currentHandle = 0, currentModel = 0, currentArray = 0;
     actor.modelHandle = handle; actor.model = model; actor.boneArray = array;
     actor.skeletonVtable = vtable; actor.skeletonQuery = query;
+    actor.boneIndex = index;
     std::uintptr_t currentVtable = 0, currentQuery = 0;
     if (!(Read(actor.scene, currentVtable) && currentVtable == vtable &&
         Read(currentVtable + bone::SkeletonQuerySlot, currentQuery) && currentQuery == query &&
@@ -232,7 +234,7 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
             }
             if (target.solution.valid && solution.separation >= target.solution.separation) continue;
             if (!Same(source.system, enemy)) continue;
-            target = {local, enemy, solution};
+            target = {local, enemy, solution, eye, point, hitbox};
         }
     }
     if (diagnostics) diagnostics->stage = target.solution.valid ? "target revalidation" : "no candidate selected";
@@ -241,7 +243,175 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
     return valid;
 }
 bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noexcept {
+    AimVector offset{}, eye{}, point{};
+    int count = 0;
     return target.solution.valid && target.local.controller == source.controller && target.local.pawn == source.pawn &&
         target.enemy.pawn != source.pawn && target.enemy.team != target.local.team &&
-        Same(source.system, target.local) && Same(source.system, target.enemy);
+        Same(source.system, target.local) && Same(source.system, target.enemy) &&
+        Read(target.local.pawn + silent_aim_target_offsets::ViewOffset, offset) && Point(target.local, offset, eye) &&
+        !std::memcmp(&eye, &target.eye, sizeof(eye)) && target.enemy.boneIndex >= 0 &&
+        Read(target.enemy.model + silent_aim_hitbox_offsets::BoneCount, count) && target.enemy.boneIndex < count && count <= 1024 &&
+        Read(target.enemy.boneArray + target.enemy.boneIndex * silent_aim_hitbox_offsets::BoneStride, point) &&
+        !std::memcmp(&point, &target.point, sizeof(point));
+}
+
+namespace {
+namespace geometry = aim_geometry_offsets;
+const char* SelectedName(AimHitbox hitbox) noexcept {
+    namespace bone = silent_aim_hitbox_offsets;
+    switch (hitbox) {
+    case AimHitbox::Head: return bone::HeadName;
+    case AimHitbox::Chest: return bone::ChestName;
+    case AimHitbox::Stomach: return bone::StomachName;
+    case AimHitbox::Pelvis: return bone::PelvisName;
+    default: return nullptr;
+    }
+}
+bool Name(std::uintptr_t pointer, const char* expected) noexcept {
+    if (!pointer || !expected) return false;
+    // Read only the exact expected length plus terminator. Resource strings can
+    // end near an unreadable page; no need to probe an arbitrary 64-byte tail.
+    char copied[32]{};
+    const auto length = std::strlen(expected) + 1;
+    return length <= sizeof(copied) && MovementCopy(pointer, copied, length) && !std::strcmp(copied, expected);
+}
+template<class T> T Field(const std::array<unsigned char, 0x70>& record, std::ptrdiff_t offset) noexcept {
+    T result{};
+    std::memcpy(&result, record.data() + offset, sizeof(result));
+    return result;
+}
+bool Transform(const std::array<float, 8>& pose, const AimVector& local, AimVector& world) noexcept {
+    if (!Vector(local)) return false;
+    for (float value : pose) if (!std::isfinite(value)) return false;
+    if (pose[3] <= 0 || pose[3] > 100) return false;
+    const double x = pose[4], y = pose[5], z = pose[6], w = pose[7];
+    const double norm = x*x + y*y + z*z + w*w;
+    // Pose quaternions should already be normalized. Reject malformed data;
+    // normalizing a corrupted transform would manufacture valid geometry.
+    if (std::abs(norm - 1) > .001) return false;
+    const double tx = 2 * (y * local.z - z * local.y);
+    const double ty = 2 * (z * local.x - x * local.z);
+    const double tz = 2 * (x * local.y - y * local.x);
+    world = {
+        static_cast<float>(pose[0] + pose[3] * (local.x + w * tx + y * tz - z * ty)),
+        static_cast<float>(pose[1] + pose[3] * (local.y + w * ty + z * tx - x * tz)),
+        static_cast<float>(pose[2] + pose[3] * (local.z + w * tz + x * ty - y * tx))};
+    return Vector(world);
+}
+}
+
+bool SilentAimReadTargetVolume(const AimSource& source, const AimTarget& target,
+                              AimTargetVolume& volume, const char*& reason) noexcept {
+    volume = {};
+    reason = "stale target";
+    if (!SilentAimTargetValid(source, target)) return false;
+    const auto& actor = target.enemy;
+    const char* selected = SelectedName(target.hitbox);
+    reason = "selected bone unavailable";
+    if (!selected || actor.boneIndex < 0 || actor.boneIndex > 1023 || !actor.boneArray || !actor.model) return false;
+    AimTargetVolume copied{};
+    copied.pawn = actor.pawn; copied.model = actor.model;
+    copied.poseAddress = actor.boneArray + actor.boneIndex * silent_aim_hitbox_offsets::BoneStride;
+    reason = "pose transform unavailable";
+    if (!MovementCopy(copied.poseAddress, copied.pose.data(), sizeof(copied.pose)) ||
+        std::memcmp(copied.pose.data(), &target.point, sizeof(target.point))) return false;
+    reason = "unsupported scaled hitbox pose";
+    // The verified capsule consumer transforms endpoints by pose scale but
+    // reads the authored radius directly. Unit-scale players are supported;
+    // extrapolating a radius rule for arbitrary scaled models is unverified.
+    if (copied.pose[3] != 1.0f) return false;
+    reason = "model mesh storage unavailable";
+    if (!Read(actor.model + geometry::MeshCount, copied.meshCount) || copied.meshCount < 1 || copied.meshCount > 64 ||
+        !Read(actor.model + geometry::MeshArray, copied.meshArray) || !copied.meshArray ||
+        !Read(actor.model + geometry::MeshMasks, copied.meshMasks) || !copied.meshMasks ||
+        !Read(actor.scene + geometry::MeshGroup, copied.meshGroup) || !copied.meshGroup ||
+        !Read(actor.scene + geometry::HitboxSet, copied.setIndex)) return false;
+    for (int meshIndex = 0; meshIndex < copied.meshCount; ++meshIndex) {
+        std::uint64_t mask = 0;
+        std::uintptr_t mesh = 0, setArray = 0;
+        int setCount = 0;
+        std::uint32_t storage = 0;
+        reason = "model mesh changed";
+        if (!Read(copied.meshMasks + meshIndex * sizeof(mask), mask)) return false;
+        if (!(mask & copied.meshGroup)) continue;
+        if (!Read(copied.meshArray + meshIndex * sizeof(mesh), mesh) || !mesh ||
+            !Read(mesh + geometry::SetCount, setCount) || setCount < 0 || setCount > 64) return false;
+        if (copied.setIndex >= setCount) continue;
+        reason = "hitbox set storage unavailable";
+        if (!Read(mesh + geometry::SetStorage, storage) || !(storage & 0x7FFFFFFF) ||
+            !Read(mesh + geometry::SetArray, setArray) || !setArray) return false;
+        const auto set = setArray + copied.setIndex * geometry::SetStride + geometry::SetValue;
+        std::uintptr_t setName = 0, boxes = 0;
+        int boxCount = 0;
+        if (!Read(set + geometry::SetName, setName) || !Name(setName, "cstrike")) continue;
+        if (!Read(set + geometry::BoxCount, boxCount) || boxCount < 1 || boxCount > 256 ||
+            !Read(set + geometry::BoxArray, boxes) || !boxes) return false;
+        for (int boxIndex = 0; boxIndex < boxCount; ++boxIndex) {
+            std::array<unsigned char, 0x70> record{};
+            const auto box = boxes + boxIndex * geometry::BoxStride;
+            reason = "hitbox record unavailable";
+            if (!MovementCopy(box, record.data(), record.size())) return false;
+            if (!Name(Field<std::uintptr_t>(record, geometry::BoneName), selected)) continue;
+            reason = "unsupported hitbox shape/space";
+            if (Field<std::uint8_t>(record, geometry::Shape) != geometry::CapsuleShape ||
+                Field<std::uint8_t>(record, geometry::TranslationOnly) ||
+                Field<std::uint8_t>(record, geometry::AlternateTransform)) return false;
+            AimCapsule capsule{};
+            const float radius = Field<float>(record, geometry::Radius);
+            reason = "invalid hitbox transform/radius";
+            if (!std::isfinite(radius) || radius <= 0 || radius > 10000 ||
+                !Transform(copied.pose, Field<AimVector>(record, geometry::Minimum), capsule.start) ||
+                !Transform(copied.pose, Field<AimVector>(record, geometry::Maximum), capsule.end)) return false;
+            capsule.radius = radius;
+            if (!std::isfinite(capsule.radius) || capsule.radius > 10000) return false;
+            copied.capsule = capsule;
+            copied.center = {(capsule.start.x + capsule.end.x) * .5f,
+                             (capsule.start.y + capsule.end.y) * .5f,
+                             (capsule.start.z + capsule.end.z) * .5f};
+            copied.mesh = mesh; copied.meshIndex = meshIndex; copied.meshMask = mask;
+            copied.setArray = setArray; copied.setCount = setCount;
+            copied.boxes = boxes; copied.boxCount = boxCount; copied.box = box; copied.record = record;
+            copied.valid = true;
+            reason = "geometry source changed";
+            if (!SilentAimTargetVolumeValid(source, target, copied)) return false;
+            volume = copied;
+            reason = "ready";
+            return true;
+        }
+    }
+    reason = "selected authored capsule unavailable";
+    return false;
+}
+
+bool SilentAimTargetVolumeValid(const AimSource& source, const AimTarget& target,
+                               const AimTargetVolume& volume) noexcept {
+    if (!volume.valid || volume.pawn != target.enemy.pawn || volume.model != target.enemy.model ||
+        volume.meshIndex < 0 || volume.meshIndex >= volume.meshCount || !SilentAimTargetValid(source, target) ||
+        target.enemy.boneIndex < 0 || volume.poseAddress != target.enemy.boneArray +
+            target.enemy.boneIndex * silent_aim_hitbox_offsets::BoneStride) return false;
+    int meshCount = 0, setCount = 0, boxCount = 0;
+    std::uintptr_t meshArray = 0, meshMasks = 0, mesh = 0, setArray = 0, boxes = 0;
+    std::uint64_t group = 0, mask = 0;
+    std::uint32_t storage = 0;
+    std::uintptr_t setName = 0;
+    std::uint8_t setIndex = 0;
+    std::array<float, 8> pose{};
+    std::array<unsigned char, 0x70> record{};
+    const auto set = volume.setArray + volume.setIndex * geometry::SetStride + geometry::SetValue;
+    return Read(target.enemy.model + geometry::MeshCount, meshCount) && meshCount == volume.meshCount &&
+        Read(target.enemy.model + geometry::MeshArray, meshArray) && meshArray == volume.meshArray &&
+        Read(target.enemy.model + geometry::MeshMasks, meshMasks) && meshMasks == volume.meshMasks &&
+        Read(target.enemy.scene + geometry::MeshGroup, group) && group == volume.meshGroup &&
+        Read(target.enemy.scene + geometry::HitboxSet, setIndex) && setIndex == volume.setIndex &&
+        Read(meshArray + volume.meshIndex * sizeof(mesh), mesh) && mesh == volume.mesh &&
+        Read(meshMasks + volume.meshIndex * sizeof(mask), mask) && mask == volume.meshMask &&
+        Read(mesh + geometry::SetCount, setCount) && setCount == volume.setCount &&
+        Read(mesh + geometry::SetStorage, storage) && (storage & 0x7FFFFFFF) &&
+        Read(mesh + geometry::SetArray, setArray) && setArray == volume.setArray &&
+        Read(set + geometry::SetName, setName) && Name(setName, "cstrike") &&
+        Read(set + geometry::BoxCount, boxCount) && boxCount == volume.boxCount &&
+        Read(set + geometry::BoxArray, boxes) && boxes == volume.boxes &&
+        MovementCopy(volume.poseAddress, pose.data(), sizeof(pose)) && pose == volume.pose &&
+        MovementCopy(volume.box, record.data(), record.size()) && record == volume.record &&
+        Name(Field<std::uintptr_t>(record, geometry::BoneName), SelectedName(target.hitbox));
 }

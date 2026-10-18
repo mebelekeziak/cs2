@@ -10,3 +10,6 @@ void MovementStop(const char* reason) noexcept;
 const char* MovementStatus() noexcept;
 // Drain bounded queued diagnostics on the render owner, outside command callbacks.
 void MovementFlushTelemetry() noexcept;
+// Native command owner only: regenerate CRC after cancelling an autofire
+// request whose original finalizer already ran. Calls the original directly.
+bool MovementRefinalizeCommand(void* input, void* command) noexcept;

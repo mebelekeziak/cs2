@@ -18,12 +18,14 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cwchar>
+#include <cstring>
 #include <algorithm>
 #include <cfloat>
 #include "esp_draw.h"
 #include "player_reader.h"
 #include "movement.h"
 #include "silent_aim.h"
+#include "aim_console.h"
 #include "anti_aim.h"
 #include "third_person.h"
 #include "zoom.h"
@@ -118,7 +120,13 @@ void FlushLog() {
     ReleaseSRWLockExclusive(&logLock);
 }
 
-void EspLog(const char* message) noexcept { Log("%s", message); }
+void EspLog(const char* message) noexcept {
+    Log("%s", message);
+    // Engine callbacks enqueue diagnostics; their render-owner drain reaches
+    // this sink without performing console or file I/O in those callbacks.
+    if (message && (std::strncmp(message, "AIM_", 4) == 0 || std::strstr(message, "] AIM_")))
+        AimConsoleWrite(message);
+}
 
 bool OpenLog(const wchar_t* suppliedPath) {
     // The remote caller owns the allocation until OverlayStart's thread exits.
@@ -244,6 +252,7 @@ void CleanupOnRenderThread(const char* reason) {
     WorldLightingSwitchesStop(reason);
     WorldLightingStop(reason);
     WorldEnvironmentLightingStop(reason);
+    AimConsoleStop();
     ReleaseRendererOnOwner(reason);
     stopped.store(true, std::memory_order_release);
     Log("STOPPED_RESIDENT reason=%s frames=%llu. Hooks/trampolines/DLL retained; physical unload unavailable.",
@@ -691,6 +700,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     Log("OverlayStart pid=%lu x64=%s ImGui=%s MinHook=1.3.4; no initialization in DllMain",
         GetCurrentProcessId(), sizeof(void*) == 8 ? "yes" : "no", IMGUI_VERSION);
     Log("UI_MODE %s", CS2_DIAGNOSTIC_UI ? "diagnostic" : "public");
+    const bool aimConsole = AimConsoleInitialize();
+    EspLog(aimConsole ? "AIM_CONSOLE_READY native developer console and workspace session log" :
+        "AIM_CONSOLE_UNAVAILABLE native export/build verification failed; workspace session log remains available");
     EspSetLogCallback(&EspLog);
     PlayerReaderSetLogCallback(&EspLog);
     MovementSetLogCallback(&EspLog);
@@ -735,7 +747,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         startState.store(-1); return 6;
     }
     if (movementPrepared) MovementActivate();
-    if (aimPrepared) SilentAimActivate();
+    if (aimPrepared) SilentAimActivate(movementPrepared);
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (thirdPersonPrepared) ThirdPersonActivate();
     if (zoomPrepared) ZoomActivate();

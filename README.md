@@ -3,7 +3,7 @@
 x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirteen
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all seventeen
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -406,19 +406,101 @@ pitch. All eleven binary checks pass in
 controlled during this repair. Restart CS2 normally before loading the rebuilt
 DLL through **Load Overlay.cmd**.
 
-## Basic silent aim
+## Silent aim, hitchance and autofire
 
 The **Aim** tab has an **Enable silent aim** checkbox, a **Hitbox** selector
 (**Head**, **Chest**, **Stomach**, **Pelvis**) and an angular **Aim FOV** slider
 (0.1–30 degrees). It starts **disabled**, with Chest and 5 degrees selected.
-**F10** toggles it while the client is foreground. Fire normally; it never
-presses attack. Menu visibility and ESP settings do not control aim acquisition.
+**F10** toggles it while the client is foreground. Menu visibility and ESP
+settings do not control aim acquisition.
+
+**Autofire** starts off. Enable it to request primary fire when the current
+estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
+ready. **Spread samples** controls the complete estimate (64–1024, initially
+256). All three controls save in local configs; older presets restore these
+defaults. Manual primary fire stays available at any threshold, including when
+the weapon or geometry cannot be modeled. Autofire does not suppress manual input.
+
+The estimator copies the selected region's authored `cstrike` capsule from the
+current enabled model mesh and hitbox set, transforms it with the current bone
+pose, and aims at its center. It samples both native spread components with
+independent uniform radii and angles, including the Negev's early-recoil radial
+law and the installed debug spread modes. A deterministic four-dimensional
+low-discrepancy sequence avoids changing the game's RNG and gives stable results
+for unchanged inputs. Every requested sample runs; the logged percentage is
+`hits / samples * 100`, including finite weapon range. This estimates intersection
+with the selected capsule, rather than any capsule on the enemy.
+
+Spread, inaccuracy, range and current predicted aim punch come from the current
+weapon's verified native model. Punch shifts the sampled cone; outgoing aim is
+not recoil compensated. The native punch query can update its own memoization
+cache. Snapshots are read on the native command owner, without accuracy-penalty
+updates or cached ESP/entity pointers. Authored geometry unavailable, unsupported
+shape/space, non-unit pose scale, stale sources or an invalid native model produce
+an unavailable estimate and prevent automatic fire. Manual aim falls back to the
+existing named bone landmark when authored geometry is unavailable.
+
+The verified firearm set covers single-projectile primary fire. Shotguns,
+revolver, taser, active burst mode, knives, grenades and unknown classes stay manual.
+Autofire checks native primary cooldown, ammo, reload, weapon-service cooldown,
+semi-auto release, freeze, defusing and local player state. It requests the shot
+before native command CRC finalization and anti aim, so anti aim yields normally.
+A scoped temporary input press asks the native history recorder to create its
+own attack record; the normal builder produces the serialized attack index.
+Temporary input events/held/index state are restored. Only the generated current
+command claims primary fire; no physical key or persistent attack latch is held.
+Rebuild cleanup preserves human takeover. If state or history changes before aim
+can be applied, the owned attack is cancelled and the original native finalizer
+regenerates its CRC. Native recorder arena/timing caches are not rewound.
+
+**Realtime debugging:** open CS2's developer console to see `AIM_HITCHANCE`
+records, mirrored in the existing `logs/overlay-<run>.log` session file. They
+include estimate validity, percentage, hit/sample counts, minimum, autofire,
+weapon, readiness, spread, inaccuracy, punch and decision/rejection reason.
+Estimates are bounded to five records per second; shot/decision transitions can
+report up to twenty. `AIM_FIRE_DIAGNOSTICS` and existing `AIM_DIAGNOSTICS` report
+cumulative counters about every two seconds. Hook callbacks enqueue bounded
+messages; their consumer performs file/console I/O. `AIM_CONSOLE_READY` confirms
+the native console sink; if unavailable, `AIM_CONSOLE_UNAVAILABLE` explains the
+file-only fallback. The game's console/logging policy controls native visibility.
+
+Hitchance is a current geometric estimate. It does not trace walls, predict
+damage/penetration, model other players as blockers, refresh animations or add
+lag compensation. A target behind a wall can still reach 100% and trigger
+autofire. Native shot-time interpolation, future recoil/spread changes and server
+timing can differ from this snapshot; the percentage is not measured hit
+registration. No live autofire or new hit-registration result is claimed.
+
+Contracts and rediscovery:
+[weapon model](tools/CS2_AIM_WEAPON_EVIDENCE.md),
+[authored geometry](tools/CS2_AIM_GEOMETRY_EVIDENCE.md),
+[native autofire](tools/CS2_AUTOFIRE_EVIDENCE.md),
+[console](tools/CS2_AIM_CONSOLE_EVIDENCE.md).
+
+**Verification, October 16, 2026:** public and diagnostic x64 Release builds
+succeed, with **31/31 CTest suites passing in each**. The new suites include
+143 estimator/geometry checks, 221 native-weapon snapshot checks, 52 autofire
+command checks, 53 integrated command-pipeline checks, console formatting/stop,
+atomic settings publication and real menu/config interactions. Tests cover
+thresholds, native shot construction, stale state, manual takeover, disable,
+focus loss, cooperative stop, cancellation and CRC regeneration. All seventeen
+installed-file verifiers pass in
+`logs/compatibility/20261016T164801935369Z/`; 60 deliberately incorrect new
+contracts were rejected across the four new verifiers. The software D3D11 Aim
+preview was inspected in `logs/hitchance-menu.bmp`. Both DLLs retain zero static
+TLS and delay imports. These are static and standalone checks; live autofire,
+native console visibility and hit registration remain unobserved.
+
+Restart CS2 normally before loading the new DLL through **Load Overlay.cmd**
+if a previous copy is resident. Open **Aim**, enable silent aim, set the minimum
+and sample count, then enable **Autofire** in the authorized offline/private
+environment. Stopped code remains resident until normal process exit.
 
 The command callback selects the alive, non-dormant enemy whose selected point
 is closest to the shot's native view direction within the FOV. Each selected
 body region resolves its animated bone by name on the current model: `head_0`,
-`spine_3`, `spine_2`, `pelvis`. These are bone landmarks, not authored hitbox
-volume centers. Missing names, unsupported skeletons or unavailable cached poses
+`spine_3`, `spine_2`, `pelvis`. These establish region acquisition; an available
+authored capsule then supplies its center. Missing names, unsupported skeletons or unavailable cached poses
 skip that player. There are no fixed bone indices or collision-hull fallbacks.
 The reader uses the latest cached world pose and copied live eye offset; it
 does not force animation refresh, mirror native eye interpolation or add lag
@@ -428,16 +510,15 @@ A separate verified input-history hook calls the original builder first, then
 updates existing history angle messages for primary-fire input. A native attack
 index handles short taps; held primary fire also updates the history consumed
 by CS2's retained/interpolated continuation path. Native attack indices, button
-states, timestamps, base/camera angles, movement and movement CRC stay unchanged.
-No history messages or attacks are synthesized, and secondary fire is outside
-this implementation. Previously retained native history can affect boundary
+states, timestamps, base/camera angles, movement and movement CRC stay unchanged
+for manual shots. Autofire adds only its owned native attack request before CRC
+generation as described above; secondary fire is outside this implementation.
+Previously retained native history can affect boundary
 shots when enabling, disabling, stopping or changing targets; it is not
 rewritten retroactively.
 
-No hitchance, damage/minimum-damage, autowall, penetration, visibility tracing,
-recoil compensation, spread correction, automatic shooting or rage systems are
-included. An enemy behind a wall can be selected; walls, spread, recoil and the
-server's timing/rules can prevent a hit.
+Damage/minimum-damage, autowall, penetration, visibility tracing, recoil
+compensation and spread correction are outside this implementation.
 
 The existing build and **Load Overlay.cmd** workflows include this feature.
 Restart CS2 normally before loading if an older DLL remains resident. End and

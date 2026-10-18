@@ -1,6 +1,8 @@
 #pragma once
 #include "silent_aim_math.h"
 #include "silent_aim_settings.h"
+#include "aim_hitchance.h"
+#include <array>
 #include <cstdint>
 
 struct AimSource { std::uintptr_t system = 0, controller = 0, pawn = 0; };
@@ -10,8 +12,26 @@ struct AimActor {
     std::uintptr_t skeletonVtable = 0, skeletonQuery = 0;
     std::uint32_t controllerHandle = UINT32_MAX, pawnHandle = UINT32_MAX;
     std::uint8_t team = 0;
+    int boneIndex = -1;
 };
-struct AimTarget { AimActor local{}, enemy{}; AimSolution solution{}; };
+struct AimTarget {
+    AimActor local{}, enemy{};
+    AimSolution solution{};
+    AimVector eye{}, point{};
+    AimHitbox hitbox = AimHitbox::Chest;
+};
+struct AimTargetVolume {
+    AimCapsule capsule{};
+    AimVector center{};
+    std::uintptr_t pawn = 0, model = 0, poseAddress = 0;
+    std::uintptr_t meshArray = 0, meshMasks = 0, mesh = 0, setArray = 0, boxes = 0, box = 0;
+    std::uint64_t meshGroup = 0, meshMask = 0;
+    std::array<unsigned char, 0x70> record{};
+    std::array<float, 8> pose{};
+    int meshCount = 0, meshIndex = -1, setCount = 0, boxCount = 0;
+    std::uint8_t setIndex = 0;
+    bool valid = false;
+};
 using AimBoneLookup = int (*)(void*, const char*);
 struct AimBoneContext { std::uintptr_t client = 0; AimBoneLookup lookup = nullptr; };
 struct AimTargetDiagnostics {
@@ -30,3 +50,10 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
                            const AimBoneContext& bones, AimTarget& target,
                            AimTargetDiagnostics* diagnostics = nullptr) noexcept;
 bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noexcept;
+// Reads the authored capsule attached to the selected landmark in the current
+// enabled mesh/current hitbox set, then transforms its endpoints by copied pose.
+// Missing or unsupported geometry leaves manual landmark targeting available.
+bool SilentAimReadTargetVolume(const AimSource& source, const AimTarget& target,
+                              AimTargetVolume& volume, const char*& reason) noexcept;
+bool SilentAimTargetVolumeValid(const AimSource& source, const AimTarget& target,
+                               const AimTargetVolume& volume) noexcept;

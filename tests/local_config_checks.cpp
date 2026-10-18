@@ -65,6 +65,8 @@ int main() {
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
+    Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\n") != std::string::npos,
+        "default preset saves autofire off and hitchance controls");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
     Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\n") != std::string::npos,
@@ -93,7 +95,8 @@ int main() {
     for (unsigned c = 0; c < std::size(worldColors); ++c)
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
-    SilentAimSetSettings({true, 12.34f, AimHitbox::Pelvis});
+    const SilentAimSettings expectedAim{true, 12.34f, AimHitbox::Pelvis, true, 73.25f, 512};
+    SilentAimSetSettings(expectedAim);
     AntiAimSetSettings({true});
     const ThirdPersonSettings expectedCamera{true, 173.25f, -21.5f, 17.75f, false};
     ThirdPersonSetSettings(expectedCamera);
@@ -110,6 +113,7 @@ int main() {
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
+    Expect(SilentAimGetSettings() == expectedAim, "aim, autofire, threshold and sample count roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
     const auto loadedWorld = WorldGetSettings();
@@ -146,6 +150,8 @@ int main() {
         "version=2\n", "esp.enabled=1\n", "version=1\nversion=1\n", "version=1\nesp.enabled=true\n",
         "version=1\nesp.boxThickness=nan\n", "version=1\nworld.tint.1=0.5junk\n",
         "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n",
+        "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
+        "version=1\naim.hitchance=25\naim.hitchance=75\n",
         "version=1\nanti_aim.enabled=true\n", "version=1\nanti_aim.enabled=2\n",
         "version=1\ncamera.enabled=true\n", "version=1\ncamera.collision=2\n",
         "version=1\ncamera.distance=nan\n", "version=1\ncamera.shoulder=inf\n",
@@ -163,6 +169,8 @@ int main() {
         SilentAimGetSettings().fov == 30 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
     Expect(!AntiAimGetSettings().enabled, "older presets without anti aim explicitly restore disabled default");
+    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
+        SilentAimGetSettings().samples == 256, "older presets restore autofire off and hitchance defaults");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
     Write(badPath, "version=1\nzoom.enabled=1\nzoom.zoom1=-999\nzoom.zoom2=999\n");

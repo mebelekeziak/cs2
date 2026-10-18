@@ -2,6 +2,7 @@
 #include "silent_aim_offsets.h"
 #include "movement_offsets.h"
 #include "movement_memory.h"
+#include "aim_autofire_offsets.h"
 #include <cmath>
 #include <cstring>
 
@@ -17,6 +18,19 @@ bool Valid(const AimAngles& value) noexcept {
     return std::isfinite(value.pitch) && std::isfinite(value.yaw) && std::isfinite(value.roll) &&
         std::abs(value.pitch) <= 89 && std::abs(value.yaw) <= 360 && value.roll == 0;
 }
+}
+
+bool SilentAimReadView(std::uintptr_t command, AimAngles& view) noexcept {
+    std::uintptr_t base = 0, angles = 0;
+    std::uint32_t presence = 0;
+    AimAngles current{};
+    if (!Read(command + movement_offsets::command::Base, base) || !base ||
+        !Read(base + movement_offsets::base::Angles, angles) || !angles ||
+        !Read(angles + off::angle::Presence, presence) ||
+        (presence & off::angle::AllPresent) != off::angle::AllPresent ||
+        !Read(angles + off::angle::Pitch, current) || !Valid(current)) return false;
+    view = current;
+    return true;
 }
 
 bool SilentAimReadShot(std::uintptr_t command, AimShot& shot, AimCommandDiagnostics* diagnostics) noexcept {
@@ -95,4 +109,231 @@ bool SilentAimWriteShot(const AimShot& shot, const AimAngles& angles) noexcept {
     for (int i = 0; i < shot.count; ++i)
         std::memcpy(reinterpret_cast<void*>(shot.history[static_cast<std::size_t>(i)].angles + off::angle::Pitch), &angles, sizeof(angles));
     return true;
+}
+
+namespace {
+namespace fire = aim_autofire_offsets;
+template<class T> void Store(std::uintptr_t address, const T& value) noexcept {
+    std::memcpy(reinterpret_cast<void*>(address), &value, sizeof(value));
+}
+bool SameAttack(const MovementButtons& left, const MovementButtons& right) noexcept {
+    return !((left.down ^ right.down) & fire::PrimaryAttack) &&
+        !((left.changed ^ right.changed) & fire::PrimaryAttack) &&
+        !((left.third ^ right.third) & fire::PrimaryAttack);
+}
+bool HasAttack(const MovementButtons& buttons) noexcept {
+    return ((buttons.down | buttons.changed | buttons.third) & fire::PrimaryAttack) != 0;
+}
+bool PhysicalPrimary(std::uintptr_t input, bool& physical) noexcept {
+    MovementButtons buttons{};
+    int events = 0;
+    std::uint8_t held = 0;
+    if (!Read(input + fire::InputNativeButtons, buttons) ||
+        !Read(input + fire::InputEventCount, events) || events < 0 || events > fire::InputEventCapacity ||
+        !Read(input + fire::InputPrimaryHeld, held)) return false;
+    physical = HasAttack(buttons) || held != 0;
+    for (int index = 0; index < events && !physical; ++index) {
+        std::uint64_t button = 0;
+        if (!Read(input + fire::InputEvents + index * fire::InputEventStride + fire::EventButton, button)) return false;
+        physical = (button & fire::PrimaryAttack) != 0;
+    }
+    return true;
+}
+}
+
+bool SilentAimStartAutofire(std::uintptr_t input, std::uintptr_t command,
+    AimRecordHistoryFn record, AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics) noexcept {
+    AimAutofireDiagnostics observed{};
+    const auto fail = [&](const char* reason) noexcept {
+        observed.reason = reason;
+        if (diagnostics) *diagnostics = observed;
+        return false;
+    };
+    if (patch.active) return fail("previous_request_still_owned");
+    if (!record) return fail("native_recorder_missing");
+    AimAutofirePatch next{};
+    next.input = input; next.command = command;
+    std::uint8_t held = 0;
+    if (!Read(command + movement_offsets::command::Sequence, next.sequence) || next.sequence <= 0 ||
+        !Read(command + movement_offsets::command::Buttons, next.before) ||
+        !Read(command + off::command::Presence, next.originalCommandPresence) ||
+        !Read(command + off::command::Attack1Index, next.originalCommandIndex))
+        return fail("command_unreadable");
+    observed.sequence = next.sequence;
+    if (HasAttack(next.before) || ((next.originalCommandPresence & off::command::Attack1Present) &&
+        next.originalCommandIndex >= 0)) return fail("manual_primary_preserved");
+    if (!Read(input + fire::InputEventCount, observed.events) || observed.events < 0 ||
+        observed.events >= fire::InputEventCapacity ||
+        !Read(input + fire::InputEventsProcessed, observed.processed) || observed.processed < 0 ||
+        observed.processed > observed.events ||
+        !Read(input + fire::InputPrimaryHeld, held) ||
+        !Read(input + fire::InputPrimaryIndex, next.originalInputIndex))
+        return fail("input_layout_unavailable");
+    if (held || next.originalInputIndex != -1) return fail("native_primary_preserved");
+    bool physical = false;
+    if (!PhysicalPrimary(input, physical)) return fail("physical_input_unreadable");
+    if (physical) return fail("physical_primary_preserved");
+    // Any physical primary event wins, including a completed intra-frame tap.
+    for (int index = 0; index < observed.events; ++index) {
+        std::uint64_t button = 0;
+        if (!Read(input + fire::InputEvents + index * fire::InputEventStride + fire::EventButton, button))
+            return fail("input_event_unreadable");
+        if (button & fire::PrimaryAttack) return fail("physical_primary_event_preserved");
+    }
+    const auto event = input + fire::InputEvents + observed.events * fire::InputEventStride;
+    std::array<unsigned char, fire::InputEventStride> beforeEvent{}, press{};
+    if (!MovementCopy(event, beforeEvent.data(), beforeEvent.size()) ||
+        !MovementOwnedWritable(event, beforeEvent.size()) ||
+        !MovementOwnedWritable(input + fire::InputEventCount, sizeof(int)) ||
+        !MovementOwnedWritable(input + fire::InputEventsProcessed, sizeof(int)) ||
+        !MovementOwnedWritable(input + fire::InputPrimaryHeld, sizeof(held)) ||
+        !MovementOwnedWritable(input + fire::InputPrimaryIndex, sizeof(int)) ||
+        !MovementOwnedWritable(command + movement_offsets::command::Buttons, sizeof(MovementButtons)) ||
+        !MovementOwnedWritable(command + off::command::Presence, sizeof(std::uint32_t)) ||
+        !MovementOwnedWritable(command + off::command::Attack1Index, sizeof(int)))
+        return fail("request_storage_not_writable");
+    const std::uint64_t primary = fire::PrimaryAttack;
+    std::memcpy(press.data() + fire::EventButton, &primary, sizeof(primary));
+    press[fire::EventPressed] = 1;
+    std::memcpy(reinterpret_cast<void*>(event), press.data(), press.size());
+    const int temporaryCount = observed.events + 1;
+    Store(input + fire::InputEventCount, temporaryCount);
+    record(reinterpret_cast<void*>(input), 0);
+    const bool nativeReadable = Read(input + fire::InputPrimaryIndex, observed.nativeIndex) &&
+        Read(input + fire::InputHistoryCount, observed.nativeHistory);
+    // The call is synchronous on the input owner. Remove our entire temporary
+    // event and restore pre-call scan/held state before invoking other code.
+    std::memcpy(reinterpret_cast<void*>(event), beforeEvent.data(), beforeEvent.size());
+    Store(input + fire::InputEventCount, observed.events);
+    Store(input + fire::InputEventsProcessed, observed.processed);
+    Store(input + fire::InputPrimaryHeld, held);
+    observed.inputRestored = true;
+    if (!nativeReadable || observed.nativeIndex < 0 || observed.nativeIndex >= observed.nativeHistory) {
+        Store(input + fire::InputPrimaryIndex, next.originalInputIndex);
+        return fail("native_attack_history_unavailable");
+    }
+    MovementButtons current{};
+    int sequence = 0;
+    if (!Read(command + movement_offsets::command::Sequence, sequence) || sequence != next.sequence ||
+        !Read(command + movement_offsets::command::Buttons, current) || !SameAttack(current, next.before)) {
+        Store(input + fire::InputPrimaryIndex, next.originalInputIndex);
+        return fail("command_changed_during_record");
+    }
+    next.applied = current;
+    next.applied.down |= primary; next.applied.changed |= primary;
+    next.applied.third &= ~primary;
+    next.nativeIndex = observed.nativeIndex; next.eventCount = observed.events;
+    next.active = true; next.inputPending = true;
+    Store(command + movement_offsets::command::Buttons, next.applied);
+    patch = next;
+    observed.reason = "requested"; observed.requested = true;
+    if (diagnostics) *diagnostics = observed;
+    return true;
+}
+
+bool SilentAimFinishAutofireHistory(AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics) noexcept {
+    if (diagnostics) {
+        *diagnostics = {};
+        diagnostics->sequence = patch.sequence;
+        diagnostics->nativeIndex = patch.nativeIndex;
+        diagnostics->requested = patch.active;
+    }
+    const auto report = [&](const char* reason, bool restored) noexcept {
+        if (diagnostics) {
+            diagnostics->reason = reason; diagnostics->inputRestored = restored;
+            diagnostics->sequence = patch.sequence;
+        }
+        return restored;
+    };
+    if (!patch.active || !patch.inputPending) return report("input_already_restored", true);
+    int events = 0, currentIndex = -1;
+    std::uint8_t held = 0;
+    bool physical = false;
+    if (!Read(patch.input + fire::InputEventCount, events) || events != patch.eventCount ||
+        !Read(patch.input + fire::InputPrimaryHeld, held) || held ||
+        !Read(patch.input + fire::InputPrimaryIndex, currentIndex) ||
+        !PhysicalPrimary(patch.input, physical) || physical ||
+        !MovementOwnedWritable(patch.input + fire::InputPrimaryIndex, sizeof(int)))
+        return report("input_changed_before_restore", false);
+    // Native history thinning can remap our input index to zero. The event
+    // list and held state above establish that no physical primary took over.
+    Store(patch.input + fire::InputPrimaryIndex, patch.originalInputIndex);
+    patch.inputPending = false;
+    return report("input_restored", true);
+}
+
+bool SilentAimCancelAutofire(AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics) noexcept {
+    if (diagnostics) *diagnostics = {};
+    if (!patch.active) {
+        if (diagnostics) { diagnostics->reason = "no_owned_request"; diagnostics->commandRestored = true; }
+        return true;
+    }
+    const bool inputRestored = SilentAimFinishAutofireHistory(patch, diagnostics);
+    bool physical = false;
+    if (!PhysicalPrimary(patch.input, physical) || physical) {
+        if (diagnostics) diagnostics->reason = physical ? "manual_primary_takeover" : "physical_input_unreadable";
+        return false;
+    }
+    MovementButtons current{};
+    int sequence = 0;
+    std::uint32_t presence = 0;
+    if (!Read(patch.command + movement_offsets::command::Sequence, sequence) || sequence != patch.sequence ||
+        !Read(patch.command + movement_offsets::command::Buttons, current) || !SameAttack(current, patch.applied) ||
+        !Read(patch.command + off::command::Presence, presence) ||
+        !MovementOwnedWritable(patch.command + movement_offsets::command::Buttons, sizeof(current)) ||
+        !MovementOwnedWritable(patch.command + off::command::Presence, sizeof(presence)) ||
+        !MovementOwnedWritable(patch.command + off::command::Attack1Index, sizeof(int))) {
+        if (diagnostics) diagnostics->reason = "command_changed_before_cancel";
+        return false;
+    }
+    const auto restore = [](std::uint64_t currentBits, std::uint64_t beforeBits) noexcept {
+        return (currentBits & ~fire::PrimaryAttack) | (beforeBits & fire::PrimaryAttack);
+    };
+    current.down = restore(current.down, patch.before.down);
+    current.changed = restore(current.changed, patch.before.changed);
+    current.third = restore(current.third, patch.before.third);
+    presence = (presence & ~off::command::Attack1Present) |
+        (patch.originalCommandPresence & off::command::Attack1Present);
+    Store(patch.command + movement_offsets::command::Buttons, current);
+    Store(patch.command + off::command::Presence, presence);
+    Store(patch.command + off::command::Attack1Index, patch.originalCommandIndex);
+    if (diagnostics) {
+        diagnostics->reason = inputRestored ? "request_cancelled" : "command_cancelled_input_changed";
+        diagnostics->commandRestored = true;
+    }
+    if (inputRestored) patch = {};
+    return inputRestored;
+}
+
+bool SilentAimRestoreAutofireRebuild(std::uintptr_t input, std::uintptr_t command,
+    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics) noexcept {
+    if (diagnostics) *diagnostics = {};
+    if (!patch.active) return true;
+    int sequence = 0;
+    if (input != patch.input || command != patch.command ||
+        !Read(command + movement_offsets::command::Sequence, sequence) || sequence != patch.sequence) {
+        patch = {};
+        if (diagnostics) diagnostics->reason = "stale_ownership_abandoned";
+        return true;
+    }
+    MovementButtons buttons{};
+    bool physical = false;
+    if (!Read(command + movement_offsets::command::Buttons, buttons) ||
+        !PhysicalPrimary(input, physical)) {
+        if (diagnostics) diagnostics->reason = "rebuild_source_unreadable";
+        return false;
+    }
+    if (physical) {
+        // The current command now belongs to native physical input. There is
+        // no safe synthetic-primary bit to remove, even if its mask matches.
+        patch = {};
+        if (diagnostics) diagnostics->reason = "manual_primary_takeover";
+        return true;
+    }
+    if (!SameAttack(buttons, patch.applied)) {
+        patch = {};
+        if (diagnostics) diagnostics->reason = "native_primary_rebuilt";
+        return true;
+    }
+    return SilentAimCancelAutofire(patch, diagnostics);
 }

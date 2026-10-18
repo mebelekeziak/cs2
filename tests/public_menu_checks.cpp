@@ -403,6 +403,11 @@ int main() {
     Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
            "Aim tab opens with silent aim disabled");
     Expect(!AntiAimGetSettings().enabled, "Aim tab opens with anti aim disabled");
+    ClickControl("Autofire");
+    ClickControl("##AimHitchance", 0.9f);
+    ClickControl("##AimSamples", 0.9f);
+    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256,
+           "disabled aim master blocks autofire and hitchance edits");
     ClickControl("##AimFov", 0.8f);
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
@@ -415,6 +420,13 @@ int main() {
         SelectEspCombo("##AimHitbox", name, static_cast<int>(hitbox));
         Expect(SilentAimGetSettings().hitbox == hitbox, "hitbox selector publishes selected body region");
     }
+    ClickControl("Autofire");
+    ClickControl("##AimHitchance", 0.75f);
+    ClickControl("##AimSamples", 0.8f);
+    Expect(SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance > 60 && SilentAimGetSettings().samples > 700,
+           "autofire threshold and sample count respond to real mouse input");
+    ClickControl("Autofire");
+    Expect(!SilentAimGetSettings().autofire, "autofire checkbox turns automatic primary attack off independently");
     ClickControl("Enable silent aim");
     Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
            "silent aim changes preserve independent ESP settings");
@@ -631,6 +643,7 @@ int main() {
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
     const auto savedZoom = ZoomGetSettings();
+    const auto savedAim = SilentAimGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -639,10 +652,11 @@ int main() {
     AntiAimSetSettings({false});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    SilentAimSetSettings({});
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera &&
-           ZoomGetSettings() == savedZoom,
-           "Load button restores saved appearance, anti aim, camera and scoped zoom settings");
+           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim,
+           "Load button restores appearance, aim, hitchance, anti aim, camera and scoped zoom settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);

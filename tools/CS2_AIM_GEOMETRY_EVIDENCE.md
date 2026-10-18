@@ -1,0 +1,142 @@
+# Authored capsule geometry and sampled hitchance
+
+Inspected October 16, 2026, Windows AMD64 client 1.41.9.1. This is installed-file
+evidence and synthetic verification; no new live client run is claimed.
+
+The installed client is
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`,
+SHA-256 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`.
+The matching `game\bin\win64\animationsystem.dll` SHA-256 is
+`fb2b4cd71468e880c3b3845e8e7a18c9d550dd3c4504e4a257a2110fb91c1235`.
+The layouts below are checked by `python tools/inspect_aim_geometry.py`.
+
+## Current resource ownership
+
+The existing target reader resolves the pawn's current model and dynamically
+looks up the selected bone name. The geometry reader then follows that same
+model's current enabled meshes and the skeleton's selected hitbox-set index.
+It reads resource records and an already available pose; it calls no allocation,
+animation-refresh, collision, resource-load or model methods.
+
+Native model helper `client+0x1773030` has three inputs: model, hitbox-set index,
+and mesh index. Its complete frozen body establishes these relationships:
+
+| Resource/member | Offset or stride | Independent evidence |
+| --- | --- | --- |
+| Model mesh count / array | `+0x70` / `+0x78` | Signed bounds checks and indexed mesh read in `0x1773030` |
+| Model mesh-group masks | `+0x90` | Native enabled-mesh test `0x17737F0..0x17737FB` |
+| Skeleton mesh-group mask | `+0x348` | Named `CSkeletonInstance::m_modelState=0x140` plus `CModelState::m_MeshGroupMask=0x208`; native gather reads `skeleton+0x348` |
+| Skeleton hitbox-set index | `+0x3FC`, byte | Named `m_nHitboxSet`; native wrapper `0xAADFA0` |
+| Mesh set count / storage flags / array | `+0x174` / `+0x164` / `+0x168` | Complete model helper and native gather |
+| Mesh set-map entry stride / value | `0x48` / `+0x18` | Helper's `9*index*8+3*8` address calculation |
+| Set name / box count / box array | `+0` / `+0x10` / `+0x18` | Named `CHitBoxSet` and native gather operands |
+| Hitbox stride | `0x70` | Named `CHitBox` size and gather increment `0x1773D8C` |
+| Bone-name pointer | `+0x10` | Named `CHitBox::m_sBoneName` |
+| Endpoints / radius | `+0x18` / `+0x24` / `+0x30` | Named bounds/radius schema and native capsule consumer |
+| Shape / translation-only flag | `+0x3C` / `+0x3D` | Named shape/translation schema and native transform branches |
+| Alternate-transform flag | `+0x4A` | Native `0xAB0D38` branches to an alternate scene/local-transform path |
+
+Exact named schema registrations in `animationsystem.dll`:
+
+| Class | Registration | Field array | Field count | Size |
+| --- | --- | --- | --- | --- |
+| `CHitBox` | `0x81D848` | `0x81D6A0` | 13 | `0x70` |
+| `CHitBoxSet` | `0x81D948` | `0x81D8C0` | 4 | `0x30` |
+
+The reader requires the current set name `cstrike`, the selected bone name and
+native shape **2**. The native consumer at `0xCA10D8` selects shape 2, reads
+both authored bounds as endpoints, rotates/scales/translates them by the bone
+transform, and reads the shape radius at `0xCA134F`. These bounds are capsule
+endpoint centers rather than the opposite corners of an AABB. They need not
+be numerically ordered on each axis.
+
+The supported path is a bone-space capsule with translation-only and alternate
+transform flags clear. Native `0xAB0E15` obtains the selected bone's cached
+32-byte world transform in that case. Other spaces/shapes are unavailable.
+The native capsule consumer transforms endpoints using pose scale but reads
+the radius directly. This implementation therefore requires pose scale exactly
+1; it does not invent radius behavior for scaled player models. Quaternion
+values must be finite and already normalized to within 0.001 squared norm.
+
+Every volume contains copied geometry, pose and resource identity. Before use
+and commit it rechecks full pawn/controller identity, model/pose ownership,
+local eye and selected point, mesh count/array/masks, enabled group, current set,
+set storage, box array/count, selected record bytes and selected-name strings.
+In-place pose/record changes invalidate the copy, including changes retaining
+the same allocation pointer. Missing geometry preserves ordinary manual
+landmark selection while making hitchance and automatic fire unavailable.
+
+## Installed authored example
+
+The real player resources are under `agents/models/`; similarly named
+`characters/models/` resources are small dummy models in this installation.
+The installed asset `agents/models/ctm_sas/ctm_sas.vmdl_c`, extracted read-only
+from `game/csgo/pak01_dir.vpk`, has SHA-256
+`7312ab88d05bea67b06f3a945d06dc1e5fc5511d4849bc05bc05aec25380eb22`.
+Its embedded `MDAT` blocks contain `m_hitboxsets` named `cstrike`.
+
+| Selected bone | Endpoint A | Endpoint B | Radius | Shape |
+| --- | --- | --- | --- | --- |
+| `head_0` | `(-1, 1.8, 0)` | `(3.5, 0.2, 0)` | 4.3 | 2 |
+| `spine_3` | `(2.5, -0.6, -6)` | `(2.5, -0.6, 6)` | 5 | 2 |
+| `spine_2` | `(4.8, 0.15, -4.1)` | `(4.8, 0.15, 4.1)` | 6.2 | 2 |
+| `pelvis` | `(-2.7, 1.1, -3.2)` | `(-2.7, 1.1, 3.2)` | 6 | 2 |
+
+These example values are documentation only. Runtime code reads the selected
+current model's authored values, without a static radius or model-name table.
+Reproduce the original metadata dump with the already retained official
+[ValveResourceFormat 20.0 CLI](https://github.com/ValveResourceFormat/ValveResourceFormat/releases/tag/20.0):
+
+```powershell
+python tools/material_vpk_probe.py 'C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game/csgo/pak01_dir.vpk' --extract agents/models/ctm_sas/ctm_sas.vmdl_c --out logs/research/ctm_sas_agent.vmdl_c
+.\logs\research\vrf20\Source2Viewer-CLI.exe -i logs/research/ctm_sas_agent.vmdl_c --all > logs/research/ctm_sas_agent-all.txt
+```
+
+The tool's existing MIT LICENSE remains beside its executable. No VRF code,
+game asset or research-only dependency was added to the runtime or build.
+
+## Probability model and scope
+
+`AimEstimateHitchance` evaluates every requested sample against the copied
+selected capsule and current finite weapon range. It uses four deterministic
+Halton dimensions (bases 2, 3, 5 and 7) to integrate two independent uniform
+radii and two independent uniform angles. There is no `sqrt(U)` radial
+conversion: that would model a uniform-area disk, disagreeing with the native
+shot distribution. Native Negev early-recoil radius shaping and maximum-radius
+and fixed-angle overrides are modeled; the weapon reader documents and checks
+the supported weapon/model contracts separately.
+
+Each raw shot direction is `forward + right*x + up*y`. The native consumer
+at `0x887F04..0x887F20` multiplies that raw vector by weapon range without
+normalizing it. The estimator preserves that native endpoint: its geometric
+solver normalizes the direction and uses `range * length(raw direction)` as
+the world segment length. Capsule intersection minimizes squared distance between
+that segment and the capsule's endpoint segment, including their interior
+stationary point and all four constrained edges. It handles endcaps, tangency,
+parallel axes, degenerate sphere capsules, origins inside a shape and weapon
+range ending before the shape. Recoil can carry the shot pitch beyond view
+pitch limits, so the estimator accepts finite direction angles through 360
+degrees.
+
+The displayed percentage is a finite-sample estimate of intersecting **the
+selected capsule** in the currently copied pose. Its numerical increment is
+`100/sample count` percentage points. It is not a binomial confidence interval
+or a guarantee, and it does not reproduce actual native seed choices. Other
+player hitboxes, occlusion, penetration, damage, motion between sampling and
+impact, pending pose refresh and server lag compensation are outside this
+geometric estimate. An obstruction can prevent damage even when geometric
+hitchance is high.
+
+## Verification
+
+`aim_hitchance_checks` covers analytic sphere silhouettes with uniform radial
+sampling, independent fixed-radius angular convolution, Negev's do-while
+boundaries and override ordering. A dense independent 512-by-512 radius /
+relative-angle CDF integration checks the four-dimensional sampler. Synthetic
+resource fixtures exercise authored endpoint transforms, selected-name and
+current-set lookup, unsupported spaces/scales and stale state. Existing
+`silent_aim_checks` also remains passing with its original target fixtures.
+
+The new suite passes **143 checks**; no observed runtime accuracy or server
+damage rate is claimed. Static header/native negative checks are recorded in
+`logs/research/aim-geometry-negative.json`.

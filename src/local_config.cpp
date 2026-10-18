@@ -50,6 +50,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     COLOR(world, sunLightTint); FIELD(world, sunLightBrightness); FIELD(world, ambientLightEnabled);
     COLOR(world, ambientLightTint); FIELD(world, ambientLightBrightness); FIELD(world, directionalLightmapsMode);
     FIELD(aim, enabled); FIELD(aim, fov); FIELD(aim, hitbox);
+    FIELD(aim, autofire); FIELD(aim, hitchance); FIELD(aim, samples);
     FIELD(anti_aim, enabled);
     FIELD(camera, enabled); FIELD(camera, distance); FIELD(camera, shoulder);
     FIELD(camera, height); FIELD(camera, collision);
