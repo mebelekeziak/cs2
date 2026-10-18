@@ -184,7 +184,7 @@ bool AntiAimPrepare(AntiAimLogCallback callback) noexcept {
         State("anti aim replay hook preparation failed"); return false;
     }
     prepared = true; State("awaiting anti aim activation");
-    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=3 copied_command_history; command finalizer integration; input replay slot=8; yaw=view+180 pitch=89 downward; physical input/history retained");
+    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=4 configurable_command_patterns; command finalizer integration; input replay slot=8; physical input/history retained");
     return true;
 }
 void AntiAimActivate(bool commandHookReady) noexcept {
@@ -247,7 +247,8 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
     AimAngles physicalView{};
     if (Identity(input) && !commandRestoreRejected) {
         if (Foreground() && (GetAsyncKeyState(VK_END) & 0x8000)) { stopped = true; active.store(false, std::memory_order_release); }
-        const bool enabled = active.load(std::memory_order_acquire) && AntiAimGetSettings().enabled && Foreground();
+        const auto options = AntiAimGetSettings();
+        const bool enabled = active.load(std::memory_order_acquire) && options.enabled && Foreground();
         if (enabled || ingestedEdited) {
             Source current{};
             const auto address = reinterpret_cast<std::uintptr_t>(command);
@@ -272,20 +273,20 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                     if (!(historyButtons.down & (movement_offsets::Left | movement_offsets::Right))) historicalLeft = 0;
                     float physicalForward = historicalForward, physicalLeft = historicalLeft;
                     if (ingestedEdited && services == ingestedServices) {
-                        const auto physical = AntiAimCorrectBackwardsMovement(ingestedPhysical, historicalForward, historicalLeft);
+                        const auto physical = AntiAimCorrectWalkMovement(ingestedOutgoing, ingestedPhysical, historicalForward, historicalLeft);
                         if (physical.valid) { physicalForward = physical.forward; physicalLeft = physical.left; }
                     }
                     Source walking{};
                     const bool historyReady = ingestedBasisKnown || !protectReplay;
                     const bool transform = enabled && historyReady && ReadSource(walking, true) && walking == current && !Action(address);
-                    if (transform) entry.valid = AntiAimApplyCommand(address, entry.patch, &reason, &commandDiagnostics);
+                    if (transform) entry.valid = AntiAimApplyCommand(address, entry.patch, options, &reason, &commandDiagnostics);
                     float targetForward = physicalForward, targetLeft = physicalLeft;
                     if (entry.valid) {
-                        const auto outgoing = AntiAimCorrectBackwardsMovement(entry.patch.originalView, physicalForward, physicalLeft);
+                        const auto outgoing = AntiAimCorrectWalkMovement(entry.patch.originalView, entry.patch.editedView, physicalForward, physicalLeft);
                         targetForward = outgoing.forward; targetLeft = outgoing.left;
                     }
-                    // Fixed backwards movement is an exact sign permutation:
-                    // steady held input needs no repeated handoff or epsilon.
+                    // Re-express the ingested physical axes in this command's
+                    // outgoing basis, including mode changes and passthrough.
                     const float deltaForward = targetForward - historicalForward, deltaLeft = targetLeft - historicalLeft;
                     if ((deltaForward != 0 || deltaLeft != 0) && !AntiAimAppendBoundary(address, deltaForward, deltaLeft,
                         client + movement_offsets::AllocateSubtick, client + movement_offsets::AddAllocatedSubtick, entry.boundary, &reason)) {
@@ -304,7 +305,7 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                         publishedEdit = true; physicalView = entry.patch.originalView;
                         lastEditedSequence = sequence; lastOutgoingView = entry.patch.editedView;
                         lastOutgoingPresence = entry.patch.editedAnglePresence;
-                        State("backwards; local view preserved");
+                        State("configured angles; local view preserved");
                     } else if (transform) { ++rejected; State(reason ? reason : "unsupported command; unchanged"); }
                     else State(!historyReady ? "unrecognized historical command; physical passthrough" : stopped ? "stopped; physical movement handoff" : enabled ? "attack/movement passthrough" : "disabled; physical movement handoff");
                     if (entry.boundary.valid && entry.boundary.appended) ++boundaryEdits;
@@ -346,7 +347,7 @@ void AntiAimFlushTelemetry() noexcept {
     char message[1536]{};
     AcquireSRWLockShared(&lock);
     std::snprintf(message, sizeof(message),
-        "ANTI_AIM revision=3 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_view_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x; mutation/ingestion evidence is not observed model facing or server receipt",
+        "ANTI_AIM revision=4 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_view_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x; mutation/ingestion evidence is not observed model facing or server receipt",
         beginCalls, finishCalls, replayCalls, active.load(std::memory_order_acquire), AntiAimGetSettings().enabled,
         edited, rejected, replayRestored, AntiAimStatus(), commandDiagnostics.reason,
         commandDiagnostics.commandPresence, commandDiagnostics.basePresence, commandDiagnostics.anglePresence,
@@ -388,7 +389,7 @@ void AntiAimObserveIngest(void* services, void* command) noexcept {
 void AntiAimPhysicalHistory(std::uintptr_t services, float& forward, float& left) noexcept {
     AcquireSRWLockShared(&lock);
     if (ingestedEdited && services == ingestedServices) {
-        const auto corrected = AntiAimCorrectBackwardsMovement(ingestedPhysical, forward, left);
+        const auto corrected = AntiAimCorrectWalkMovement(ingestedOutgoing, ingestedPhysical, forward, left);
         if (corrected.valid) { forward = corrected.forward; left = corrected.left; }
     }
     ReleaseSRWLockShared(&lock);

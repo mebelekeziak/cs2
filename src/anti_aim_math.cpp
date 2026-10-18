@@ -1,6 +1,7 @@
 #include "anti_aim_math.h"
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 namespace {
 constexpr double radians = 0.01745329251994329577;
@@ -66,6 +67,40 @@ bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept {
     return true;
 }
 
+bool AntiAimBuildAngles(const AimAngles& local, const AntiAimSettings& settings,
+                        std::uint32_t sequence, AimAngles& command) noexcept {
+    if (!Finite(local) || !sequence) return false;
+    const auto s = AntiAimNormalizeSettings(settings);
+    const auto phase = (sequence - 1u) / static_cast<unsigned>(s.jitterInterval);
+    double yaw = s.yawBase == AntiAimYawBase::View ? Wrap(local.yaw) : 0.0;
+    yaw += s.yawOffset;
+    switch (s.yawMode) {
+    case AntiAimYawMode::Jitter: yaw += (phase & 1u ? 0.5 : -0.5) * s.jitterRange; break;
+    case AntiAimYawMode::Spin: yaw += std::fmod(static_cast<double>(sequence - 1u) * s.spinSpeed, 360.0); break;
+    case AntiAimYawMode::Random: {
+        // Integer hash: the same command period always selects the same angle.
+        auto hash = phase + 0x9e3779b9u;
+        hash = (hash ^ (hash >> 16)) * 0x85ebca6bu;
+        hash = (hash ^ (hash >> 13)) * 0xc2b2ae35u;
+        hash ^= hash >> 16;
+        yaw += (static_cast<double>(hash) / UINT32_MAX - 0.5) * s.jitterRange;
+        break;
+    }
+    default: break;
+    }
+    float pitch = AntiAimDownPitch;
+    switch (s.pitchMode) {
+    case AntiAimPitchMode::Up: pitch = -89; break;
+    case AntiAimPitchMode::Level: pitch = 0; break;
+    case AntiAimPitchMode::Keep: pitch = static_cast<float>(std::clamp(Wrap(local.pitch), -89.0, 89.0)); break;
+    case AntiAimPitchMode::Custom: pitch = s.pitch; break;
+    case AntiAimPitchMode::Jitter: pitch = phase & 1u ? s.pitchAlternate : s.pitch; break;
+    default: break;
+    }
+    command = {pitch, static_cast<float>(Wrap(yaw)), 0};
+    return true;
+}
+
 AntiAimMovement AntiAimCorrectBackwardsMovement(const AimAngles& physical,
                                                  float forward, float left) noexcept {
     if (!std::isfinite(forward) || !std::isfinite(left)) return {};
@@ -81,6 +116,24 @@ AntiAimMovement AntiAimCorrectWalkMovement(const AimAngles& from, const AimAngle
     if (!std::isfinite(forward) || !std::isfinite(left)) return {};
     Basis oldBasis{}, newBasis{};
     if (!WalkBasis(from, oldBasis) || !WalkBasis(to, newBasis)) return {};
+    // Preserve exact signed permutations (including tiny axes) at cardinal
+    // yaw differences. Repeated history handoffs must not add trig residue.
+    double delta = Wrap(Wrap(from.yaw) - Wrap(to.yaw));
+    // Opposite headings can differ by a last-bit rounding after storing the
+    // wrapped output in a float. Recognize that representable relationship in
+    // either direction so the history inverse stays an exact permutation.
+    if (static_cast<float>(Wrap(Wrap(from.yaw) + 180.0)) == static_cast<float>(Wrap(to.yaw)) ||
+        static_cast<float>(Wrap(Wrap(to.yaw) + 180.0)) == static_cast<float>(Wrap(from.yaw))) delta = -180;
+    double fromSign = 0, toSign = 0;
+    WalkForwardSign(from, fromSign); WalkForwardSign(to, toSign);
+    if (delta == 0 || delta == -180) {
+        const float sign = delta == 0 ? 1.0f : -1.0f;
+        return {static_cast<float>(fromSign * toSign) * sign * forward, sign * left, 0, true};
+    }
+    if (delta == 90 || delta == -90) {
+        const float sign = delta == 90 ? 1.0f : -1.0f;
+        return {-static_cast<float>(toSign) * sign * left, static_cast<float>(fromSign) * sign * forward, 0, true};
+    }
     return Transform(oldBasis, newBasis, forward, left, 0);
 }
 

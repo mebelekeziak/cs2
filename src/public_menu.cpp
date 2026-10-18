@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cwchar>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -121,6 +122,55 @@ void DrawConfigs(bool entering) {
     ImGui::Separator();
     ImGui::TextWrapped("Saves Visuals, Movement, World, Lighting and Aim options. Loading replaces current options.");
     ImGui::TextWrapped("Presets stay on disk between runs. Choose Load config to apply one.");
+}
+
+bool DrawAntiAimSettings(AntiAimSettings& settings) {
+    bool changed = FeatureCheckbox("Enable anti aim", settings.enabled);
+    ImGui::BeginDisabled(!settings.enabled);
+    const auto combo = [&](const char* label, const char* id, auto& mode, const char* items) {
+        ImGui::TextUnformatted(label);
+        ImGui::SetNextItemWidth(-1);
+        int selected = static_cast<int>(mode);
+        const bool edited = ImGui::Combo(id, &selected, items);
+        if (edited) mode = static_cast<std::remove_reference_t<decltype(mode)>>(selected);
+        return edited;
+    };
+    const auto slider = [&](const char* label, const char* id, float& value,
+                            float minimum, float maximum, const char* format = "%.1f degrees") {
+        ImGui::TextUnformatted(label);
+        ImGui::SetNextItemWidth(-1);
+        return ImGui::SliderFloat(id, &value, minimum, maximum, format);
+    };
+    changed |= combo("Yaw mode", "##AntiAimYawMode", settings.yawMode, "Static\0Jitter\0Spin\0Random\0");
+    changed |= combo("Yaw base", "##AntiAimYawBase", settings.yawBase, "View relative\0World absolute\0");
+    changed |= slider("Yaw offset", "##AntiAimYawOffset", settings.yawOffset, -180, 180);
+    if (settings.yawMode == AntiAimYawMode::Jitter || settings.yawMode == AntiAimYawMode::Random) {
+        changed |= slider("Yaw range (total width)", "##AntiAimJitterRange", settings.jitterRange, 0, 360);
+        ImGui::TextWrapped("Range 60 means up to 30 degrees either side of the yaw offset.");
+    }
+    if (settings.yawMode == AntiAimYawMode::Spin)
+        changed |= slider("Spin speed", "##AntiAimSpinSpeed", settings.spinSpeed, -180, 180, "%.1f degrees / command");
+    changed |= combo("Pitch mode", "##AntiAimPitchMode", settings.pitchMode,
+        "Down\0Up\0Level\0Keep view pitch\0Custom\0Jitter\0");
+    if (settings.pitchMode == AntiAimPitchMode::Custom || settings.pitchMode == AntiAimPitchMode::Jitter)
+        changed |= slider(settings.pitchMode == AntiAimPitchMode::Jitter ? "Pitch A" : "Custom pitch",
+            "##AntiAimPitch", settings.pitch, -89, 89);
+    if (settings.pitchMode == AntiAimPitchMode::Jitter)
+        changed |= slider("Pitch B", "##AntiAimPitchAlternate", settings.pitchAlternate, -89, 89);
+    if (settings.yawMode == AntiAimYawMode::Jitter || settings.yawMode == AntiAimYawMode::Random ||
+        settings.pitchMode == AntiAimPitchMode::Jitter) {
+        ImGui::TextUnformatted("Change interval");
+        ImGui::SetNextItemWidth(-1);
+        changed |= ImGui::SliderInt("##AntiAimInterval", &settings.jitterInterval, 1, 64, "%d commands");
+        ImGui::TextWrapped("Commands per jitter side or random yaw sample. Pitch jitter uses the same interval.");
+    }
+    ImGui::EndDisabled();
+    ImGui::TextWrapped("Positive pitch looks down; negative looks up. Local view stays normal.");
+    if (ImGui::Button("Reset anti aim", { -1, 0 })) {
+        settings = {};
+        changed = true;
+    }
+    return changed;
 }
 
 void DrawPlayerModel() {
@@ -524,8 +574,7 @@ void DrawPublicMenu() {
                 ImGui::EndDisabled();
                 ImGui::TextWrapped("%s", ConsoleControlStatus());
                 ImGui::Separator();
-                antiAimChanged = FeatureCheckbox("Enable anti aim", antiAim.enabled);
-                ImGui::TextWrapped("Backwards yaw, downward pitch. Local view stays normal.");
+                antiAimChanged = DrawAntiAimSettings(antiAim);
             }
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);

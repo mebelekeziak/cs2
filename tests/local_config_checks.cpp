@@ -105,7 +105,9 @@ int main() {
     WorldSetSettings(world);
     const SilentAimSettings expectedAim{true, 12.34f, AimHitbox::Pelvis, true, 73.25f, 512};
     SilentAimSetSettings(expectedAim);
-    AntiAimSetSettings({true});
+    const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
+        -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
+    AntiAimSetSettings(expectedAntiAim);
     const ThirdPersonSettings expectedCamera{true, 173.25f, -21.5f, 17.75f, false};
     ThirdPersonSetSettings(expectedCamera);
     const ZoomSettings expectedZoom{true, 0, 137.25f};
@@ -129,6 +131,7 @@ int main() {
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim, "aim, autofire, threshold and sample count roundtrip");
+    Expect(AntiAimGetSettings() == expectedAntiAim, "all anti aim modes, interval and fractional angle controls roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
@@ -171,6 +174,12 @@ int main() {
         "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
         "version=1\naim.hitchance=25\naim.hitchance=75\n",
         "version=1\nanti_aim.enabled=true\n", "version=1\nanti_aim.enabled=2\n",
+        "version=1\nanti_aim.yawMode=1.5\n", "version=1\nanti_aim.yawBase=world\n",
+        "version=1\nanti_aim.yawOffset=nan\n", "version=1\nanti_aim.jitterRange=inf\n",
+        "version=1\nanti_aim.jitterInterval=1.5\n", "version=1\nanti_aim.spinSpeed=-inf\n",
+        "version=1\nanti_aim.pitchMode=custom\n", "version=1\nanti_aim.pitch=nan\n",
+        "version=1\nanti_aim.pitchAlternate=89junk\n",
+        "version=1\nanti_aim.yawOffset=10\nanti_aim.yawOffset=20\n",
         "version=1\ncamera.enabled=true\n", "version=1\ncamera.collision=2\n",
         "version=1\ncamera.distance=nan\n", "version=1\ncamera.shoulder=inf\n",
         "version=1\ncamera.height=12oops\n", "version=1\ncamera.distance=120\ncamera.distance=130\n",
@@ -194,13 +203,22 @@ int main() {
         EspGetSettings().boxThickness == EspSanitizeSettings(EspSettings{.boxThickness = -99}).boxThickness &&
         SilentAimGetSettings().fov == 30 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
-    Expect(!AntiAimGetSettings().enabled, "older presets without anti aim explicitly restore disabled default");
+    Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
         SilentAimGetSettings().samples == 256, "older presets restore autofire off and hitchance defaults");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
+    Write(badPath, "version=1\nanti_aim.enabled=1\n");
+    Expect(LocalConfigLoad(bad, error) && AntiAimGetSettings() == AntiAimSettings{true},
+        "older enabled-only anti aim preset preserves static backwards yaw and downward pitch");
+    Write(badPath, "version=1\nanti_aim.enabled=1\nanti_aim.yawMode=99\nanti_aim.yawBase=-99\n"
+        "anti_aim.yawOffset=-999\nanti_aim.jitterRange=999\nanti_aim.jitterInterval=0\nanti_aim.spinSpeed=-999\n"
+        "anti_aim.pitchMode=99\nanti_aim.pitch=999\nanti_aim.pitchAlternate=-999\n");
+    Expect(LocalConfigLoad(bad, error) && AntiAimGetSettings() == AntiAimSettings{true,
+        AntiAimYawMode::Static, AntiAimYawBase::View, -180, 360, 1, -180, AntiAimPitchMode::Down, 89, -89},
+        "anti aim config loader bounds numeric values and restores invalid mode defaults through publisher");
     Write(badPath, "version=1\nmodel_swap.enabled=1\nmodel_swap.model=Agents\\Example\\Example.VMDL\n");
     Expect(LocalConfigLoad(bad, error) && ModelSwapGetSettings().enabled &&
         std::string_view(ModelSwapGetSettings().model.data()) == "agents/example/example.vmdl",

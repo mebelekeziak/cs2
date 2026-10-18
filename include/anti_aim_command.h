@@ -27,6 +27,8 @@ struct AntiAimCommandDiagnostics {
 };
 bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch,
                          const char** reason = nullptr, AntiAimCommandDiagnostics* diagnostics = nullptr) noexcept;
+bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const AntiAimSettings& settings,
+                         const char** reason = nullptr, AntiAimCommandDiagnostics* diagnostics = nullptr) noexcept;
 bool AntiAimRestoreCommand(const AntiAimCommandPatch& patch) noexcept;
 bool AntiAimReapplyCommand(const AntiAimCommandPatch& patch) noexcept;
 // Switch only angle payload while movement replay reads physical input.

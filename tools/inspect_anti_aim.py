@@ -37,6 +37,10 @@ CHECKS = {
     "historical_setup": (0xA74A24, "f64658187417f30f1086a0010000e829320000f30f11452cf30f1145208b465848a9000600007417f30f1086a4010000e807320000f30f114530f30f114524f30f1086a8010000e8f0310000f30f114534f30f114528"),
     "zero_slice": (0xA65C4D, "430f2e343e7a060f846e01000080bc247001000000f2440f116e20896e28f3440f114e2cf3440f114630f3440f117e34"),
     "analog_accumulation": (0xA65F56, "f3470f584c3e10f3470f58443e14"),
+    "digital_positive_unit_load": (0xA65B49, "f3440f103522050601"),
+    "digital_negative_unit_load": (0xA65BCE, "f3440f101dd5040601"),
+    "digital_positive_unit": (0x1AC6074, "0000803f"),
+    "digital_negative_unit": (0x1AC60AC, "000080bf"),
     "ingest_after_integration": (0xA711BE, "498bd5488bcf488bd8488b07ff90f0000000"),
     "air_vectors": (0x8E580D, "488d4f144c8d4c24604c8d442430488d542440e8cbd2e500"),
     "air_forward_flatten": (0x8E58CE, "c744244800000000"),
@@ -46,6 +50,10 @@ CHECKS = {
     "air_combine": (0x8E5A5B, "f3440f594540c744245800000000f3440f595540440f28a424a0000000f3410f59fff3450f59cf440f28bc2480000000f3410f58faf3450f58c1"),
 }
 WINDOWS = {
+    # Raw button selects digital versus analog; raw angle deltas are always
+    # accumulated. Digital axis dispatch recognizes exact single-button masks.
+    "subtick_raw_decoder": (0xA74CF3, 0x70, "20dd7ac41dde2e252c5c43a1fe0c387beaeb1011ce4309330c5600b7a3d20a41"),
+    "digital_axis_dispatch": (0xA65EBA, 0x6A, "9d971d99a9d5dfe0fcc77e3151108753881d03afaef1edfc6d8b0d8ecf46e5c8"),
     "native_command_clone": (0xB5E310, 0x91, "0259ca2830074f0b4f2eeb2764b707c83bef2b35788168e85898c14c508738b7"),
     "native_reset": (0xB6C980, 0x109, "b66c354a1aba07951b36ba4d405023210f2aa87bb14f8cd6f9ad438e2028cf84"),
     "shift_after_reset": (0xB601A0, 0xF0, "a7d405ae7970ba6cdb0ebcf4e3918c14ccbad724c546e468131ee752a22d87b0"),

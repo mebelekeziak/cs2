@@ -1,4 +1,5 @@
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include <atomic>
 #include <cstdio>
 #include <limits>
@@ -29,5 +30,45 @@ int main() {
     }
     writer.join();
     check(!torn.load(), "command reader sees one coherent snapshot during concurrent publication");
+    const AntiAimSettings antiDefaults;
+    check(AntiAimGetSettings() == antiDefaults, "anti aim defaults preserve static backwards yaw and downward pitch, disabled");
+    auto antiInvalid = antiDefaults;
+    antiInvalid.enabled = true;
+    antiInvalid.yawMode = static_cast<AntiAimYawMode>(99);
+    antiInvalid.yawBase = static_cast<AntiAimYawBase>(-1);
+    antiInvalid.pitchMode = static_cast<AntiAimPitchMode>(99);
+    antiInvalid.yawOffset = std::numeric_limits<float>::infinity();
+    antiInvalid.jitterRange = std::numeric_limits<float>::quiet_NaN();
+    antiInvalid.spinSpeed = -std::numeric_limits<float>::infinity();
+    antiInvalid.pitch = std::numeric_limits<float>::quiet_NaN();
+    antiInvalid.pitchAlternate = std::numeric_limits<float>::infinity();
+    AntiAimSetSettings(antiInvalid);
+    auto antiEnabledDefault = antiDefaults;
+    antiEnabledDefault.enabled = true;
+    check(AntiAimGetSettings() == antiEnabledDefault, "invalid anti aim modes and nonfinite numbers restore independent defaults");
+    const AntiAimSettings high{true, AntiAimYawMode::Spin, AntiAimYawBase::World,
+        999, 999, 999, 999, AntiAimPitchMode::Jitter, 999, -999};
+    check(AntiAimNormalizeSettings(high) == AntiAimSettings{true, AntiAimYawMode::Spin, AntiAimYawBase::World,
+        180, 360, 64, 180, AntiAimPitchMode::Jitter, 89, -89}, "anti aim clamps upper limits and both pitch limits");
+    const AntiAimSettings low{false, AntiAimYawMode::Random, AntiAimYawBase::View,
+        -999, -999, -999, -999, AntiAimPitchMode::Custom, -999, 999};
+    check(AntiAimNormalizeSettings(low) == AntiAimSettings{false, AntiAimYawMode::Random, AntiAimYawBase::View,
+        -180, 0, 1, -180, AntiAimPitchMode::Custom, -89, 89}, "anti aim clamps lower limits with independent mode fields");
+    const AntiAimSettings antiFirst{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
+        -73.25f, 222.5f, 3, -11.75f, AntiAimPitchMode::Custom, 27.25f, -42.5f};
+    const AntiAimSettings antiSecond{false, AntiAimYawMode::Random, AntiAimYawBase::View,
+        13.5f, 64.25f, 61, 70.5f, AntiAimPitchMode::Jitter, -17.75f, 54.25f};
+    AntiAimSetSettings(antiFirst);
+    check(AntiAimGetSettings() == antiFirst, "anti aim snapshots retain fractional degree values exactly");
+    torn.store(false);
+    std::thread antiWriter([&] { for (int i = 0; i < 100000; ++i) AntiAimSetSettings((i & 1) ? antiFirst : antiSecond); });
+    for (int i = 0; i < 100000; ++i) {
+        const auto snapshot = AntiAimGetSettings();
+        if (!(snapshot == antiFirst) && !(snapshot == antiSecond)) torn.store(true);
+    }
+    antiWriter.join();
+    check(!torn.load(), "anti aim reader sees coherent mode, interval and angle snapshots during concurrent publication");
+    AntiAimResetSettings();
+    check(AntiAimGetSettings() == antiDefaults, "anti aim reset restores all defaults and disables feature");
     return failures ? 1 : 0;
 }

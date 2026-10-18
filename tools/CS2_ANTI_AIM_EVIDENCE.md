@@ -260,3 +260,63 @@ Capstone/pefile research tooling; dependency licenses remain in their original
 workspace locations. Successful static checks establish binary/layout
 compatibility. They do not establish observed local camera smoothness, movement
 response, model facing, server receipt or shooting behavior.
+
+## Configurable yaw and pitch: raw subtick movement contracts
+
+Read-only inspection on October 18, 2026 used the same installed client identity
+listed above. No client launch, process access, server interaction or additional
+engine API was needed. Configurable yaw uses the existing independently
+normalized horizontal walk basis; movement remains limited to the supported
+walk/air path. Keeping each native yaw delta on both physical and outgoing
+views preserves the selected relative yaw throughout one command. Pitch Keep
+retains native pitch deltas; other pitch modes suppress their outgoing raw
+payloads. A physical forward-basis sign crossing still requires rejection.
+
+The complete decoder window `0xA74CF3..0xA74D62` establishes these raw-field
+rules independently of protobuf scalar presence:
+
+- `0xA74CF3` loads the raw button at step `+0x18`; `0xA74CFB` tests it.
+  A zero button copies raw forward/left deltas at `+0x28/+0x2C` into the
+  decoded event. Any nonzero button instead copies the pressed bool.
+- `0xA74D18` tests nonzero raw masks against `0x801`; matching attack events
+  enter a separate action list, after which the movement event's button and
+  analog storage are zeroed. Adding analog payload to a digital event does
+  not combine both forms of input.
+- `0xA74D49` and `0xA74D58` add raw pitch/yaw deltas at `+0x30/+0x34` for
+  every event, including digital events. Clearing their presence alone cannot
+  suppress their effect in this installed consumer.
+
+The exact digital-axis window `0xA65EBA..0xA65F23` compares raw button by
+equality with forward `8`, back `0x10`, left `0x200`, and right `0x400`.
+It adds respectively `(+1,0)`, `(-1,0)`, `(0,+1)`, or `(0,-1)`, negating the
+delta on release. Loads `0xA65B49/0xA65BCE` obtain the independently checked
+float constants `+1/-1` at `0x1AC6074/0x1AC60AC`. Other masks do not receive
+one of these movement-axis additions, even when they contain direction bits.
+The updated verifier freezes both complete windows and these unit loads/data.
+
+Consequently the generic configurable command path converts an exact
+single-direction digital event into a button-zero analog event containing the
+transformed signed unit pair. Ordinary analog events transform both components
+together, updating both presence bits when rotation introduces a previously
+zero component. Event time, order, unrelated actions and native yaw deltas are
+preserved. Mixed masks involving direction bits are rejected instead of being
+split into invented transitions. A nonzero raw button selects its native branch
+even when the button presence bit is absent.
+
+The generic path rejects nonzero payloads whose corresponding scalar presence
+is absent, rather than allowing local raw-field consumption to disagree with
+serialized presence. The existing default fixed backwards/down branch retains
+its exact signed-axis transformation and inactive payload bytes; it is a
+separate compatibility path, not evidence that arbitrary rotation can preserve
+inactive analog bytes. Existing ownership, finite-value and layout checks
+continue to apply.
+
+Final base axes are rotated together and their presence/direction-down bits
+must represent the resulting pair. This is necessary for the next command:
+`0xA77638..0xA77652` ingests raw final base axes without scalar-presence gates,
+while `0xA74A24..0xA74A75` gates historical forward/left using direction pairs
+`0x18/0x600`. The serialized time-zero historical boundary correction remains
+necessary when yaw or pitch settings change and during existing passthrough
+transitions. These are installed-client static contracts; configurable settings
+and successful compatibility checks do not establish observed movement,
+visible model facing, server receipt or authoritative server physics.

@@ -1,5 +1,7 @@
 #pragma once
 #include "silent_aim_math.h"
+#include "anti_aim_settings.h"
+#include <cstdint>
 
 struct AntiAimMovement {
     float forward = 0, left = 0, up = 0;
@@ -14,6 +16,11 @@ inline constexpr float AntiAimDownPitch = 89.0f;
 // pitch looks down at AntiAimDownPitch, and roll is zero.
 // Failure leaves command unchanged.
 bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept;
+
+// Sequence-based patterns are deterministic across command rebuilds and do not
+// advance with render frames, prediction replays or wall-clock time.
+bool AntiAimBuildAngles(const AimAngles& local, const AntiAimSettings& settings,
+                        std::uint32_t sequence, AimAngles& command) noexcept;
 
 // Exact WALK signed-axis permutation for AntiAimBackwards' fixed view change.
 // Pass the physical view in either direction: this transform is its own inverse.

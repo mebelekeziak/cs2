@@ -221,6 +221,74 @@ void NativeSettingsBounds() {
     Expect(fallback.localLightBrightness == 1 && fallback.sunLightBrightness == 1 && fallback.directionalLightmapsMode == 2,
            "invalid brightness uses neutral values and directional mode stays in range");
 }
+std::string SubmittedMenuText() {
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const std::string text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    ImGui::LogFinish();
+    ImGui::Render();
+    return text;
+}
+void AntiAimControls() {
+    const auto savedAim = SilentAimGetSettings();
+    const auto savedMovement = MovementGetSettings();
+    ClickControl("Enable anti aim");
+    ClickControl("##AntiAimYawOffset", 0.2f);
+    Expect(AntiAimGetSettings() == AntiAimSettings{}, "disabled anti aim master blocks angle edits");
+    ClickControl("Enable anti aim");
+    const auto staticText = SubmittedMenuText();
+    Expect(staticText.find("Yaw mode") != std::string::npos && staticText.find("Yaw offset") != std::string::npos &&
+        staticText.find("Yaw range (total width)") == std::string::npos && staticText.find("Spin speed") == std::string::npos &&
+        staticText.find("Custom pitch") == std::string::npos && staticText.find("Change interval") == std::string::npos,
+        "static yaw and fixed pitch show only relevant controls");
+    SelectEspCombo("##AntiAimYawBase", "World absolute", 1);
+    ClickControl("##AntiAimYawOffset", 0.25f);
+    SelectEspCombo("##AntiAimYawMode", "Jitter", 1);
+    ClickControl("##AntiAimJitterRange", 0.6f);
+    ClickControl("##AntiAimInterval", 0.3f);
+    const auto jitter = AntiAimGetSettings();
+    Expect(jitter.yawMode == AntiAimYawMode::Jitter && jitter.yawBase == AntiAimYawBase::World &&
+        jitter.yawOffset < -70 && jitter.jitterRange > 180 && jitter.jitterInterval > 10,
+        "yaw base, offset, jitter width and command interval publish through mouse input");
+    SelectEspCombo("##AntiAimYawMode", "Random", 3);
+    Expect(AntiAimGetSettings().yawMode == AntiAimYawMode::Random &&
+        SubmittedMenuText().find("Yaw range (total width)") != std::string::npos,
+        "random yaw exposes its range and uses preserved jitter interval");
+    SelectEspCombo("##AntiAimYawMode", "Spin", 2);
+    ClickControl("##AntiAimSpinSpeed", 0.25f);
+    const auto spinText = SubmittedMenuText();
+    Expect(AntiAimGetSettings().yawMode == AntiAimYawMode::Spin && AntiAimGetSettings().spinSpeed < -70 &&
+        spinText.find("Spin speed") != std::string::npos && spinText.find("Yaw range (total width)") == std::string::npos,
+        "spin mode exposes signed degrees per command and hides jitter width");
+    for (const auto mode : {AntiAimPitchMode::Down, AntiAimPitchMode::Up, AntiAimPitchMode::Level,
+                           AntiAimPitchMode::Keep, AntiAimPitchMode::Custom, AntiAimPitchMode::Jitter}) {
+        constexpr const char* labels[]{"Down", "Up", "Level", "Keep view pitch", "Custom", "Jitter"};
+        SelectEspCombo("##AntiAimPitchMode", labels[static_cast<int>(mode)], static_cast<int>(mode));
+        Expect(AntiAimGetSettings().pitchMode == mode, "pitch selector publishes each supported mode");
+        const auto text = SubmittedMenuText();
+        Expect((text.find("Custom pitch") != std::string::npos) == (mode == AntiAimPitchMode::Custom) &&
+            (text.find("Pitch B") != std::string::npos) == (mode == AntiAimPitchMode::Jitter),
+            "custom and jitter pitch sliders follow the selected mode");
+        if (mode == AntiAimPitchMode::Custom) {
+            ClickControl("##AntiAimPitch", 0.25f);
+            Expect(AntiAimGetSettings().pitch < -30, "custom pitch slider publishes upward pitch");
+        }
+    }
+    ClickControl("##AntiAimPitch", 0.75f);
+    ClickControl("##AntiAimPitchAlternate", 0.25f);
+    ClickControl("##AntiAimInterval", 0.5f);
+    const auto edited = AntiAimGetSettings();
+    Expect(edited.pitch > 30 && edited.pitchAlternate < -30 && edited.jitterInterval > 25,
+        "pitch jitter independently edits both angles and exposes shared interval during spin");
+    ClickControl("Enable anti aim");
+    ClickControl("Reset anti aim");
+    Expect(AntiAimGetSettings() == AntiAimSettings{}, "anti aim reset works while disabled and restores every control");
+    Expect(SilentAimGetSettings() == savedAim && MovementGetSettings().bunnyhop == savedMovement.bunnyhop &&
+        MovementGetSettings().autostrafe == savedMovement.autostrafe,
+        "anti aim edits and reset preserve independent aim and movement settings");
+    AntiAimSetSettings(edited); // Keep non-default fields for the Configs mouse flow.
+}
 void CameraControls() {
     const EspSettings savedEsp = EspGetSettings();
     ClickControl("Enable ESP");
@@ -539,6 +607,7 @@ int main() {
     ClickControl("Enable anti aim");
     Expect(!AntiAimGetSettings().enabled, "anti aim checkbox disables the shared command setting");
     ClickControl("Enable anti aim");
+    AntiAimControls();
     Click(TabPosition(0));
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##VisualSettings") &&
@@ -746,6 +815,7 @@ int main() {
     const auto savedCamera = ThirdPersonGetSettings();
     const auto savedZoom = ZoomGetSettings();
     const auto savedAim = SilentAimGetSettings();
+    const auto savedAntiAim = AntiAimGetSettings();
     const auto savedShotLog=ShotLogGetSettings();
     const auto savedModel=ModelSwapGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
@@ -760,7 +830,7 @@ int main() {
     ShotLogSetSettings({});
     ModelSwapResetSettings();
     ClickControl("Load config");
-    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera &&
+    Expect(EspGetSettings() == savedEsp && AntiAimGetSettings() == savedAntiAim && ThirdPersonGetSettings() == savedCamera &&
            ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
            ModelSwapGetSettings() == savedModel,
            "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging and player model settings");

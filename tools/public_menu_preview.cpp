@@ -16,6 +16,7 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "silent_aim_settings.h"
+#include "anti_aim_settings.h"
 #include "model_swap_settings.h"
 #include "model_catalog.h"
 #include <cstdio>
@@ -70,13 +71,13 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 8 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 8.\n");
+    if (selectedTab < 0 || selectedTab > 10 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 10.\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -124,6 +125,13 @@ int wmain(int argc, wchar_t** argv) {
     io.DeltaTime = 1.0f / 60.0f;
     ConfigurePublicMenuStyle();
     if (selectedTab == 4) SilentAimSetSettings({true, 5, AimHitbox::Chest, true, 70, 256});
+    if (selectedTab == 9 || selectedTab == 10) {
+        AntiAimSettings antiAim;
+        antiAim.enabled = true;
+        antiAim.yawMode = selectedTab == 9 ? AntiAimYawMode::Jitter : AntiAimYawMode::Spin;
+        antiAim.pitchMode = selectedTab == 9 ? AntiAimPitchMode::Jitter : AntiAimPitchMode::Custom;
+        AntiAimSetSettings(antiAim);
+    }
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150});
     ModelPickerFixture modelFixture;
@@ -146,18 +154,18 @@ int wmain(int argc, wchar_t** argv) {
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu) {
-                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
-                if (selectedTab >= 6 && !menu->DC.ChildWindows.empty()) {
+                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
+                if (selectedTab >= 6 && selectedTab <= 8 && !menu->DC.ChildWindows.empty()) {
                     auto* child = menu->DC.ChildWindows[0];
                     child->StateStorage.SetInt(child->GetID(selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
                     child->StateStorage.SetInt(child->GetID("Live preview"), 0);
                 }
             }
         }
-        if (frame == 1 && (scroll || selectedTab == 8)) {
+        if (frame == 1 && (scroll || selectedTab == 8 || selectedTab >= 9)) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu && !menu->DC.ChildWindows.empty())
-                ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll ? scroll : 100000));
+                ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll ? scroll : selectedTab >= 9 ? 550 : 100000));
         }
     }
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

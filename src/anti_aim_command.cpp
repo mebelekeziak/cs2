@@ -123,8 +123,8 @@ bool CrossesVertical(float pitch, float delta) noexcept {
 bool Directions(std::uint64_t input, const AimAngles& from, const AimAngles& to, std::uint64_t& output) noexcept {
     const auto f = AntiAimCorrectWalkMovement(from, to, 1, 0);
     const auto l = AntiAimCorrectWalkMovement(from, to, 0, 1);
-    if (!f.valid || !l.valid || std::abs(f.left) > 0.0001f || std::abs(l.forward) > 0.0001f ||
-        std::abs(std::abs(f.forward) - 1) > 0.0001f || std::abs(std::abs(l.left) - 1) > 0.0001f) return false;
+    if (!f.valid || !l.valid || f.left != 0 || l.forward != 0 ||
+        std::abs(f.forward) != 1 || std::abs(l.left) != 1) return false;
     output = input & ~mo::Directions;
     if (input & mo::Forward) output |= f.forward > 0 ? mo::Forward : mo::Back;
     if (input & mo::Back) output |= f.forward > 0 ? mo::Back : mo::Forward;
@@ -170,7 +170,7 @@ bool Validate(const AntiAimCommandPatch& p, bool currentlyOutgoing, bool viewOnl
         expected.cachedSize = n.original.cachedSize;
         if (!Equal(n.original, expected)) return false;
 #define CHECK_STEP(field) if (!CheckField(s.address + offsetof(MovementSubtick, field), n.original.field, s.original.field, s.edited.field, currentlyOutgoing)) return false
-        CHECK_STEP(presence); CHECK_STEP(button); CHECK_STEP(forwardDelta); CHECK_STEP(leftDelta); CHECK_STEP(pitchDelta);
+        CHECK_STEP(presence); CHECK_STEP(button); CHECK_STEP(pressed); CHECK_STEP(forwardDelta); CHECK_STEP(leftDelta); CHECK_STEP(pitchDelta);
 #undef CHECK_STEP
     }
     return true;
@@ -188,7 +188,7 @@ void Write(const AntiAimCommandPatch& p, bool outgoing) noexcept {
     for (int i = 0; i < p.count; ++i) {
         const auto& s = p.steps[static_cast<std::size_t>(i)];
 #define PUT_STEP(field) Put(s.address + offsetof(MovementSubtick, field), s.original.field, s.edited.field, outgoing)
-        PUT_STEP(presence); PUT_STEP(button); PUT_STEP(forwardDelta); PUT_STEP(leftDelta); PUT_STEP(pitchDelta);
+        PUT_STEP(presence); PUT_STEP(button); PUT_STEP(pressed); PUT_STEP(forwardDelta); PUT_STEP(leftDelta); PUT_STEP(pitchDelta);
 #undef PUT_STEP
     }
 }
@@ -196,6 +196,10 @@ void Write(const AntiAimCommandPatch& p, bool outgoing) noexcept {
 
 bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const char** reason,
                          AntiAimCommandDiagnostics* diagnostics) noexcept {
+    return AntiAimApplyCommand(command, patch, AntiAimSettings{}, reason, diagnostics);
+}
+bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const AntiAimSettings& settings,
+                         const char** reason, AntiAimCommandDiagnostics* diagnostics) noexcept {
     patch = {};
     if (diagnostics) *diagnostics = {};
     const auto diagnose = [&](const char* why) noexcept {
@@ -213,24 +217,49 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
     const auto fail = [&](const char* why) noexcept { diagnose(why); patch = {}; return false; };
     const char* snapshotReason = "not_read";
     if (!Snapshot(command, patch, &snapshotReason)) return fail(snapshotReason);
-    if (!AntiAimBackwards(patch.originalView, patch.editedView)) return fail("view_nonfinite");
+    const auto options = AntiAimNormalizeSettings(settings);
+    const bool legacyPayload = options.yawMode == AntiAimYawMode::Static && options.yawBase == AntiAimYawBase::View &&
+        std::abs(options.yawOffset) == 180 && options.pitchMode == AntiAimPitchMode::Down;
+    if (!AntiAimBuildAngles(patch.originalView, options, static_cast<std::uint32_t>(patch.sequence), patch.editedView)) return fail("view_nonfinite");
     // Match the native zero-component omission, preserving unrelated has-bits.
     patch.editedAnglePresence = (patch.anglePresence & ~so::angle::AllPresent) |
         (patch.editedView.pitch != 0 ? 1u : 0u) | (patch.editedView.yaw != 0 ? 2u : 0u) |
         (patch.editedView.roll != 0 ? 4u : 0u);
     float forward = (patch.originalPresence & mo::base::ForwardPresent) ? patch.originalForward : 0;
     float left = (patch.originalPresence & mo::base::LeftPresent) ? patch.originalLeft : 0;
-    auto corrected = AntiAimCorrectBackwardsMovement(patch.originalView, forward, left);
+    auto corrected = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, forward, left);
     if (!corrected.valid) return fail("walk_basis");
     patch.editedPresence = patch.originalPresence;
-    // The fixed backwards transform is a signed permutation throughout this
-    // command. Absent protobuf axes retain their inactive payload bytes.
-    patch.editedForward = (patch.originalPresence & mo::base::ForwardPresent) ? corrected.forward : patch.originalForward;
-    patch.editedLeft = (patch.originalPresence & mo::base::LeftPresent) ? corrected.left : patch.originalLeft;
     patch.editedButtons = patch.originalButtons;
-    if (!Directions(patch.originalButtons.down, patch.originalView, patch.editedView, patch.editedButtons.down) ||
-        !Directions(patch.originalButtons.changed, patch.originalView, patch.editedView, patch.editedButtons.changed) ||
-        !Directions(patch.originalButtons.third, patch.originalView, patch.editedView, patch.editedButtons.third)) return fail("direction_basis");
+    const bool signedAxes = Directions(patch.originalButtons.down, patch.originalView, patch.editedView, patch.editedButtons.down) &&
+        Directions(patch.originalButtons.changed, patch.originalView, patch.editedView, patch.editedButtons.changed) &&
+        Directions(patch.originalButtons.third, patch.originalView, patch.editedView, patch.editedButtons.third);
+    if (!legacyPayload && ((!(patch.originalPresence & mo::base::ForwardPresent) && patch.originalForward != 0) ||
+        (!(patch.originalPresence & mo::base::LeftPresent) && patch.originalLeft != 0))) return fail("base_raw_presence");
+    if (signedAxes) {
+        // Preserve the original exact sign-permutation behavior and inactive
+        // payload bytes for the existing backwards preset.
+        patch.editedForward = (patch.originalPresence & mo::base::ForwardPresent) ? corrected.forward : patch.originalForward;
+        patch.editedLeft = (patch.originalPresence & mo::base::LeftPresent) ? corrected.left : patch.originalLeft;
+    } else {
+        // Native ingestion copies raw final axes. Ordinary producers zero
+        // omitted fields; reject inconsistent payloads before mixing axes.
+        patch.editedForward = corrected.forward; patch.editedLeft = corrected.left;
+        patch.editedPresence = (patch.originalPresence & ~0xC0u) |
+            (corrected.forward != 0 ? mo::base::ForwardPresent : 0u) |
+            (corrected.left != 0 ? mo::base::LeftPresent : 0u);
+        std::uint64_t directions = 0;
+        if (corrected.forward > 0) directions |= mo::Forward;
+        if (corrected.forward < 0) directions |= mo::Back;
+        if (corrected.left > 0) directions |= mo::Left;
+        if (corrected.left < 0) directions |= mo::Right;
+        patch.editedButtons = patch.originalButtons;
+        patch.editedButtons.down = (patch.originalButtons.down & ~mo::Directions) | directions;
+        // Direction events now live in the analog stream. There are no
+        // corresponding digital press/release or intra-command tap bits.
+        patch.editedButtons.changed &= ~mo::Directions;
+        patch.editedButtons.third &= ~mo::Directions;
+    }
     AimAngles from = patch.originalView, to = patch.editedView;
     const auto forwardBasis = AntiAimCorrectWalkMovement(from, to, 1, 0);
     const auto leftBasis = AntiAimCorrectWalkMovement(from, to, 0, 1);
@@ -238,6 +267,15 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
     const float leftSign = leftBasis.left < 0 ? -1.0f : 1.0f;
     for (int i = 0; i < patch.count; ++i) {
         auto& s = patch.steps[static_cast<std::size_t>(i)]; s.edited = s.original;
+        if (!legacyPayload && ((!(s.original.presence & 0x20) && s.original.pitchDelta != 0) ||
+            (!(s.original.presence & 0x40) && s.original.yawDelta != 0))) return fail("subtick_raw_presence");
+        if (!legacyPayload && !s.original.button && ((!(s.original.presence & 8) && s.original.forwardDelta != 0) ||
+            (!(s.original.presence & 0x10) && s.original.leftDelta != 0))) return fail("subtick_raw_presence");
+        if (!legacyPayload && (s.original.button & mo::Directions)) {
+            if (!(s.original.presence & 1) || !(s.original.presence & 2)) return fail("subtick_digital_presence");
+            if (s.original.button != mo::Forward && s.original.button != mo::Back &&
+                s.original.button != mo::Left && s.original.button != mo::Right) return fail("subtick_mixed_directions");
+        }
         // A basis-sign crossing would require opposite button releases and
         // presses at one time. Existing steps cannot encode both with their
         // single pressed bool; do not create events or leave held edges stale.
@@ -246,14 +284,42 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
             ((s.original.presence & 0x10) && !std::isfinite(s.original.leftDelta)) ||
             ((s.original.presence & 0x20) && !Sum(from.pitch, s.original.pitchDelta)) ||
             ((s.original.presence & 0x40) && (!Sum(from.yaw, s.original.yawDelta) || !Sum(to.yaw, s.original.yawDelta)))) return fail("subtick_nonfinite");
+        if (options.pitchMode == AntiAimPitchMode::Keep && (s.original.presence & 0x20)) {
+            if (CrossesVertical(to.pitch, s.original.pitchDelta) || !Sum(to.pitch, s.original.pitchDelta))
+                return fail("subtick_pitch_basis_crossing");
+        }
         corrected = AntiAimCorrectWalkMovement(from, to, 1, 1);
         if (!corrected.valid) return fail("subtick_walk_basis");
         // Native initial analog is historical, not the final base axes. Apply
         // the constant linear transform directly, preserving tiny deltas.
-        if (s.original.presence & 8) s.edited.forwardDelta = forwardSign * s.original.forwardDelta;
-        if (s.original.presence & 0x10) s.edited.leftDelta = leftSign * s.original.leftDelta;
-        if (s.original.presence & 0x20) s.edited.pitchDelta = 0;
-        if ((s.original.presence & 1) && !Directions(s.original.button, from, to, s.edited.button)) return fail("subtick_direction_basis");
+        if (signedAxes) {
+            if (s.original.presence & 8) s.edited.forwardDelta = forwardSign * s.original.forwardDelta;
+            if (s.original.presence & 0x10) s.edited.leftDelta = leftSign * s.original.leftDelta;
+            if ((s.original.presence & 1) && !Directions(s.original.button, from, to, s.edited.button)) return fail("subtick_direction_basis");
+        } else {
+            float deltaF = 0, deltaL = 0;
+            const auto button = s.original.button;
+            if (button & mo::Directions) {
+                const float sign = s.original.pressed ? 1.0f : -1.0f;
+                if (button == mo::Forward) deltaF = sign;
+                else if (button == mo::Back) deltaF = -sign;
+                else if (button == mo::Left) deltaL = sign;
+                else if (button == mo::Right) deltaL = -sign;
+                else return fail("subtick_mixed_directions");
+                s.edited.button = 0; s.edited.pressed = false;
+                s.edited.presence &= ~3u;
+            } else if (!button) {
+                deltaF = s.original.forwardDelta; deltaL = s.original.leftDelta;
+            }
+            if (!s.edited.button) {
+                corrected = AntiAimCorrectWalkMovement(from, to, deltaF, deltaL);
+                if (!corrected.valid) return fail("subtick_walk_basis");
+                s.edited.forwardDelta = corrected.forward; s.edited.leftDelta = corrected.left;
+                s.edited.presence = (s.edited.presence & ~0x18u) |
+                    (corrected.forward != 0 ? 8u : 0u) | (corrected.left != 0 ? 0x10u : 0u);
+            }
+        }
+        if (options.pitchMode != AntiAimPitchMode::Keep && (s.original.presence & 0x20)) s.edited.pitchDelta = 0;
     }
     patch.valid = true;
     if (!Validate(patch, false, false)) return fail("command_changed_or_readonly");

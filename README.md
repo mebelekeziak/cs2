@@ -1,6 +1,6 @@
 # CS2 third person, anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with local player model selection, third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
+x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
 and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-one
@@ -364,13 +364,32 @@ gameplay observation. Successful builds and standalone checks do not establish
 that ESP draws players or autobhop executes in a match on this build. Use the
 rebuilt **Load Overlay.cmd** workflow for the next offline/private check.
 
-## Basic anti aim
+## Configurable anti aim
 
 Under **Aim**, enable **Enable anti aim**. It starts disabled and is saved with
-configs. Outgoing base angles use **your view yaw + 180 degrees**, wrapped to
-the normal yaw range, and **pitch +89 degrees** (looking down). The yaw is an
-offset from your view,
-so turning the mouse keeps the character facing backwards relative to you.
+configs. Scroll below the logging controls for the anti aim settings:
+
+- **Yaw mode:** Static, Jitter, Spin or Random.
+- **Yaw base:** View relative follows your mouse heading; World absolute starts
+  each command from a fixed world heading.
+- **Yaw offset:** -180 to +180 degrees, added to the selected base.
+- **Yaw range:** 0-360 degrees total width for Jitter/Random. A width of 60
+  alternates between -30/+30 around the offset in Jitter mode, or samples
+  within that range in Random mode.
+- **Spin speed:** -180 to +180 degrees per command; the sign selects direction.
+- **Pitch mode:** Down (+89), Up (-89), Level, Keep view pitch, Custom or
+  Jitter. Custom and both jitter pitch values range from -89 to +89 degrees.
+- **Change interval:** 1-64 commands per jitter side or random yaw sample;
+  yaw and pitch jitter share this interval.
+- **Reset anti aim:** disables it and restores the original view-relative
+  yaw +180/downward pitch +89 preset.
+
+All options save in local configs. Older enabled-only presets retain the
+original angles. Pattern phase comes from command sequence, so native rebuilds
+and prediction replay do not advance it; speed/interval use commands, not
+render frames or seconds. World absolute selects the command's initial yaw;
+native mouse yaw deltas still apply within that command. No new native offsets,
+hooks or launch requirements are introduced.
 
 The physical mouse view and native shot-history source remain independent.
 The verified native command-replay callback otherwise copies outgoing angles
@@ -381,10 +400,14 @@ are retained. Model/animation state is not written.
 
 Movement correction runs after existing bunnyhop/autostrafe planning and before
 the original movement checksum finalizer. It transforms base forward/left,
-all three native direction-button words, subtick direction edges and analog
-deltas. Pitch subtick deltas become zero; yaw deltas continue following the
-physical turn. A native arena-owned time-zero analog event repairs the historical
-movement basis when enabling, disabling, stopping or passing through actions.
+subtick direction edges and analog deltas. General rotations convert exact
+single-direction subticks into equivalent analog events, derive final direction
+buttons from the rotated axes, and clear their digital changed/tap bits while
+preserving unrelated buttons. The original axis-aligned preset retains its exact
+signed-button permutation. Pitch subtick deltas become zero except in Keep view
+pitch mode; yaw deltas continue following the physical turn. A native arena-owned
+time-zero analog event repairs the historical movement basis when enabling,
+disabling, stopping, changing modes or passing through actions.
 No attack, jump, timestamp, history-angle or movement-physics override is added.
 Primary attack and use, including short subtick taps, pass through with physical
 angles. Secondary attack (right-click) keeps anti aim active. Existing silent aim
@@ -393,7 +416,9 @@ retains its own shot-history stage.
 The runtime targets ordinary walking/air movement, including arbitrary wrapped
 yaw and upside-down pitch within a fixed horizontal-basis hemisphere. Exactly
 vertical pitch, nonzero roll, a subtick pitch crossing a vertical boundary,
-ladder/noclip/swimming and unavailable layouts pass through. Flattened WALK
+ladder/noclip/swimming and unavailable layouts pass through. General rotations
+also reject mixed direction/action subticks and inconsistent nonzero omitted
+scalar payloads without partially editing the command. Flattened WALK
 forward is singular at exactly vertical pitch; the separate full-3D math helper
 is not substituted for the game's WALK rules. There is no claim of support for
 every movement mode or observer camera.
@@ -409,6 +434,32 @@ Installed-binary contracts and standalone checks are described in
 character facing, collision response or server consumption is established by
 these checks. No game launch, injection or server interaction was performed
 for this implementation.
+
+Standalone previews of the configured controls (no CS2 launch):
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\anti-aim-jitter-menu.bmp 9 550
+.\build\Release\public_menu_preview.exe .\logs\anti-aim-pitch-menu.bmp 9 100000
+.\build\Release\public_menu_preview.exe .\logs\anti-aim-spin-menu.bmp 10 100000
+```
+
+**Configurable-settings verification, October 18, 2026:** public and diagnostic
+x64 Release builds succeed, with **42/42 CTest suites passing in each**. New
+checks cover every pattern and pitch mode, deterministic rebuilds, sparse axes,
+digital press/release conversion, guarded-memory rollback, 6,144 copied-command
+history/boundary handoffs and 32 malformed-input cases across arbitrary and
+axis-aligned custom angles. Mouse-driven menu/config checks cover conditional
+controls, reset, complete persistence and older presets. The three software
+D3D11 previews above were inspected. The expanded installed-client anti aim
+verifier passes, including raw subtick decoding and exact digital-unit dispatch.
+Both payloads retain zero static TLS and delay imports. No CS2 client/server
+was launched; live movement, animation and server behavior remain unobserved.
+
+**User feedback, October 18, 2026:** the configurable settings work in the user's
+client, but high spin rates cause unintended diagonal movement. This remains an
+unresolved movement-correction defect in this checkpoint. The standalone
+world-vector and copied-command tests pass, but do not reproduce the complete
+native input/prediction pipeline or establish correct movement during fast spin.
 
 **Verification, October 16, 2026:** public and diagnostic x64 Release builds
 succeed; **22/22 CTest suites pass in each**. This includes dense/randomized
