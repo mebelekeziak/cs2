@@ -10,6 +10,7 @@
 #include <dxgi.h>
 
 #include "manual_map.h"
+#include "loader_support.h"
 
 #include <algorithm>
 #include <array>
@@ -32,7 +33,7 @@
 
 namespace {
 constexpr std::size_t kMaxImageBytes = 256u * 1024u * 1024u;
-constexpr DWORD kRemoteWaitMilliseconds = 15000;
+constexpr DWORD kStopWaitMilliseconds = 15000;
 
 // References keep these import libraries loaded in the mapper. The mapper does
 // not dynamically load a dependency into either process. Each resolved address
@@ -664,11 +665,16 @@ int Start(HANDLE process, const Arguments& arguments) {
     // initialized the CRT, or installed callbacks. Retain every allocation even
     // on failed startup or timeout. Never terminate the thread or detach/free.
     mapped.Retain(); remoteLog.Retain(); remoteContext.Retain(); remoteCode.Retain();
-    const auto wait = WaitForSingleObject(thread.value, kRemoteWaitMilliseconds);
+    const auto wait = loader::WaitForBootstrap(
+        [&](DWORD milliseconds) { return WaitForSingleObject(thread.value, milliseconds); },
+        [] { std::cout << "Bootstrap is still initializing after 15 seconds; waiting up to 60 seconds total.\n" << std::flush; });
     if (wait != WAIT_OBJECT_0) {
-        std::cerr << "Bootstrap " << (wait == WAIT_TIMEOUT ? "timed out" : "wait failed")
-            << ". All remote allocations remain resident; no thread was terminated.\n";
-        return 2;
+        if (wait == WAIT_TIMEOUT)
+            std::cerr << "Bootstrap startup is pending after 60 seconds; initialization may still finish. Completion is unconfirmed.\n";
+        else
+            std::cerr << "Bootstrap wait failed (Win32 " << GetLastError() << "); completion is unconfirmed.\n";
+        std::cerr << "All remote allocations remain resident; no thread was terminated. Restart CS2 normally before another load attempt.\n";
+        return wait == WAIT_TIMEOUT ? loader::kMapperPending : loader::kMapperUnconfirmed;
     }
     DWORD exitCode = 0;
     if (!GetExitCodeThread(thread.value, &exitCode)) Fail(LastError("GetExitCodeThread bootstrap"));
@@ -680,7 +686,7 @@ int Start(HANDLE process, const Arguments& arguments) {
     if (context.status == 1) std::cerr << "RtlAddFunctionTable rejected a bootstrap/image exception table; entrypoint was not called.\n";
     else if (context.status == 2) std::cerr << "DLL CRT entrypoint returned FALSE; OverlayStart was not called.\n";
     else if (context.status != 3 || exitCode != 3) std::cerr << "Bootstrap did not complete normally; inspect the thread exit status.\n";
-    return context.status == 3 && exitCode == 3 && context.startResult == ERROR_SUCCESS ? 0 : 3;
+    return loader::BootstrapSucceeded(context.status, exitCode, context.startResult) ? 0 : 3;
 }
 
 int Stop(HANDLE process, const Arguments& arguments) {
@@ -701,7 +707,7 @@ int Stop(HANDLE process, const Arguments& arguments) {
         (protection != PAGE_EXECUTE && protection != PAGE_EXECUTE_READ && protection != PAGE_EXECUTE_READWRITE && protection != PAGE_EXECUTE_WRITECOPY)) Fail("Mapped stop export memory is not executable");
     Handle thread(CreateRemoteThread(process, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(functionAddress), nullptr, 0, nullptr));
     if (!thread.value) Fail(LastError("CreateRemoteThread stop"));
-    const auto wait = WaitForSingleObject(thread.value, kRemoteWaitMilliseconds);
+    const auto wait = WaitForSingleObject(thread.value, kStopWaitMilliseconds);
     if (wait != WAIT_OBJECT_0) {
         std::cerr << "Stop request " << (wait == WAIT_TIMEOUT ? "timed out" : "wait failed") << "; thread and mapped image were not terminated or unloaded.\n";
         return 2;

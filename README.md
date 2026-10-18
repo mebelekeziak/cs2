@@ -45,8 +45,9 @@ Both menu previews were inspected. Both payloads retain zero static TLS and
 delay imports. All **22 installed-file compatibility components** pass,
 including player ownership, native material creation and eight exact shader/
 texture assets; 33 deliberately incorrect chams contracts are rejected.
-No CS2 client or server was launched. Live appearance, animation and alpha
-blending remain unobserved. Original packet pass order is preserved, so correct
+Automated verification did not launch CS2. A subsequent user-run session log
+confirms hook installation, real D3D11 rendering and chams packet edits; the
+agent has not visually verified player appearance, animation or alpha blending. Original packet pass order is preserved, so correct
 sorting of overlapping translucent players is not established; opaque alpha is
 the default. First enable can pause while native resources are requested.
 
@@ -1556,6 +1557,22 @@ Initialization success still requires checking the game for visible output.
 Closing the launcher leaves the mapper/overlay running. **Insert** toggles the
 panel; **End** requests cooperative stop. Stopped code remains resident until
 normal game exit; restart CS2 before loading another copy or a rebuilt DLL.
+
+Startup allows up to **60 seconds**, with a slow-start notice after 15 seconds.
+A timeout reports **pending**, rather than failure: native startup can still
+finish afterward. An unavailable completion result reports **unconfirmed**.
+Only a completed bootstrap with native status/exit 3 and `OverlayStart` result 0
+reports initialization success. Remote allocations remain resident on every
+post-dispatch outcome; the launcher never terminates the bootstrap or unloads
+its image. Cooperative stop retains its separate 15-second wait.
+
+The October 18 user-run trace explains the previous false failure: catalog
+discovery took about 16 seconds, exceeding the old 15-second mapper wait;
+hooks installed at `15:12:45.061Z` and the real D3D11 callback followed at
+`15:12:45.068Z`. See `logs/mapper-21888-134368096359813585.log` and its matching
+overlay log. The correction is verified with deterministic delayed-completion,
+timeout/failure classification and real local-event checks; no new injection
+is performed for this fix.
 
 `logs/loader-PID-STARTTIME.state` prevents repeat loads made through this launcher,
 including uncertain/failed mapper runs. Process start time distinguishes reused

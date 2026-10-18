@@ -120,7 +120,7 @@ void LaunchMapper(HWND window) {
     CloseHandle(process.hThread);
     gMapper = process.hProcess;
     const auto status = L"Loading overlay into CS2 (PID " + std::to_wstring(pid)
-        + L")...\r\n\r\nDiagnostics: " + gMapperLog.wstring()
+        + L")...\r\nStartup can take up to 60 seconds while resources are discovered.\r\n\r\nDiagnostics: " + gMapperLog.wstring()
         + L"\r\n\r\nClosing this window does not stop the mapper or the overlay.";
     SetWindowTextW(gStatus, status.c_str());
     if (!SetTimer(window, 1, 100, nullptr)) Fail("Cannot monitor mapper completion");
@@ -136,15 +136,17 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     }
     if (message == WM_TIMER && gMapper) {
-        if (WaitForSingleObject(gMapper, 0) == WAIT_TIMEOUT) return 0;
+        const auto wait = WaitForSingleObject(gMapper, 0);
+        if (wait == WAIT_TIMEOUT) return 0;
         KillTimer(window, 1);
         DWORD result = 0;
-        const bool readResult = GetExitCodeProcess(gMapper, &result) != FALSE;
+        const bool readResult = wait == WAIT_OBJECT_0 && GetExitCodeProcess(gMapper, &result) != FALSE;
         CloseHandle(gMapper);
         gMapper = nullptr;
-        const std::wstring status = readResult && result == 0
-            ? L"Overlay initialized. Check CS2 for visible output.\r\n\r\nInsert: toggle panel. End: cooperative stop.\r\nRestart CS2 before loading a rebuilt DLL or loading again.\r\n\r\nOverlay log: " + gOverlayLog.wstring()
-            : L"Loading did not complete successfully. Check the mapper log below.\r\nRestart CS2 normally before another attempt.\r\n\r\nMapper log: " + gMapperLog.wstring();
+        const auto completion = loader::MapperCompletion(readResult, result);
+        const auto status = loader::CompletionMessage(completion)
+            + L"\r\n\r\nMapper log: " + gMapperLog.wstring()
+            + L"\r\nOverlay log: " + gOverlayLog.wstring();
         SetWindowTextW(gStatus, status.c_str());
         return 0;
     }
