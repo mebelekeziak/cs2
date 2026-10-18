@@ -18,3 +18,11 @@ operands without a new dumper run; the historical provenance/license is retained
 The Euler rotation uses the conventional pitch/yaw/roll mathematical formula,
 cross-checked against Valve's Source SDK `AngleMatrix`. No SDK source code is
 vendored or linked; Source 2 node fields come from the installed client's schema.
+
+The optional custom character assets are supplied by the user as
+`LynX's Custom Models [AG2].zip` and were already extracted in the CS2
+installation. The pack's original `README.txt` attributes its curation to LynX.
+No pack assets or third-party models are copied into this repository or its
+build outputs. Original pack metadata and authorship stay with the user's
+installation; inspection/provenance is recorded in
+`tools/CS2_MODEL_ASSET_EVIDENCE.md`.

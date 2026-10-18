@@ -384,6 +384,29 @@ and applies the engine default when zero. Recheck named schema fields,
 scoped-weapon RTTI ownership, the active weapon's full serialized handle,
 view-FOV stores and both native entries before adapting this feature.
 
+## Local player models: client, engine, host, resource system and tier0
+
+Header: [model_swap_offsets.h](../include/model_swap_offsets.h).
+Verifier: [inspect_model_swap.py](../tools/inspect_model_swap.py).
+Details: [native evidence](../tools/CS2_MODEL_SWAP_EVIDENCE.md) and
+[pack evidence](../tools/CS2_MODEL_ASSET_EVIDENCE.md).
+Added October 18, 2026 against client/server 2000933 / Steam build 25966348.
+
+| Symbol | Current value / kind | Rediscovery anchor |
+| --- | --- | --- |
+| `FrameStage`, `FrameVtable`, `FrameSlot`, `ApplyStage` | client `0xB6D700`, `0x1C630F0`, slot 36, stage 8 | CSource2Client RTTI, native previous-job barrier, engine network-update stage producers; apply after original returns |
+| `SetModel`, `ModelInterface` | client `0x9643C0` function, `0x2560EB0` pointer slot | `void(entity*, const char*)`; GameModelInfo resolver and native strong-model setter |
+| `ModelBinding`, `ResourceName` | skeleton `+0x1E0`, CModel `+8` | Named skeleton/state schema and native getter; dereference binding before CModel |
+| `InitializeResourceName`, `ResourceSystemPointer` | host `0xC4380` function, `0x1445E0` pointer slot | Native CResourceName constructor caller, inline capacity/flags, hash and model type |
+| `BlockingLoad`, `BlockingLoadSlot`, `ResourceSystemVtable` | resourcesystem `0x16B20`, byte slot `0x148`, `0x65348` | Named blocking JIT manifest path; native manifest owns the returned binding |
+| `PurgeResourceName` | tier0 `0x53D60` | Exact CBufferString::Purge export and native caller; cleanup temporary name through engine allocator |
+
+`host.dll` resides in **csgo/bin/win64**. The remaining non-client modules are
+in **bin/win64**. Setter lookup alone can return an error placeholder; perform
+the verified blocking load and compare the returned canonical model path first.
+Restore only on the native owner with fresh full pawn/controller identities.
+Stop queues owner-thread restoration and retains resident forwarding code.
+
 ## Overlay and final-image pass
 
 [overlay.cpp](../src/overlay.cpp) discovers Present and ResizeBuffers addresses

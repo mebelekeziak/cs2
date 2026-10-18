@@ -1,8 +1,8 @@
 # Updating CS2 compatibility
 
 Start here after a game update. This project targets the Windows AMD64 **client**
-and its D3D11 overlay. Current verified baseline: **1.41.9.1 / client 2000932 /
-Steam build 25947352**, investigated October 15, 2026.
+and its D3D11 overlay. Current verified baseline: **1.41.9.1 / client 2000933 /
+Steam build 25966348**, checked October 18, 2026.
 
 Use the [address index](RE_ADDRESS_INDEX.md) to find a symbol's module, meaning,
 rediscovery anchor, owning header and verifier. Headers are the executable source
@@ -25,7 +25,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all twenty frozen verifiers independently, so
+rewrite offsets. It runs all twenty-one frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -35,10 +35,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Twenty component JSON files: exact command, exit code, stdout and stderr.
+- Twenty-one component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all twenty static checks passed; **1** means one or more
+Exit code **0** means all twenty-one static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -51,6 +51,7 @@ observe gameplay. Inventory of a renderer DLL establishes its presence only.
 | Only ESP/movement fail | Start with `client.dll`; world modules may be unchanged. |
 | Sky fails while other scene checks pass | Check both scene sky callback and client lighting-kind producer. |
 | Several world components fail | Check `scenesystem.dll`; material mode also depends on `worldrenderer.dll` and `materialsystem2.dll`. |
+| Player model fails | Check `client.dll`, `engine2.dll`, `csgo/bin/win64/host.dll`, `resourcesystem.dll` and `tier0.dll`; preserve the frame-owner barrier, explicit JIT loading and native resource ownership contracts. |
 | Missing file, Python exception or source-header error | Resolve the path/tool/source issue before treating the report as evidence of an engine change. |
 | Hash changed | Investigate that module. Hash rejection alone does not say which address or contract moved. |
 
@@ -151,7 +152,7 @@ ctest --test-dir build-diagnostic -C Release --output-on-failure
 ```
 
 For first-time configuration, see the [README build instructions](../README.md).
-The current baseline has 16 CTest suites per variant. Passing these tests does
+The current baseline has 40 CTest suites per variant. Passing these tests does
 not certify a new binary or a successful hop/rendered player.
 
 Use a fresh normal client process and the documented launcher. Loading at the

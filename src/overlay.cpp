@@ -32,6 +32,8 @@
 #include "anti_aim.h"
 #include "third_person.h"
 #include "zoom.h"
+#include "model_swap.h"
+#include "model_swap_settings.h"
 #include "silent_aim_settings.h"
 #include "world_settings.h"
 #include "world_postprocess.h"
@@ -250,6 +252,7 @@ void CleanupOnRenderThread(const char* reason) {
     AntiAimStop(reason);
     ThirdPersonStop(reason);
     ZoomStop(reason);
+    ModelSwapStop(reason);
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
     WorldLightingSwitchesStop(reason);
@@ -475,6 +478,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     AntiAimFlushTelemetry();
     ThirdPersonFlushTelemetry();
     ZoomFlushTelemetry();
+    ModelSwapFlushTelemetry();
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();
@@ -537,6 +541,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Anti aim: %s", AntiAimStatus());
         ImGui::Text("Camera: %s", ThirdPersonStatus());
         ImGui::Text("Scoped zoom: %s", ZoomStatus());
+        ImGui::Text("Player model: %s", ModelSwapRuntimeStatus().data());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
@@ -645,6 +650,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             AntiAimStop("stopped before selecting render chain");
             ThirdPersonStop("stopped before selecting render chain");
             ZoomStop("stopped before selecting render chain");
+            ModelSwapStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
             WorldLightingSwitchesStop("stopped before selecting render chain");
@@ -734,6 +740,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool thirdPersonPrepared = ThirdPersonPrepare(&EspLog);
     const bool zoomPrepared = ZoomPrepare(&EspLog);
+    const bool modelSwapPrepared = ModelSwapPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
@@ -750,6 +757,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         AntiAimStop("partial hook activation failure");
         ThirdPersonStop("partial hook activation failure");
         ZoomStop("partial hook activation failure");
+        ModelSwapStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
         WorldLightingSwitchesStop("partial hook activation failure");
@@ -768,6 +776,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (thirdPersonPrepared) ThirdPersonActivate();
     if (zoomPrepared) ZoomActivate();
+    if (modelSwapPrepared) ModelSwapActivate();
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
     if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
@@ -787,6 +796,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     AntiAimStop("explicit overlay stop request");
     ThirdPersonStop("explicit overlay stop request");
     ZoomStop("explicit overlay stop request");
+    ModelSwapStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
     WorldLightingSwitchesStop("explicit overlay stop request");

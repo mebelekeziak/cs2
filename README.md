@@ -1,15 +1,72 @@
 # CS2 third person, anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
-x64 client overlay with third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
+x64 client overlay with local player model selection, third person, basic anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-one
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Local player model
+
+Under **Visuals**, scroll down and open **Player model**. Turn on **Enable local
+player model**, search the character list, then select a model. Use **F6** to
+inspect the full-body model in third person. The option starts disabled, works
+independently of ESP, and saves its toggle and selected resource path in local
+configs. **Reset player model** disables the swap and clears the selection.
+
+Discovery reads the loose character pack beside the loaded `client.dll`, under
+`game/csgo/{agents,characters,models,phase2}`. The installed LynX AG2 pack yields
+**739 selectable models**, including the seven `hmn_ag2/zenless_zone_zero`
+characters: Ellen, Lycaon, Miyabi, Nico, Pulchra, Soukaku and Zhao. Searching
+`zenless_zone_zero` finds that group. Discovery excludes obvious arms/helpers,
+unsupported animation graphs, malformed model metadata and missing direct
+dependencies; it checks both loose files and the installed CS2/core VPK indexes.
+These checks establish available resources, not correct appearance for every
+custom skeleton. After adding pack files, restart the client and load again to
+rebuild the catalog. Saved paths absent from the catalog stay inactive.
+
+The native game-thread frame callback loads the selected resource through the
+engine's blocking JIT manifest, verifies the returned model name, then uses the
+native model setter. A first load can pause that frame. Stable models are not
+reloaded every frame, and failed selections wait for a toggle, selection change
+or new pawn before retrying. No installed files or mount settings are changed.
+The supplied pack remains in its installation; it is not redistributed here.
+
+Disabling/resetting restores the latest captured native model on the same
+validated pawn. Respawns, native model changes and full serialized entity
+identity changes invalidate the previous state. Cooperative stop disarms new
+swaps and queues restoration on the next native owner callback; if that
+callback no longer runs, restoration remains pending until process exit.
+**Stopped and resident is not physically unloaded.** Restart CS2 normally before
+loading a rebuilt DLL when an older copy is resident, then use the existing
+**Load Overlay.cmd** workflow. All observation stays in the permitted offline
+or private environment.
+
+The native and asset contracts are documented in
+[model-swap evidence](tools/CS2_MODEL_SWAP_EVIDENCE.md) and
+[pack evidence](tools/CS2_MODEL_ASSET_EVIDENCE.md). Verify installed native files
+with `python tools/inspect_model_swap.py` or the combined compatibility command.
+For the software D3D11 menu preview:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\player-model-menu.bmp 8 100000
+```
+
+**Verification, October 18, 2026:** public and diagnostic x64 Release builds
+succeed with **40/40 CTest suites passing in each**. The native adapter has 89
+checks covering loading failures, model changes, stale identities, death,
+reentrant callbacks and cooperative stop/restoration; resource parsing has 31
+malformed/missing/valid metadata checks. Mouse-driven picker/config checks pass,
+and the software D3D11 menu preview was inspected. All **21 installed-file
+compatibility checks** pass in `logs/compatibility/20261018T125010645709Z/`;
+40 deliberately incorrect model header contracts are rejected. Both payloads
+retain zero static TLS and delay imports. No client/server was launched, and
+live character appearance and animation remain unobserved.
 
 ## Scoped weapon zoom
 
@@ -99,7 +156,7 @@ rejected. With the preview build enabled, reproduce the Camera image with:
 ## Local configs
 
 Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
-to save all current Visuals (including Camera and Scoped zoom), Movement, World, Lighting and Aim settings. Select
+to save all current Visuals (including Camera, Scoped zoom and Player model), Movement, World, Lighting and Aim settings. Select
 a saved preset and click **Load config** to apply it. Type a different name to
 save another preset; **Refresh list** picks up files added outside the menu.
 Loading replaces current options, including feature enable switches. Presets

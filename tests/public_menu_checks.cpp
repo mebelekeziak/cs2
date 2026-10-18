@@ -6,6 +6,8 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "model_swap_settings.h"
+#include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
 #include "local_config.h"
@@ -17,6 +19,8 @@
 #include <algorithm>
 #include <limits>
 #include <chrono>
+#include <fstream>
+#include <cstdint>
 
 namespace {
 int failures = 0;
@@ -311,6 +315,75 @@ void ZoomControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void WritePickerModel(const std::filesystem::path& root, const char* relative) {
+    const auto path = root / relative;
+    std::filesystem::create_directories(path.parent_path());
+    const std::string graph = "animation/graphs/worldmodel/worldmodel.vnmgraph";
+    std::string bytes(52, '\0');
+    bytes += graph;
+    bytes += '\0';
+    const auto put = [&](std::size_t offset, std::uint32_t value) { std::memcpy(bytes.data() + offset, &value, sizeof(value)); };
+    put(0, static_cast<std::uint32_t>(bytes.size())); bytes[4] = 12; bytes[6] = 1;
+    put(8, 8); put(12, 1); std::memcpy(bytes.data() + 16, "RERL", 4);
+    put(20, 8); put(24, static_cast<std::uint32_t>(bytes.size() - 28));
+    put(28, 8); put(32, 1); put(36, 1); put(44, 8);
+    std::ofstream stream(path, std::ios::binary);
+    stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+void PlayerModelControls() {
+    const auto savedEsp = EspGetSettings();
+    auto disabledEsp = savedEsp;
+    disabledEsp.enabled = false;
+    EspSetSettings(disabledEsp);
+    const auto fixture = LocalConfigDirectory().parent_path() / "logs" /
+        ("menu-model-check-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto graph = fixture / "animation/graphs/worldmodel/worldmodel.vnmgraph_c";
+    std::filesystem::create_directories(graph.parent_path());
+    std::ofstream(graph).put('x');
+    WritePickerModel(fixture, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl_c");
+    WritePickerModel(fixture, "agents/models/hmn_ag2/zenless_zone_zero/miyabi/miyabi.vmdl_c");
+    std::string error;
+    Expect(ModelCatalogDiscover(fixture, error), "picker discovers deterministic supported model fixture");
+    ClickControl("Player model");
+    ImGui::SetScrollY(Body(), Body()->ScrollMax.y);
+    Frame(); Frame();
+    ClickControl("Enable local player model");
+    Expect(ModelSwapGetSettings().enabled && !EspGetSettings().enabled, "local model master works while ESP is disabled");
+    ClickControl("##PlayerModelSearch");
+    Expect(ImGui::GetIO().WantTextInput, "player model search accepts keyboard input");
+    ImGui::GetIO().AddInputCharactersUTF8("miyabi");
+    Frame(); Frame();
+    ImGuiWindow* list = Body()->DC.ChildWindows.empty() ? nullptr : Body()->DC.ChildWindows.back();
+    Expect(list && list->ParentWindow == Body() && (list->Flags & ImGuiWindowFlags_ChildWindow) &&
+        list->Size.y >= 150 && list->Size.y <= 156, "model picker has a bounded scrollable list");
+    constexpr const char* path = "agents/models/hmn_ag2/zenless_zone_zero/miyabi/miyabi.vmdl";
+    const std::string label = std::string("miyabi  (") + path + ")";
+    if (list) ClickControl(label.c_str(), 0.3f, list, ImHashStr(label.c_str(), 0, list->GetID(path)));
+    Expect(ModelSwapGetSettings().enabled && std::string_view(ModelSwapGetSettings().model.data()) == path,
+        "searchable picker publishes the local player resource selection");
+    ModelSwapSetRuntimeStatus("Waiting for a local player.");
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    const char* labels = ImGui::GetCurrentContext()->LogBuffer.c_str();
+    Expect(std::strstr(labels, "1 matching / 2 available models") && std::strstr(labels, "Selected:") &&
+        std::strstr(labels, "Use third person") && std::strstr(labels, "Waiting for a local player."),
+        "model picker shows filtered count, selection, third-person help and runtime status");
+    ImGui::LogFinish();
+    ImGui::Render();
+    const auto chosen = ModelSwapGetSettings();
+    ClickControl("Reset ESP appearance");
+    Expect(ModelSwapGetSettings() == chosen, "ESP reset preserves the selected model");
+    ClickControl("Reset player model");
+    Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model reset clears selection and disables local override");
+    ClickControl("Player model");
+    ModelSwapSetSettings(chosen);
+    ModelSwapSetRuntimeStatus(nullptr);
+    EspSetSettings(savedEsp);
+    std::filesystem::remove_all(fixture);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void CheckTabsFit(const char* message) {
     bool fit = true;
     for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs" }) {
@@ -372,6 +445,7 @@ int main() {
     EspAppearanceControls();
     CameraControls();
     ZoomControls();
+    PlayerModelControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -673,6 +747,7 @@ int main() {
     const auto savedZoom = ZoomGetSettings();
     const auto savedAim = SilentAimGetSettings();
     const auto savedShotLog=ShotLogGetSettings();
+    const auto savedModel=ModelSwapGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -683,10 +758,12 @@ int main() {
     ZoomResetSettings();
     SilentAimSetSettings({});
     ShotLogSetSettings({});
+    ModelSwapResetSettings();
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings().enabled && ThirdPersonGetSettings() == savedCamera &&
-           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog,
-           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom and logging settings");
+           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
+           ModelSwapGetSettings() == savedModel,
+           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging and player model settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -734,6 +811,7 @@ int main() {
     ThirdPersonResetSettings();
     ZoomResetSettings();
     ShotLogSetSettings({});
+    ModelSwapResetSettings();
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

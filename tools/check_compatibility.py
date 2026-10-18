@@ -20,6 +20,7 @@ MODULES = (
     "bin/win64/scenesystem.dll", "bin/win64/worldrenderer.dll",
     "bin/win64/materialsystem2.dll", "bin/win64/rendersystemdx11.dll",
     "bin/win64/animationsystem.dll", "bin/win64/tier0.dll",
+    "csgo/bin/win64/host.dll", "bin/win64/resourcesystem.dll",
 )
 
 
@@ -51,6 +52,7 @@ def component_commands(game):
         ("anti_aim", "inspect_anti_aim.py", ["--client", client]),
         ("third_person", "inspect_third_person.py", ["--client", client]),
         ("scoped_zoom", "inspect_zoom.py", ["--client", client]),
+        ("model_swap", "inspect_model_swap.py", ["--game", str(game)]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
         ("aim_hitboxes", "inspect_silent_aim_hitboxes.py", ["--client", client]),
         ("aim_geometry", "inspect_aim_geometry.py", ["--client", client,
@@ -120,6 +122,7 @@ def main():
                     *sorted((ROOT / "src").glob("aim_*.cpp")),
                     ROOT / "src/silent_aim.cpp", ROOT / "src/silent_aim_command.cpp", ROOT / "src/silent_aim_target.cpp",
                     ROOT / "src/shot_events.cpp", ROOT / "src/shot_log.cpp", ROOT / "src/shot_logging.cpp",
+                    ROOT / "src/model_swap.cpp", ROOT / "src/model_catalog.cpp", ROOT / "src/model_resource_validation.cpp",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]
     snapshot["source_sha256"] = {

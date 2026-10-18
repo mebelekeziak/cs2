@@ -6,6 +6,8 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "model_swap_settings.h"
+#include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
 #include "local_config.h"
@@ -119,6 +121,65 @@ void DrawConfigs(bool entering) {
     ImGui::Separator();
     ImGui::TextWrapped("Saves Visuals, Movement, World, Lighting and Aim options. Loading replaces current options.");
     ImGui::TextWrapped("Presets stay on disk between runs. Choose Load config to apply one.");
+}
+
+void DrawPlayerModel() {
+    if (!ImGui::CollapsingHeader("Player model", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) return;
+    auto settings = ModelSwapGetSettings();
+    bool changed = FeatureCheckbox("Enable local player model", settings.enabled);
+    ImGui::TextWrapped("Changes your player only. Use third person to inspect the model.");
+
+    static ImGuiTextFilter filter;
+    static std::shared_ptr<const ModelCatalog> cachedCatalog;
+    static std::vector<std::size_t> matches;
+    const auto catalog = ModelCatalogSnapshot();
+    ImGui::TextUnformatted("Search models");
+    ImGui::SetNextItemWidth(-1);
+    const bool filterChanged = filter.Draw("##PlayerModelSearch", -1);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Search model names or paths. Separate terms with commas.");
+    if (filterChanged || cachedCatalog != catalog) {
+        cachedCatalog = catalog;
+        matches.clear();
+        if (catalog) {
+            for (std::size_t index = 0; index < catalog->size(); ++index) {
+                const auto& entry = (*catalog)[index];
+                const auto searchable = entry.path + " " + entry.label;
+                if (filter.PassFilter(searchable.c_str())) matches.push_back(index);
+            }
+        }
+    }
+    ImGui::TextDisabled("%zu matching / %zu available models", matches.size(), catalog ? catalog->size() : 0);
+    if (filterChanged) ImGui::SetNextWindowScroll({0, 0});
+    if (ImGui::BeginListBox("##PlayerModelList", { -1, 155 })) {
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(matches.size()));
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                const auto& entry = (*catalog)[matches[static_cast<std::size_t>(row)]];
+                const auto label = entry.label + "  (" + entry.path + ")";
+                const bool selected = entry.path == settings.model.data();
+                ImGui::PushID(entry.path.c_str());
+                if (ImGui::Selectable(label.c_str(), selected)) changed |= ModelSwapSetModel(settings, entry.path);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.path.c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndListBox();
+    }
+    if (!catalog) ImGui::TextWrapped("No model catalog available. Loose custom models are discovered when the overlay starts.");
+    else if (catalog->empty()) ImGui::TextWrapped("No supported loose player models found.");
+    else if (matches.empty()) ImGui::TextWrapped("No models match this search.");
+    if (settings.model[0]) {
+        ImGui::TextWrapped("Selected: %s", settings.model.data());
+        const auto found = catalog ? std::lower_bound(catalog->begin(), catalog->end(), settings.model.data(),
+            [](const ModelCatalogEntry& entry, const char* path) { return entry.path.compare(path) < 0; }) : ModelCatalog::const_iterator{};
+        if (catalog && (found == catalog->end() || found->path != settings.model.data()))
+            ImGui::TextWrapped("The selected model is unavailable in the current catalog. Choose an available model.");
+    } else ImGui::TextWrapped("Select a model to apply.");
+    const auto status = ModelSwapRuntimeStatus();
+    if (status[0]) ImGui::TextWrapped("%s", status.data());
+    if (changed) ModelSwapSetSettings(settings);
+    if (ImGui::Button("Reset player model", { -1, 0 })) ModelSwapResetSettings();
 }
 }
 
@@ -346,6 +407,7 @@ void DrawPublicMenu() {
                     if (zoomChanged) ZoomSetSettings(zoom);
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }
+                DrawPlayerModel();
             }
             ImGui::EndChild();
             if (reset) EspResetStyle();

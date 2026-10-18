@@ -7,6 +7,7 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "model_swap_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -29,6 +30,7 @@ struct Snapshot {
     ThirdPersonSettings camera;
     ZoomSettings zoom;
     ShotLogSettings shot_log;
+    ModelSwapSettings model_swap;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -58,6 +60,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(camera, height); FIELD(camera, collision);
     FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2);
     FIELD(shot_log, enabled); FIELD(shot_log, verbose);
+    FIELD(model_swap, enabled); FIELD(model_swap, model);
 #undef COLOR
 #undef FIELD
 }
@@ -78,7 +81,12 @@ std::string_view Trim(std::string_view value) {
     return value.substr(first, value.find_last_not_of(" \t\r") - first + 1);
 }
 template<class T> bool Parse(std::string_view text, T& value) {
-    if constexpr (std::is_same_v<T, bool>) {
+    if constexpr (std::is_same_v<T, std::array<char, 260>>) {
+        ModelSwapSettings parsed;
+        if (!ModelSwapSetModel(parsed, text)) return false;
+        value = parsed.model;
+        return true;
+    } else if constexpr (std::is_same_v<T, bool>) {
         if (text != "0" && text != "1") return false;
         value = text == "1";
         return true;
@@ -149,13 +157,14 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
     Fields(snapshot, [&](const auto& key, const auto& value) {
         text << key << '=';
         if constexpr (std::is_enum_v<std::remove_cvref_t<decltype(value)>>) text << static_cast<int>(value);
+        else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 260>>) text << value.data();
         else text << value;
         text << '\n';
     });
@@ -224,6 +233,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     ThirdPersonSetSettings(snapshot.camera);
     ZoomSetSettings(snapshot.zoom);
     ShotLogSetSettings(snapshot.shot_log);
+    ModelSwapSetSettings(snapshot.model_swap);
     return true;
 }
 

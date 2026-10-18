@@ -26,6 +26,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
+  src/model_swap.cpp src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp
   src/third_person.cpp src/third_person_settings.cpp src/third_person_view.cpp
   src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim_history.cpp src/anti_aim.cpp
   src/silent_aim.cpp src/silent_aim_settings.cpp src/silent_aim_math.cpp src/silent_aim_command.cpp src/silent_aim_target.cpp
@@ -55,6 +56,23 @@ endforeach()
 target_link_options(cs2_overlay PRIVATE /INCREMENTAL:NO)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(model_resource_validation_checks tests/model_resource_validation_checks.cpp src/model_resource_validation.cpp)
+  target_include_directories(model_resource_validation_checks PRIVATE include)
+  target_compile_definitions(model_resource_validation_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(model_resource_validation_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME model_resource_validation_checks COMMAND model_resource_validation_checks)
+  add_executable(model_catalog_checks tests/model_catalog_checks.cpp src/model_catalog.cpp src/model_swap_settings.cpp src/model_resource_validation.cpp)
+  target_include_directories(model_catalog_checks PRIVATE include)
+  target_compile_definitions(model_catalog_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_definitions(model_catalog_checks PRIVATE CS2_WORKSPACE_ROOT=L"${CMAKE_BINARY_DIR}/model_catalog_test_workspace")
+  target_compile_options(model_catalog_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME model_catalog_checks COMMAND model_catalog_checks)
+  add_executable(model_swap_checks tests/model_swap_checks.cpp src/model_swap.cpp src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp)
+  target_include_directories(model_swap_checks PRIVATE include)
+  target_link_libraries(model_swap_checks PRIVATE minhook user32)
+  target_compile_definitions(model_swap_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_MODEL_SWAP_CHECKS)
+  target_compile_options(model_swap_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME model_swap_checks COMMAND model_swap_checks)
   add_executable(aim_pipeline_checks tests/aim_pipeline_checks.cpp src/silent_aim.cpp src/silent_aim_command.cpp
     src/silent_aim_math.cpp src/silent_aim_settings.cpp src/aim_hitchance.cpp src/shot_log_settings.cpp)
   target_include_directories(aim_pipeline_checks PRIVATE include)
@@ -133,6 +151,8 @@ if(BUILD_TESTING)
   target_compile_options(public_menu_checks PRIVATE /W4 /Zc:threadSafeInit-)
   add_test(NAME public_menu_checks COMMAND public_menu_checks)
   target_sources(local_config_checks PRIVATE src/zoom_settings.cpp src/shot_log_settings.cpp)
+  target_sources(local_config_checks PRIVATE src/model_swap_settings.cpp)
+  target_sources(public_menu_checks PRIVATE src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp)
   target_sources(public_menu_checks PRIVATE src/zoom_settings.cpp src/shot_log_settings.cpp src/console_control_state.cpp)
   add_executable(silent_aim_checks tests/silent_aim_checks.cpp src/silent_aim_math.cpp src/silent_aim_command.cpp src/silent_aim_target.cpp src/silent_aim_settings.cpp)
   target_sources(silent_aim_checks PRIVATE src/aim_hitchance.cpp)
@@ -234,6 +254,7 @@ endif()
 if(CS2_BUILD_UI_PREVIEW)
   add_executable(public_menu_preview tools/public_menu_preview.cpp src/local_config.cpp src/public_menu.cpp src/esp_draw.cpp src/movement_settings.cpp src/world_settings.cpp src/silent_aim_settings.cpp src/anti_aim_settings.cpp src/third_person_settings.cpp)
   target_sources(public_menu_preview PRIVATE src/zoom_settings.cpp src/shot_log_settings.cpp src/console_control_state.cpp)
+  target_sources(public_menu_preview PRIVATE src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp)
   target_include_directories(public_menu_preview PRIVATE include)
   target_link_libraries(public_menu_preview PRIVATE imgui_dx11 user32)
   target_compile_definitions(public_menu_preview PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE CS2_WORKSPACE_ROOT=L"${CMAKE_SOURCE_DIR}")

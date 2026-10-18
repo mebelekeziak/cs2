@@ -16,8 +16,13 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "silent_aim_settings.h"
+#include "model_swap_settings.h"
+#include "model_catalog.h"
 #include <cstdio>
 #include <cwchar>
+#include <cstring>
+#include <cstdint>
+#include <fstream>
 
 using Microsoft::WRL::ComPtr;
 
@@ -27,17 +32,51 @@ bool Check(HRESULT result, const char* action) {
     std::fprintf(stderr, "%s failed: 0x%08lx\n", action, result);
     return false;
 }
+struct ModelPickerFixture {
+    std::filesystem::path root;
+    ~ModelPickerFixture() {
+        if (!root.empty()) { std::error_code error; std::filesystem::remove_all(root, error); }
+    }
+    bool Create() {
+        root = std::filesystem::path(CS2_WORKSPACE_ROOT) / L"logs" /
+            (L"model-picker-preview-" + std::to_wstring(GetCurrentProcessId()));
+        const auto graphPath = root / "animation/graphs/worldmodel/worldmodel.vnmgraph_c";
+        std::filesystem::create_directories(graphPath.parent_path());
+        std::ofstream(graphPath).put('x');
+        const std::string graph = "animation/graphs/worldmodel/worldmodel.vnmgraph";
+        for (const auto* name : {"ellen", "miyabi", "soukaku", "zhao"}) {
+            const auto model = root / "agents/models/hmn_ag2/zenless_zone_zero" / name / (std::string(name) + ".vmdl_c");
+            std::filesystem::create_directories(model.parent_path());
+            std::string bytes(52, '\0'); bytes += graph; bytes += '\0';
+            const auto put = [&](std::size_t offset, std::uint32_t value) { std::memcpy(bytes.data() + offset, &value, sizeof(value)); };
+            put(0, static_cast<std::uint32_t>(bytes.size())); bytes[4] = 12; bytes[6] = 1;
+            put(8, 8); put(12, 1); std::memcpy(bytes.data() + 16, "RERL", 4);
+            put(20, 8); put(24, static_cast<std::uint32_t>(bytes.size() - 28));
+            put(28, 8); put(32, 1); put(36, 1); put(44, 8);
+            std::ofstream stream(model, std::ios::binary);
+            stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        std::string error;
+        if (!ModelCatalogDiscover(root, error)) { std::fprintf(stderr, "%s\n", error.c_str()); return false; }
+        ModelSwapSettings settings;
+        settings.enabled = true;
+        ModelSwapSetModel(settings, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl");
+        ModelSwapSetSettings(settings);
+        ModelSwapSetRuntimeStatus("Waiting for a local player.");
+        return true;
+    }
+};
 }
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 7 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 7.\n");
+    if (selectedTab < 0 || selectedTab > 8 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 8.\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -87,6 +126,8 @@ int wmain(int argc, wchar_t** argv) {
     if (selectedTab == 4) SilentAimSetSettings({true, 5, AimHitbox::Chest, true, 70, 256});
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150});
+    ModelPickerFixture modelFixture;
+    if (selectedTab == 8 && !modelFixture.Create()) { ImGui::DestroyContext(); return 1; }
     if (!ImGui_ImplDX11_Init(device.Get(), context.Get())) {
         ImGui::DestroyContext();
         return 1;
@@ -108,15 +149,15 @@ int wmain(int argc, wchar_t** argv) {
                 menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
                 if (selectedTab >= 6 && !menu->DC.ChildWindows.empty()) {
                     auto* child = menu->DC.ChildWindows[0];
-                    child->StateStorage.SetInt(child->GetID(selectedTab == 6 ? "Camera" : "Scoped zoom"), 1);
+                    child->StateStorage.SetInt(child->GetID(selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
                     child->StateStorage.SetInt(child->GetID("Live preview"), 0);
                 }
             }
         }
-        if (frame == 1 && scroll) {
+        if (frame == 1 && (scroll || selectedTab == 8)) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu && !menu->DC.ChildWindows.empty())
-                ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll));
+                ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll ? scroll : 100000));
         }
     }
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

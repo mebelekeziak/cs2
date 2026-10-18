@@ -7,6 +7,7 @@
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "shot_log_settings.h"
+#include "model_swap_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -64,6 +65,7 @@ int main() {
     Expect(ZoomGetSettings() == zoomDefaults, "scoped zoom reset restores both levels and disables override");
     Expect(!AntiAimGetSettings().enabled, "anti aim starts disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "shot logs start enabled with verbose diagnostics disabled");
+    Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
@@ -75,6 +77,8 @@ int main() {
         "default preset explicitly saves both scoped zoom levels");
     Expect(defaults.find("shot_log.enabled=1\nshot_log.verbose=0\n") != std::string::npos,
         "default preset explicitly saves human shot logs enabled and verbose console diagnostics disabled");
+    Expect(defaults.find("model_swap.enabled=0\nmodel_swap.model=\n") != std::string::npos,
+        "default preset saves disabled player model and an empty path");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -108,6 +112,10 @@ int main() {
     ZoomSetSettings(expectedZoom);
     const ShotLogSettings expectedShotLog{false,true};
     ShotLogSetSettings(expectedShotLog);
+    ModelSwapSettings expectedModel;
+    expectedModel.enabled = true;
+    Expect(ModelSwapSetModel(expectedModel, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl"), "prepare selected custom model");
+    ModelSwapSetSettings(expectedModel);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
@@ -116,13 +124,14 @@ int main() {
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
-        ShotLogGetSettings()==ShotLogSettings{true,false},
+        ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{},
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim, "aim, autofire, threshold and sample count roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom, "scoped zoom master, no zoom and fractional second level roundtrip");
+    Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
         "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
@@ -171,6 +180,10 @@ int main() {
         "version=1\nshot_log.enabled=0\nshot_log.enabled=1\n",
         "version=1\nshot_log.verbose=0\nshot_log.verbose=1\n",
         "version=1\nshot_log.enabled=1\naim.enabled=0\nshot_log.verbose=invalid\n",
+        "version=1\nmodel_swap.enabled=2\n", "version=1\nmodel_swap.model=../escape.vmdl\n",
+        "version=1\nmodel_swap.enabled=0\naim.enabled=0\nmodel_swap.model=C:/outside.vmdl\n",
+        "version=1\nmodel_swap.model=agents/bad.vmdl_c\n",
+        "version=1\nmodel_swap.model=agents/first.vmdl\nmodel_swap.model=agents/second.vmdl\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -187,6 +200,11 @@ int main() {
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore both default levels disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
+    Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
+    Write(badPath, "version=1\nmodel_swap.enabled=1\nmodel_swap.model=Agents\\Example\\Example.VMDL\n");
+    Expect(LocalConfigLoad(bad, error) && ModelSwapGetSettings().enabled &&
+        std::string_view(ModelSwapGetSettings().model.data()) == "agents/example/example.vmdl",
+        "config loading normalizes valid model resource names");
     Write(badPath,"version=1\nshot_log.enabled=0\n");
     Expect(LocalConfigLoad(bad,error) && ShotLogGetSettings()==ShotLogSettings{false,false},
         "preset with only human logging key uses independent verbose default");
