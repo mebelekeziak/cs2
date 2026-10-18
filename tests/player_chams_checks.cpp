@@ -30,6 +30,7 @@ constexpr std::uintptr_t scene=0x10000000,material=0x22220000,mode=0x33330000;
 WorldDrawList list{};
 HANDLE entered=nullptr,resume=nullptr;
 bool materialsReady=true,replaceIdentity=false;
+bool lastOccluded=false;
 unsigned localTransition=0;
 void Check(bool value,const char* message) {++checks;if (!value){++failures;std::printf("FAIL %s\n",message);}}
 std::uintptr_t Address(const void* p){return reinterpret_cast<std::uintptr_t>(p);}
@@ -53,7 +54,7 @@ void Reset(){
 void Setup(){
     Reset();object.fill(0);descriptor.fill(0);args.fill(0);view.fill(0);skeleton.fill(0);localSkeleton.fill(0);
     pawn.fill(0);localPawn.fill(0);controller.fill(0);localController.fill(0);bucket.fill(0);system.fill(0);
-    calls=materialCalls=0;materialsReady=true;replaceIdentity=false;localTransition=0;
+    calls=materialCalls=0;materialsReady=true;replaceIdentity=false;localTransition=0;lastOccluded=false;
     Bind(1,controller.data());Bind(2,pawn.data());Bind(3,localController.data());Bind(4,localPawn.data());
     Put(system.data(),0x10,Address(bucket.data()));
     Put(reinterpret_cast<void*>(client),ent::globals::dwGameEntitySystem,Address(system.data()));
@@ -80,8 +81,9 @@ void Run(){PlayerChamsTestGenerate(descriptor.data(),object.data(),args.data(),&
 }
 bool PlayerChamsMaterialsInitialize(PlayerChamsLogCallback) noexcept {return true;}
 void PlayerChamsMaterialsOwnerFrame() noexcept {}
-bool PlayerChamsMaterialsResolve(PlayerChamsStyle,std::uintptr_t,std::uintptr_t& outputMaterial,std::uintptr_t& outputMode) noexcept {
+bool PlayerChamsMaterialsResolve(PlayerChamsStyle,std::uintptr_t,std::uintptr_t& outputMaterial,std::uintptr_t& outputMode,bool occluded) noexcept {
     ++materialCalls;outputMaterial=material;outputMode=mode;
+    lastOccluded=occluded;
     if(replaceIdentity)Put(bucket.data()+2*0x70,0x10,std::uint32_t{(5U<<15)|2});
     if(localTransition==1)Put(localPawn.data(),ent::C_BaseEntity::m_iTeamNum,std::uint8_t{3});
     if(localTransition==2)Put(reinterpret_cast<void*>(client),ent::globals::dwLocalPlayerPawn,Address(pawn.data()));
@@ -124,6 +126,9 @@ int main(){
     Reset();before=list;list.overflowCount=1;
     Check(!PlayerChamsApplyNewDraws(before,list,Address(object.data()),material,mode,color,changed),"overflow before fixed capacity rejected");
     Setup();Run();Check(calls==1&&Replaced(packets[0]),"enemy player native hook replaces packet");
+    Check(lastOccluded&&materialCalls==1,"through walls defaults to one depth-disabled material lookup");
+    Check(list.fixedCount==1&&Get<std::uint32_t>(packets[0].data(),0x58)==0xA5A5A5A5U,"through walls keeps one draw and preserves native ordering key");
+    Setup();auto depthSettings=PlayerChamsGetSettings();depthSettings.throughWalls=false;PlayerChamsSetSettings(depthSettings);Run();Check(Replaced(packets[0])&&!lastOccluded&&materialCalls==1&&list.fixedCount==1,"through walls off uses one native depth-enabled material");
     Setup();auto settings=PlayerChamsGetSettings();settings.enabled=false;PlayerChamsSetSettings(settings);Run();Check(calls==1&&!Replaced(packets[0]),"disabled original regenerates baseline");
     Setup();Put(descriptor.data(),0,std::uintptr_t{0});Run();Check(!Replaced(packets[0]),"foreign descriptor passthrough");
     Setup();Put(args.data(),0x10,std::uintptr_t{0});Run();Check(!Replaced(packets[0]),"missing view passthrough");

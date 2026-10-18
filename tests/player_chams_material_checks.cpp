@@ -7,11 +7,11 @@
 #include <thread>
 
 namespace {
-int checks=0,failures=0,constructs=0,destroys=0,parses=0,creates=0,preloads=0,modes=0;
+int checks=0,failures=0,constructs=0,destroys=0,parses=0,creates=0,preloads=0,modes=0,occludedParses=0,failCreateAt=0;
 bool parseSuccess=true,preloadSuccess=true,createSuccess=true,rootSuccess=true;
 bool alive=false,blockCreate=false,reenter=false;
 HANDLE entered=nullptr,releaseCreate=nullptr;
-std::uintptr_t bindings[]{0x100001,0x100002};
+std::uintptr_t bindings[]{0x100001,0x100002,0x100003,0x100004};
 void* expectedArena=nullptr;
 void Check(bool result,const char* label) {
     ++checks;
@@ -26,21 +26,25 @@ void Destroy(void* arena) { ++destroys; Check(alive && arena==expectedArena,"des
 bool Parse(void* node,void* error,const char* text,const void* format,const char* name,unsigned flags) {
     ++parses; Check(alive && node==static_cast<unsigned char*>(expectedArena)+0x78 && !error && format && name && !*name && !flags,"parser ABI and owner");
     Check(text && std::strstr(text,"format:generic:version{") && std::strstr(text,"shader ="),"native material source schema");
+    if (std::strstr(text,"F_DISABLE_Z_BUFFERING = 1")) {
+        ++occludedParses;
+        Check(std::strstr(text,"F_DISABLE_Z_PREPASS = 1")!=nullptr,"occluded shader disables native depth prepass too");
+    }
     return parseSuccess;
 }
 void* Create(void* manager,void** output,const char* name,void* node,unsigned flags,bool finalFlag) {
     ++creates; Check(manager && alive && node && flags==1 && finalFlag && name,"material create ABI consumes live root");
     if (reenter) PlayerChamsMaterialsOwnerFrame();
     if (blockCreate) { SetEvent(entered); WaitForSingleObject(releaseCreate,INFINITE); }
-    const unsigned style=std::strstr(name,"iridescent") ? 1u : 0u;
-    *output=createSuccess ? &bindings[style] : nullptr; return output;
+    const unsigned style=(std::strstr(name,"iridescent") ? 1u : 0u)+(std::strstr(name,"_occluded") ? 2u : 0u);
+    *output=createSuccess && creates!=failCreateAt ? &bindings[style] : nullptr; return output;
 }
 std::uintptr_t Mode(void* material,void* view) {
     ++modes; Check(material && view==reinterpret_cast<void*>(0x12345030),"per-view native mode argument"); return 0x444444;
 }
 bool Preload(const char* path) { ++preloads; Check(path && std::strstr(path,".vtex"),"load dependency before create"); return preloadSuccess; }
 void Reset() {
-    constructs=destroys=parses=creates=preloads=modes=0;
+    constructs=destroys=parses=creates=preloads=modes=occludedParses=failCreateAt=0;
     parseSuccess=preloadSuccess=createSuccess=rootSuccess=true;
     alive=blockCreate=reenter=false;
     PlayerChamsMaterialsTestConfigure({Construct,Root,Destroy,Parse,Create,Mode,Preload});
@@ -48,9 +52,9 @@ void Reset() {
     Check(PlayerChamsMaterialsInitialize(),"mock initialize");
 }
 void Enable() { auto settings=PlayerChamsGetSettings(); settings.enabled=true; PlayerChamsSetSettings(settings); }
-bool Resolve(PlayerChamsStyle style=PlayerChamsStyle::Flat) {
+bool Resolve(PlayerChamsStyle style=PlayerChamsStyle::Flat,bool occluded=false) {
     std::uintptr_t material=99,mode=99;
-    const bool result=PlayerChamsMaterialsResolve(style,0x12345000,material,mode);
+    const bool result=PlayerChamsMaterialsResolve(style,0x12345000,material,mode,occluded);
     Check(result ? (material && mode) : (!material && !mode),"resolver clears failed output"); return result;
 }
 }
@@ -61,16 +65,22 @@ int main() {
     Check(!constructs && !preloads,"disabled defaults never load resources");
     Check(!Resolve(),"resolve unavailable before prepare");
     Enable(); reenter=true; PlayerChamsMaterialsOwnerFrame();
-    Check(constructs==2 && destroys==2 && creates==2 && preloads==2 && !alive,"two immutable materials and dependency loads");
+    Check(constructs==4 && destroys==4 && creates==4 && preloads==2 && !alive,"four immutable visible/occluded materials and dependency loads");
+    Check(occludedParses==2,"only the two occluded material sources disable depth");
     Check(Resolve() && Resolve(PlayerChamsStyle::Iridescent),"both styles published");
+    Check(Resolve(PlayerChamsStyle::Flat,true) && Resolve(PlayerChamsStyle::Iridescent,true),"both depth-disabled styles published");
+    std::uintptr_t visible=0,hidden=0,mode=0;
+    Check(PlayerChamsMaterialsResolve(PlayerChamsStyle::Flat,0x12345000,visible,mode) &&
+        PlayerChamsMaterialsResolve(PlayerChamsStyle::Flat,0x12345000,hidden,mode,true) && visible!=hidden,
+        "occluded resolver selects its own native binding");
     for (int i=0;i<40;++i) {
         auto settings=PlayerChamsGetSettings(); settings.color[0]=i/40.0f; settings.iridescentColor[1]=i/40.0f;
         PlayerChamsSetSettings(settings); PlayerChamsMaterialsOwnerFrame();
     }
-    Check(constructs==2 && creates==2 && preloads==2,"palette edits do not recreate or leak native resources");
+    Check(constructs==4 && creates==4 && preloads==2,"palette edits do not recreate or leak native resources");
     Check(!Resolve(static_cast<PlayerChamsStyle>(44)),"invalid style rejected");
     PlayerChamsMaterialsStop(); Check(!Resolve(),"stop disarms publication");
-    PlayerChamsMaterialsOwnerFrame(); Check(creates==2,"stop forbids new creation");
+    PlayerChamsMaterialsOwnerFrame(); Check(creates==4,"stop forbids new creation");
 
     Reset(); Enable(); parseSuccess=false; PlayerChamsMaterialsOwnerFrame();
     Check(constructs==1 && destroys==1 && !creates && !alive,"parse failure destroys native arena");
@@ -82,6 +92,9 @@ int main() {
     Check(!constructs && !creates && preloads==1,"dependency failure leaves draw unchanged");
     Reset(); Enable(); createSuccess=false; PlayerChamsMaterialsOwnerFrame();
     Check(constructs==1 && destroys==1 && creates==1 && !Resolve(),"null native binding cleanup");
+    Reset(); Enable(); failCreateAt=4; PlayerChamsMaterialsOwnerFrame();
+    Check(constructs==4 && destroys==4 && !Resolve() && !Resolve(PlayerChamsStyle::Flat,true),
+        "partial occluded preparation never publishes a mixed material set");
 
     Reset(); Enable(); blockCreate=true;
     entered=CreateEventW(nullptr,TRUE,FALSE,nullptr); releaseCreate=CreateEventW(nullptr,TRUE,FALSE,nullptr);

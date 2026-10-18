@@ -87,6 +87,63 @@ The verifier freezes both whole routines and exact enum-forwarding, clone
 parity and callback RTTI anchors. Read-only disassembly is retained in
 `logs/research/chams-create-bool*.txt`.
 
+## Optional depth-disabled variants
+
+There are four immutable bindings: Flat and Iridescent, each with ordinary
+depth behavior and with depth disabled. Their colors use the same verified
+per-instance RGBA path. `PlayerChamsMaterialsResolve` selects the depth-disabled
+variant when its final `occluded` argument is true. Selection does not mutate
+an existing shared material or change scene/entity state. The caller selects
+one variant for the requested draw; no extra same-color pass is needed.
+
+The depth-disabled recipes append `F_DISABLE_Z_BUFFERING = 1` and
+`F_DISABLE_Z_PREPASS = 1` before the source object's closing brace. These names
+come from the installed shader metadata, not an assumed material flag. The
+first is feature index 1 for `csgo_unlitgeneric` and index 3 for
+`csgo_character`; the prepass feature is the next index in both shaders.
+
+Installed feature metadata maps render states `DepthEnable` and
+`DepthWriteEnable` to native register type 5, IDs **0xFFFF0010** and
+**0xFFFF0011**. Both expression-backed states contain the exact conditional
+bytecode below, with `ii` being the independently checked feature index:
+
+```text
+1A ii 04 07 00 0F 00 07 00 00 00 00 02 14 00 07 00 00 80 3F 00
+```
+
+This is `F_DISABLE_Z_BUFFERING ? 0 : 1`: enabling the flag yields zero for
+both depth testing and depth writing. The additional default-backed
+`DepthWriteEnable` entry is already zero. Thus every depth-write entry exposed
+by these selected shader feature tables resolves to zero for this recipe.
+Normal variants retain their original flags and shader depth behavior.
+
+The expression interpretation is cross-checked against the primary
+[VRF 20.0 evaluator](https://github.com/ValveResourceFormat/ValveResourceFormat/blob/20.0/ValveResourceFormat/Serialization/VfxEval.cs)
+and its [conditional-expression test](https://github.com/ValveResourceFormat/ValveResourceFormat/blob/20.0/Tests/VfxEvalTests.cs).
+The test has the same feature/branch structure with opposite result constants;
+the installed tables explicitly put float zero in the true branch and float
+one in the false branch. The research source copies remain under
+`logs/research/chams-material/` with the existing VRF MIT license/provenance.
+
+`inspect_player_chams_depth.py` re-extracts both installed feature resources,
+checks their full hashes, uses the provenanced VRF20 DATA reader, and verifies
+the feature indexes, render-state IDs, source types, complete bytecode and
+zero depth-write defaults independently. It is an optional research reproducer
+requiring the existing provenanced CLI under `logs/research/vrf20/`; the main
+compatibility verifier remains standard-library-only and pins this decoded
+evidence through the complete installed shader hashes. Research output is
+`logs/research/chams-depth/`; the initial report is
+`logs/research/chams-material/depth-state-verification.json`.
+
+These contracts establish the native material's disabled depth test/write
+state. Final player visibility still depends on the native renderer emitting
+the player packet and drawing it in the appropriate color phase. Frustum or
+engine occlusion culling and material pass ordering are separate scene-draw
+contracts; shader depth flags alone do not establish those behaviors. Live
+through-wall appearance remains unobserved.
+
+## Material selection and lifetime
+
 `CMaterial2` RTTI identifies materialsystem2+0x129AD0. Its slot byte offset
 0x30 is +0xBA30, receiving `(material, view+0x30)` and returning the native mode
 variant. The player scene generator separately uses this same virtual slot;
@@ -96,7 +153,7 @@ substituted together in the current packet.
 Output bindings own a reference count at +0x20: the native ownership exchange
 at material+0x3ACE6 decrements the old binding, and +0x3AD0C increments the new
 binding atomically. Runtime acquires a reference after validating the binding,
-material RTTI and expected name, retaining both materials until process exit.
+material RTTI and expected name, retaining all four material variants until process exit.
 Stopping disarms callbacks and publication. Stopped and resident is not
 physically unloaded; retaining references avoids releasing resources while
 native rendering may still use queued work.

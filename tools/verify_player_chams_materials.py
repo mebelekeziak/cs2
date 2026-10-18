@@ -110,6 +110,13 @@ def verify(game, header):
             'constants': {k: hex(v) for k, v in constants.items()}, 'shaders': shaders,
             'native_windows': {k: list(v) for k, v in WINDOWS.items()},
             'shader_load_mode': 'Create arg6=true -> native enum0 asynchronous; matches native clone',
+            'depth_state_contract': {
+                'evidence': 'Full shader hashes pin the separately decoded feature metadata; reproduce with inspect_player_chams_depth.py',
+                'feature': 'F_DISABLE_Z_BUFFERING',
+                'feature_indexes': {'csgo_unlitgeneric': 1, 'csgo_character': 3},
+                'native_states': {'DepthEnable': '0xFFFF0010', 'DepthWriteEnable': '0xFFFF0011'},
+                'expression': 'F_DISABLE_Z_BUFFERING ? 0 : 1',
+                'depth_test_with_flag_one': False, 'depth_write_with_flag_one': False},
             'live_observation': False}
 
 

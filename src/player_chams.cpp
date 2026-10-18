@@ -152,7 +152,7 @@ void HookGenerate(void* descriptor,void* objectPointer,void* argsPointer,void* l
         !Read(reinterpret_cast<std::uintptr_t>(listPointer),after)) {
         rejections.fetch_add(1,std::memory_order_relaxed);return;
     }
-    if (!PlayerChamsMaterialsResolve(settings.style,view,material,mode)) {
+    if (!PlayerChamsMaterialsResolve(settings.style,view,material,mode,settings.throughWalls)) {
         status.store(PlayerChamsMaterialsStatus(),std::memory_order_release);return;
     }
     AcquireSRWLockShared(&mutationLock);
@@ -164,7 +164,8 @@ void HookGenerate(void* descriptor,void* objectPointer,void* argsPointer,void* l
             rejections.fetch_add(1,std::memory_order_relaxed);
         if (changed) {
             changedPackets.fetch_add(changed,std::memory_order_relaxed);
-            status.store("Player chams active.",std::memory_order_release);
+            status.store(settings.throughWalls?"Player chams active; material depth test/write disabled.":
+                "Player chams active; native material depth enabled.",std::memory_order_release);
         }
     }
     ReleaseSRWLockShared(&mutationLock);

@@ -17,6 +17,8 @@ Under **Visuals**, open **Player chams** and turn on **Enable player chams**.
 Choose **Flat** for a solid unlit material or **Iridescent** for the character
 shader's angle-dependent effect. Customize the selected style's **Flat color**
 or **Iridescent color**, including alpha. Both style tints save independently.
+**Through walls** starts checked and selects the style's material with depth
+testing and depth writes disabled. Uncheck it for normal depth-tested chams.
 Enemy players are selected by default. **Chams on teammates** and **Chams on local player** independently
 extend the selection; use third person to inspect your own player.
 
@@ -39,16 +41,18 @@ command. Standalone menu previews, without starting CS2:
 
 **Verification, October 18, 2026:** public and diagnostic x64 Release builds
 succeed, with **47/47 CTest suites passing in each**. The player adapter runs
-136 ownership/packet/lifecycle checks; material creation runs 77 lifecycle and
+139 ownership/packet/lifecycle checks; material creation runs 132 lifecycle and
 failure checks. Shared-owner, mouse-driven menu and config checks also pass.
 Both menu previews were inspected. Both payloads retain zero static TLS and
 delay imports. All **22 installed-file compatibility components** pass,
 including player ownership, native material creation and eight exact shader/
-texture assets; 33 deliberately incorrect chams contracts are rejected.
+texture assets; 33 deliberately incorrect chams header contracts and 12
+mutated ordering instruction windows are rejected.
 Automated verification did not launch CS2. A subsequent user-run session log
 confirms hook installation, real D3D11 rendering and chams packet edits; the
-agent has not visually verified player appearance, animation or alpha blending. Original packet pass order is preserved, so correct
-sorting of overlapping translucent players is not established; opaque alpha is
+agent has not visually verified player appearance, animation, alpha blending
+or actual occluded rendering. Native scene culling and pass order still apply,
+and correct sorting of overlapping translucent players is not established; opaque alpha is
 the default. First enable can pause while native resources are requested.
 
 ## Local player model

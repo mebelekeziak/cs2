@@ -77,7 +77,13 @@ object `+0x18`, material `+0x20`, and selected material variant `+0x28`.
 `0x7E77B..0x7E7A8` separately establishes the two-argument material virtual at
 byte slot `0x30`: RCX is material, RDX is this actual scene view `+0x30`, and RAX
 is the returned selected variant. Native per-view material selection is
-preserved; depth behavior is not disabled and no extra occluded pass is added.
+preserved. The **Through walls** option selects the style's immutable material
+with native `F_DISABLE_Z_BUFFERING=1` and `F_DISABLE_Z_PREPASS=1`; the installed
+shader feature expressions disable both depth testing and depth writes. Turning
+the option off selects the corresponding material with native depth enabled.
+See [material evidence](CS2_PLAYER_CHAMS_MATERIAL_EVIDENCE.md) for shader feature
+and render-state evaluation. Exactly one material tuple replaces each qualifying
+native draw. No duplicate pass is added, so visible pixels are not blended twice.
 
 The packet helper changes only the material/variant tuple and packed RGBA.
 It preserves the engine's mesh and skinned vertex streams, transforms, draw
@@ -87,6 +93,42 @@ saved colors. Material construction, shader coverage, actual shader color
 consumers and their independent verification are documented by the material
 component; the static-world aggregate packet color limitation does not prove
 anything about this animatable path.
+
+## Native ordering and through-wall limits
+
+The existing layer renderer merges generated packets and sorts them before
+dispatching native render batches. The layer policy at `0xED4FD..0xED560`
+selects full sort when layer flags bit 0 is set, bypasses sorting with bit 1,
+and otherwise uses batch sort. Full sort compares signed packet `+0x58` first
+(`0x10F5E6`); native generation copies args `+0x40` to that field at
+`0x7E73B..0x7E73E`. For equal render order, the next key is the scene object's
+descriptor address, compared unsigned ascending (`0x10F5F2..0x10F600`). Batch
+sort compares the descriptor address first (`0x1113CF`), with `+0x58` only a
+later tiebreak (`0x11155B`). Both insertion and partition comparison paths
+agree. Therefore changing only `+0x58` would not establish global late placement
+in the batch-sort branch. The implementation preserves this field and all
+native sorting flags.
+
+The installed descriptors are fixed module objects. The aggregate descriptor at
+scene `+0x674CB0` has its vtable `+0x5E4538` in initialized PE data and is
+registered with `AggregateSceneObjectDesc` at `0xE672E..0xE673F`. The animatable
+descriptor at scene `+0x675670` receives vtable `+0x5E5C90` in its CRT initializer
+at `0x37A2..0x37A9` and is registered at `0xE622B`. Native comparisons load
+packet `+0x18` -> scene object `+0x18` -> descriptor. These addresses establish
+that same-layer aggregate world packets precede animatable player packets in
+batch sort; the same is true in full sort when their native render order is
+equal. This conclusion follows the actual static singleton addresses rather
+than assuming that separately allocated objects follow a stable heap order.
+The verifier freezes registration, both comparison paths and policy branches.
+
+Depth-disabled materials can color submitted player geometry despite existing
+wall depth. This does not bypass engine visibility, frustum/PVS, model or mesh
+culling: if native generation emits no player packet, this adapter emits none.
+Native no-sort layers, unequal full-sort render orders, geometry rendered in a
+later layer and later compositing remain outside the ordering guarantee. No
+late replay hook or priority-key mutation is introduced. Actual occluded-player
+appearance and coverage remain unobserved until an authorized offline/private
+render test.
 
 ## Lifecycle and evidence limits
 
@@ -106,7 +148,7 @@ and these tests establish implementation contracts. They do not establish live
 model appearance, alpha blending, GPU pass coverage or gameplay observations.
 Raw disassembly is retained in `logs/research/chams-*.txt`.
 
-The public Release `player_chams_checks` executable passes 136 checks. The
+The public and diagnostic Release `player_chams_checks` executables pass 139 checks each. The
 installed-file verifier passes, and 15 deliberately changed header constants or
 entry bytes are rejected (`logs/research/chams-negative-contracts.json`).
 
@@ -117,7 +159,7 @@ verifier includes that material/asset verification; `--material-header` selects
 an alternate material header for negative checks.
 
 The integrating public and diagnostic Release builds each pass all 47 CTest
-suites, including 136 player-adapter checks and 77 material-lifecycle checks.
+suites, including 139 player-adapter checks and 132 material-lifecycle checks.
 The shared frame dispatcher is tested directly and through the model-swap
 regressions. Both payloads have no static TLS/delay imports. This verification
 did not launch CS2 and does not establish visible appearance or correct sorting

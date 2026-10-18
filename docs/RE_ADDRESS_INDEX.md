@@ -496,3 +496,14 @@ runs first, nested stages forward without dispatch, and each subscriber keeps
 its own stop barrier. The material feature does not depend on a model pack or
 on enabling model swapping. Material/shader creation contracts are recorded
 in the linked chams evidence and material header/verifier.
+
+Through-wall chams select an immutable depth-disabled material for either
+style. The installed shader feature `F_DISABLE_Z_BUFFERING=1` evaluates both
+DepthEnable and DepthWriteEnable to zero; `F_DISABLE_Z_PREPASS=1` is also set.
+Normal variants preserve native depth behavior. The portable verifier pins the
+exact eight shader/texture assets, while optional
+[inspect_player_chams_depth.py](../tools/inspect_player_chams_depth.py)
+reproduces decoded metadata with the documented workspace research tools.
+Scene CPU culling and draw-layer order remain native; this does not submit
+players the engine omitted. See player evidence for the independently checked
+same-layer aggregate/animatable descriptor ordering and its limits.

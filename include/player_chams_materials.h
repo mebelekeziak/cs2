@@ -6,7 +6,7 @@ using PlayerChamsMaterialsLogCallback = void (*)(const char*);
 bool PlayerChamsMaterialsInitialize(PlayerChamsMaterialsLogCallback logger = nullptr) noexcept;
 void PlayerChamsMaterialsOwnerFrame() noexcept;
 bool PlayerChamsMaterialsResolve(PlayerChamsStyle style, std::uintptr_t view,
-    std::uintptr_t& material, std::uintptr_t& mode) noexcept;
+    std::uintptr_t& material, std::uintptr_t& mode, bool occluded = false) noexcept;
 void PlayerChamsMaterialsStop() noexcept;
 const char* PlayerChamsMaterialsStatus() noexcept;
 

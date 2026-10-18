@@ -4,6 +4,7 @@
 #include "model_swap_offsets.h"
 #include "movement_memory.h"
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -26,12 +27,13 @@ SRWLOCK lifetime = SRWLOCK_INIT;
 std::atomic<bool> enabled{false};
 std::atomic<unsigned> phase{0}; // Idle, constructing, ready, failed.
 std::atomic<const char*> status{"Player materials not initialized."};
-struct Retained { std::uintptr_t binding = 0, material = 0; } retained[2];
+struct Retained { std::uintptr_t binding = 0, material = 0; } retained[4];
 struct KV3ID { const char* name; std::uint64_t low, high; };
 constexpr KV3ID format{"generic", 0x469806E97412167Cull, 0xE73790B53EE6F2AFull};
 constexpr const char* textures[]{"materials/dev/primary_white_color_tga_21186c76.vtex",
     "materials/default/default_normal.vtex"};
-constexpr const char* names[]{"materials/codex_player_flat.vmat", "materials/codex_player_iridescent.vmat"};
+constexpr const char* names[]{"materials/codex_player_flat.vmat", "materials/codex_player_iridescent.vmat",
+    "materials/codex_player_flat_occluded.vmat", "materials/codex_player_iridescent_occluded.vmat"};
 constexpr const char* recipes[]{
 R"kv3(<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->
 {
@@ -141,13 +143,21 @@ bool Retain(void* output, const char* expected, Retained& result) noexcept {
 }
 bool Build(unsigned index, Retained& output) noexcept {
     alignas(16) unsigned char arena[off::ArenaSize]{};
+    const auto* baseRecipe = recipes[index % 2];
+    char occludedRecipe[4096]{};
+    if (index >= 2) {
+        const auto* end = std::strrchr(baseRecipe, '}');
+        if (!end || std::snprintf(occludedRecipe, sizeof(occludedRecipe),
+            "%.*s\n F_DISABLE_Z_BUFFERING = 1\n F_DISABLE_Z_PREPASS = 1\n}\n",
+            static_cast<int>(end-baseRecipe), baseRecipe) >= static_cast<int>(sizeof(occludedRecipe))) return false;
+    }
     void* binding = nullptr;
     bool constructed = false, parsed = false;
     __try {
         construct(arena, 0);
         constructed = true;
         if (void* node = root(arena)) {
-            parsed = parse(node, nullptr, recipes[index], &format, "", 0);
+            parsed = parse(node, nullptr, index >= 2 ? occludedRecipe : baseRecipe, &format, "", 0);
             if (parsed) create(reinterpret_cast<void*>(manager), &binding, names[index], node, 1, true);
         }
         constructed = false;
@@ -214,7 +224,7 @@ void PlayerChamsMaterialsOwnerFrame() noexcept {
     unsigned idle = 0;
     if (!phase.compare_exchange_strong(idle, 1)) return;
     bool success = enabled.load(std::memory_order_acquire) && Current();
-    Retained prepared[2]{};
+    Retained prepared[4]{};
 #ifdef CS2_PLAYER_CHAMS_MATERIAL_CHECKS
     if (testing) manager = 1;
     else
@@ -231,14 +241,14 @@ void PlayerChamsMaterialsOwnerFrame() noexcept {
             Read(table + 29 * sizeof(void*), method) && method == materialModule + off::CreateMaterial;
     }
     if (success) for (const auto* path : textures) if (!Preload(path)) { success = false; break; }
-    if (success) for (unsigned index = 0; index < 2; ++index) {
+    if (success) for (unsigned index = 0; index < 4; ++index) {
         if (!enabled.load(std::memory_order_acquire) || !Build(index, prepared[index])) { success = false; break; }
     }
     // Blocking resource work can dispatch render jobs. Never hold our
     // publication lock across native loading, parsing, creation, or mode calls.
     AcquireSRWLockExclusive(&lifetime);
     if (enabled.load(std::memory_order_acquire) && Current()) {
-        if (success) { retained[0] = prepared[0]; retained[1] = prepared[1]; }
+        if (success) for (unsigned index = 0; index < 4; ++index) retained[index] = prepared[index];
         phase.store(success ? 2u : 3u, std::memory_order_release);
         Report(success ? "Player materials ready (native flat and iridescent)." : "Player material preparation failed; restart required to retry.");
     } else phase.store(3, std::memory_order_release);
@@ -246,13 +256,13 @@ void PlayerChamsMaterialsOwnerFrame() noexcept {
 }
 
 bool PlayerChamsMaterialsResolve(PlayerChamsStyle style, std::uintptr_t view,
-    std::uintptr_t& material, std::uintptr_t& mode) noexcept {
+    std::uintptr_t& material, std::uintptr_t& mode, bool occluded) noexcept {
     material = mode = 0;
     if (!enabled.load(std::memory_order_acquire) || phase.load(std::memory_order_acquire) != 2 ||
         (style != PlayerChamsStyle::Flat && style != PlayerChamsStyle::Iridescent) || !view) return false;
     AcquireSRWLockShared(&lifetime);
     bool success = enabled.load(std::memory_order_acquire) && Current();
-    const auto snapshot = retained[static_cast<unsigned>(style)];
+    const auto snapshot = retained[static_cast<unsigned>(style)+(occluded ? 2u : 0u)];
     ReleaseSRWLockShared(&lifetime);
     const auto candidate = snapshot.material;
     std::uintptr_t table = 0, method = 0, bindingMaterial = 0;
@@ -284,7 +294,7 @@ const char* PlayerChamsMaterialsStatus() noexcept { return status.load(std::memo
 void PlayerChamsMaterialsTestConfigure(const PlayerChamsMaterialTestApi& api) noexcept {
     testing = true; testApi = api;
     construct = api.construct; root = api.root; destroy = api.destroy; parse = api.parse; create = api.create;
-    retained[0] = retained[1] = {};
+    for (auto& material : retained) material = {};
     enabled.store(false); phase.store(0);
 }
 #endif

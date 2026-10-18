@@ -9,6 +9,7 @@ struct PlayerChamsSettings {
     PlayerChamsStyle style = PlayerChamsStyle::Flat;
     float color[4]{0.4f, 0.7f, 1.0f, 1.0f}; // Flat style RGBA.
     float iridescentColor[4]{1.0f, 0.3f, 0.8f, 1.0f}; // Iridescent style RGBA tint.
+    bool throughWalls = true;
 
     bool operator==(const PlayerChamsSettings&) const = default;
 };

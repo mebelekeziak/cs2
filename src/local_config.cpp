@@ -67,6 +67,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(model_swap, enabled); FIELD(model_swap, model);
     FIELD(player_chams, enabled); FIELD(player_chams, teammates); FIELD(player_chams, localPlayer);
     FIELD(player_chams, style); COLOR(player_chams, color); COLOR(player_chams, iridescentColor);
+    FIELD(player_chams, throughWalls);
 #undef COLOR
 #undef FIELD
 }

@@ -44,11 +44,13 @@ int main() {
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
     const PlayerChamsSettings chamsDefaults;
-    Expect(PlayerChamsGetSettings() == chamsDefaults, "player chams start disabled with flat material and independent target toggles");
+    Expect(PlayerChamsGetSettings() == chamsDefaults && chamsDefaults.throughWalls,
+        "player chams start disabled with flat material, independent target toggles and through-walls rendering selected");
     auto invalidChams = chamsDefaults;
     invalidChams.enabled = true;
     invalidChams.teammates = true;
     invalidChams.localPlayer = true;
+    invalidChams.throughWalls = false;
     invalidChams.style = static_cast<PlayerChamsStyle>(99);
     invalidChams.color[0] = -1;
     invalidChams.color[1] = 2;
@@ -60,7 +62,7 @@ int main() {
     invalidChams.iridescentColor[3] = 2;
     PlayerChamsSetSettings(invalidChams);
     const auto boundedChams = PlayerChamsGetSettings();
-    Expect(boundedChams.enabled && boundedChams.teammates && boundedChams.localPlayer &&
+    Expect(boundedChams.enabled && boundedChams.teammates && boundedChams.localPlayer && !boundedChams.throughWalls &&
         boundedChams.style == PlayerChamsStyle::Flat && boundedChams.color[0] == 0 && boundedChams.color[1] == 1 &&
         boundedChams.color[2] == chamsDefaults.color[2] && boundedChams.color[3] == chamsDefaults.color[3] &&
         boundedChams.iridescentColor[0] == chamsDefaults.iridescentColor[0] &&
@@ -114,8 +116,9 @@ int main() {
         "default preset saves disabled player model and an empty path");
     Expect(defaults.find("player_chams.enabled=0\nplayer_chams.teammates=0\nplayer_chams.localPlayer=0\nplayer_chams.style=0\n") != std::string::npos &&
         defaults.find("player_chams.color.3=1\n") != std::string::npos &&
-        defaults.find("player_chams.iridescentColor.3=1\n") != std::string::npos,
-        "default preset explicitly saves player chams modes, target toggles and RGBA channels");
+        defaults.find("player_chams.iridescentColor.3=1\n") != std::string::npos &&
+        defaults.find("player_chams.throughWalls=1\n") != std::string::npos,
+        "default preset explicitly saves player chams modes, target toggles, RGBA channels and through-walls selection");
     EspSettings esp = EspGetSettings();
     esp.enabled = false; esp.names = false; esp.boxes = false; esp.distance = false;
     esp.health = false; esp.teammates = false; esp.armor = true; esp.teamColors = false;
@@ -156,6 +159,7 @@ int main() {
     Expect(ModelSwapSetModel(expectedModel, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl"), "prepare selected custom model");
     ModelSwapSetSettings(expectedModel);
     PlayerChamsSettings expectedChams{true, true, true, PlayerChamsStyle::Iridescent};
+    expectedChams.throughWalls = false;
     for (int channel = 0; channel < 4; ++channel) {
         expectedChams.color[channel] = (channel + 1) / 8.0f;
         expectedChams.iridescentColor[channel] = (channel + 4) / 8.0f;
@@ -180,8 +184,8 @@ int main() {
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\n") != std::string::npos,
         "scoped zoom master, no zoom, fractional second level and blended sensitivity roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
-    Expect(PlayerChamsGetSettings() == expectedChams,
-        "player chams master, teammate and local targets, iridescent style and all RGBA channels roundtrip");
+    Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos,
+        "player chams master, teammate and local targets, iridescent style, RGBA and disabled through-walls selection roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
         "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
@@ -248,6 +252,8 @@ int main() {
         "version=1\nplayer_chams.color.0=nan\n", "version=1\nplayer_chams.color.3=inf\n",
         "version=1\nplayer_chams.iridescentColor.2=-inf\n", "version=1\nplayer_chams.iridescentColor.3=0.5oops\n",
         "version=1\nplayer_chams.style=0\nplayer_chams.style=1\n",
+        "version=1\nplayer_chams.throughWalls=2\n", "version=1\nplayer_chams.throughWalls=true\n",
+        "version=1\nplayer_chams.throughWalls=0\nplayer_chams.throughWalls=1\n",
         "version=1\naim.enabled=0\nplayer_chams.enabled=0\nplayer_chams.color.0=nan\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
@@ -275,6 +281,8 @@ int main() {
     expectedBoundedChams.iridescentColor[2] = 0;
     Expect(LocalConfigLoad(bad, error) && PlayerChamsGetSettings() == expectedBoundedChams,
         "player chams config bounds both colors and falls back to flat for unknown style while defaulting missing targets");
+    Expect(PlayerChamsGetSettings().enabled && PlayerChamsGetSettings().throughWalls,
+        "older enabled player chams presets without through-walls key inherit enabled depth override");
     Write(badPath, "version=1\nanti_aim.enabled=1\n");
     Expect(LocalConfigLoad(bad, error) && AntiAimGetSettings() == AntiAimSettings{true},
         "older enabled-only anti aim preset preserves static backwards yaw and downward pitch");

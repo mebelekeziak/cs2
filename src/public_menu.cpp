@@ -451,6 +451,7 @@ void DrawPublicMenu() {
                         chamsChanged |= color("Flat color", "##PlayerChamsColor", chams.color);
                     chamsChanged |= FeatureCheckbox("Chams on teammates", chams.teammates);
                     chamsChanged |= FeatureCheckbox("Chams on local player", chams.localPlayer);
+                    chamsChanged |= FeatureCheckbox("Through walls", chams.throughWalls);
                     ImGui::EndDisabled();
                     if (chamsChanged) PlayerChamsSetSettings(chams);
                     if (ImGui::Button("Reset player chams", { -1, 0 })) PlayerChamsResetSettings();

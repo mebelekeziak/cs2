@@ -365,12 +365,14 @@ void PlayerChamsControls() {
     disabledEsp.enabled = false;
     EspSetSettings(disabledEsp);
     ClickControl("Player chams");
-    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{}, "player chams open with disabled flat defaults");
+    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{} && PlayerChamsGetSettings().throughWalls,
+        "player chams open disabled with flat material and through-walls rendering selected");
     ClickControl("##PlayerChamsStyle");
     ClickControl("Chams on teammates");
     ClickControl("Chams on local player");
+    ClickControl("Through walls");
     Expect(PlayerChamsGetSettings() == PlayerChamsSettings{} && ImGui::GetCurrentContext()->OpenPopupStack.empty(),
-        "disabled player chams master blocks material and target controls");
+        "disabled player chams master blocks material, target and through-walls controls");
     ClickControl("Enable player chams");
     Expect(PlayerChamsGetSettings().enabled && !EspGetSettings().enabled,
         "player chams enable independently while ESP is disabled");
@@ -386,18 +388,27 @@ void PlayerChamsControls() {
     EditChamsColor("##PlayerChamsIridescentColor", true);
     ClickControl("Chams on teammates");
     ClickControl("Chams on local player");
+    const auto beforeWalls = PlayerChamsGetSettings();
+    ClickControl("Through walls");
+    auto expectedWithoutWalls = beforeWalls;
+    expectedWithoutWalls.throughWalls = false;
+    Expect(PlayerChamsGetSettings() == expectedWithoutWalls,
+        "through-walls checkbox disables depth override independently of material, colors and targets");
+    ClickControl("Through walls");
+    Expect(PlayerChamsGetSettings() == beforeWalls, "through-walls checkbox re-enables depth override through mouse input");
+    ClickControl("Through walls");
     const auto edited = PlayerChamsGetSettings();
-    Expect(edited.teammates && edited.localPlayer && edited.enabled,
-        "player chams teammate and local-player targets publish independently");
+    Expect(edited.teammates && edited.localPlayer && edited.enabled && !edited.throughWalls,
+        "player chams teammate and local-player targets publish independently of through-walls selection");
     SelectEspCombo("##PlayerChamsStyle", "Flat", 0);
     const auto flat = PlayerChamsGetSettings();
     Expect(flat.style == PlayerChamsStyle::Flat && flat.color[3] == edited.color[3] &&
-        flat.iridescentColor[3] == edited.iridescentColor[3] && flat.teammates && flat.localPlayer,
-        "switching back to flat preserves both custom colors and target switches");
+        flat.iridescentColor[3] == edited.iridescentColor[3] && flat.teammates && flat.localPlayer && !flat.throughWalls,
+        "switching back to flat preserves both custom colors, targets and through-walls switch");
     ClickControl("Enable player chams");
     ClickControl("Reset player chams");
-    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{},
-        "player chams reset works while disabled and restores every material and target default");
+    Expect(PlayerChamsGetSettings() == PlayerChamsSettings{} && PlayerChamsGetSettings().throughWalls,
+        "player chams reset works while disabled and restores material, target and enabled through-walls defaults");
     Expect(EspGetSettings() == disabledEsp && ThirdPersonGetSettings() == savedCamera && ModelSwapGetSettings() == savedModel,
         "player chams edits preserve ESP, camera and player-model settings");
     ClickControl("Player chams");
