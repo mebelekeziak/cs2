@@ -284,9 +284,41 @@ void TargetChecks() {
     Put(Address(fixture.local.pawn) + ent::C_BaseEntity::m_lifeState, std::uint8_t{1});
     Expect(!fixture.Select(target), "dead local player cannot acquire a target");
 }
+struct FilterContext { std::uintptr_t rejectedPawn = 0; unsigned calls = 0; bool rejectAll = false; };
+bool Eligible(const AimTarget& target, void* opaque) noexcept {
+    auto& context = *static_cast<FilterContext*>(opaque);
+    ++context.calls;
+    return !context.rejectAll && target.enemy.pawn != context.rejectedPawn;
+}
+void FilteredTargetChecks() {
+    TargetFixture fixture;
+    for (unsigned i = 0; i < 4; ++i)
+        Put(Address(fixture.farther.pose) + i * bone::BoneStride, AimVector{-1000, 0, 40 + i * 8.0f});
+    AimTarget target{};
+    AimTargetDiagnostics diagnostics{};
+    FilterContext context{Address(fixture.enemy.pawn)};
+    Expect(SilentAimSelectTarget(fixture.source, {}, 180, AimHitbox::Head, fixture.bones, target,
+        &diagnostics, &Eligible, &context) && target.enemy.pawn == Address(fixture.farther.pawn) &&
+        Near(target.solution.separation, 180) && context.calls == 2 && diagnostics.eligibilityRejected == 1,
+        "native entity scan continues behind the camera after nearest candidate fails eligibility");
+    Expect(fixture.Select(target, AimHitbox::Head, 180) && target.enemy.pawn == Address(fixture.enemy.pawn),
+        "unfiltered manual entity scan retains angular-nearest priority");
+    context.rejectAll = true;
+    Expect(!SilentAimSelectTarget(fixture.source, {}, 180, AimHitbox::Head, fixture.bones, target,
+        &diagnostics, &Eligible, &context) && !target.solution.valid && diagnostics.eligibilityRejected == 2,
+        "all ineligible candidates leave no automatic target");
+    context.rejectAll = false; context.calls = 0;
+    Expect(!SilentAimSelectTarget(fixture.source, {}, 5, AimHitbox::Head, fixture.bones, target,
+        &diagnostics, &Eligible, &context) && diagnostics.outsideFov == 1 && context.calls == 1,
+        "eligibility cannot admit candidates outside the configured FOV");
+    context.rejectedPawn = 0; context.calls = 0;
+    Expect(SilentAimSelectTarget(fixture.source, {}, 180, AimHitbox::Head, fixture.bones, target,
+        &diagnostics, &Eligible, &context) && target.enemy.pawn == Address(fixture.enemy.pawn) && context.calls == 1,
+        "farther candidates do not perform expensive eligibility checks after a nearer candidate qualifies");
+}
 }
 int main() {
-    MathChecks(); CommandChecks(); TargetChecks();
+    MathChecks(); CommandChecks(); TargetChecks(); FilteredTargetChecks();
     std::printf("Silent aim failures: %d\n", failures);
     return failures ? 1 : 0;
 }

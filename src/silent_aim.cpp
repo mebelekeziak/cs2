@@ -58,6 +58,7 @@ struct Decision {
     SilentAimSettings settings{};
     const char* reason = "not evaluated";
     bool selected = false;
+    bool automaticEligible = false;
 };
 struct Pending {
     AimAutofirePatch patch{};
@@ -125,17 +126,13 @@ Pending* Request(std::uintptr_t command) noexcept {
     if (!Read(command + movement_offsets::command::Sequence, sequence) || sequence <= 0) return nullptr;
     return &requests[static_cast<unsigned>(sequence) % requests.size()];
 }
-Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings) noexcept {
-    Decision result{};
-    result.settings = settings;
-    ++decisions;
-    if (!Source(result.source)) {
-        ++sourceRejected; result.reason = "local source unavailable"; return result;
-    }
-    if (!SilentAimSelectTarget(result.source, view, settings.fov, settings.hitbox, bones, result.target, &targetDiagnostics)) {
-        result.reason = "no enemy in aim FOV"; return result;
-    }
-    result.selected = true; ++selected;
+struct WeaponSample {
+    AimWeaponSnapshot value{};
+    bool read = false, valid = false;
+};
+bool Reachable(Decision& decision) noexcept;
+Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon) noexcept {
+    const auto& settings = result.settings;
     const char* geometryReason = "geometry unavailable";
     const bool geometry = SilentAimReadTargetVolume(result.source, result.target, result.volume, geometryReason);
     if (geometry) {
@@ -143,7 +140,13 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings) noex
         if (!centered.valid) { result.reason = "hitbox center outside FOV"; return result; }
         result.target.solution = centered;
     }
-    if (!weaponPrepared || !AimWeaponRead(weaponContext, result.source, result.weapon)) {
+    // One native accuracy/readiness sample per decision, shared by candidates.
+    if (!weapon.read) {
+        weapon.read = true;
+        weapon.valid = weaponPrepared && AimWeaponRead(weaponContext, result.source, weapon.value);
+    }
+    result.weapon = weapon.value;
+    if (!weapon.valid) {
         result.reason = weaponPrepared ? result.weapon.reason : "weapon model verification unavailable"; return result;
     }
     if (!geometry) { result.reason = geometryReason; return result; }
@@ -164,6 +167,55 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings) noex
     else result.reason = settings.autofire ? "autofire eligible" : "manual mode";
     return result;
 }
+struct AutofireSelection {
+    Decision prototype{}, accepted{}, rejected{};
+    AimAngles view{};
+    WeaponSample weapon{};
+    float rejectedSeparation = 181;
+};
+bool EligibleTarget(const AimTarget& target, void* context) noexcept {
+    auto& selection = *static_cast<AutofireSelection*>(context);
+    auto candidate = selection.prototype;
+    candidate.target = target;
+    candidate.selected = true;
+    candidate = EvaluateTarget(candidate, selection.view, selection.weapon);
+    if (candidate.chance.valid && candidate.chance.percent >= candidate.settings.hitchance &&
+        candidate.weapon.ready && Reachable(candidate)) {
+        candidate.automaticEligible = true;
+        selection.accepted = candidate;
+        return true;
+    }
+    // Keep a useful rejection when no candidate qualifies; later failed
+    // candidates must not replace an already accepted decision.
+    if (target.solution.separation < selection.rejectedSeparation) {
+        selection.rejected = candidate;
+        selection.rejectedSeparation = target.solution.separation;
+    }
+    return false;
+}
+Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool selectEligible = false) noexcept {
+    Decision result{};
+    result.settings = settings;
+    ++decisions;
+    if (!Source(result.source)) {
+        ++sourceRejected; result.reason = "local source unavailable"; return result;
+    }
+    AutofireSelection selection{};
+    selection.prototype = result;
+    selection.view = view;
+    const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitbox, bones,
+        result.target, &targetDiagnostics, selectEligible ? &EligibleTarget : nullptr, &selection);
+    if (selectEligible && found) { ++selected; return selection.accepted; }
+    if (selectEligible && selection.rejected.selected) { ++selected; return selection.rejected; }
+    if (!found) {
+        result.reason = std::strcmp(targetDiagnostics.localFailure, "none") ?
+            "local actor unavailable" : "no enemy in aim FOV";
+        return result;
+    }
+    result.selected = true; ++selected;
+    WeaponSample weapon{};
+    return EvaluateTarget(result, view, weapon);
+}
 void Report(const Decision& decision, const char* action, bool event = false) noexcept {
     lastDecision = decision;
     lastObservedAction = action;
@@ -177,14 +229,16 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
     char message[1280]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\"; selected-capsule snapshot, direct-path autofire gate, no penetration/damage prediction",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u; selected-capsule snapshot, direct-path autofire gate, no penetration/damage prediction",
         handle, static_cast<int>(decision.settings.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
         decision.weapon.spread, decision.weapon.inaccuracy, decision.weapon.recoilIndex,
         decision.weapon.aimPunch.pitch, decision.weapon.aimPunch.yaw, decision.weapon.aimPunch.roll,
         decision.weapon.range, decision.weapon.clip, action, decision.reason,
-        decision.occlusion.valid, decision.occlusion.clear, decision.occlusion.fraction, decision.occlusion.reason);
+        decision.occlusion.valid, decision.occlusion.clear, decision.occlusion.fraction, decision.occlusion.reason,
+        decision.target.solution.separation, decision.target.solution.angles.pitch, decision.target.solution.angles.yaw,
+        targetDiagnostics.eligibilityRejected);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
@@ -431,12 +485,12 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
         }
         else {
             ++prepareEvaluated;
-            auto decision = Evaluate(view, settings);
+            auto decision = Evaluate(view, settings, settings.autofire);
             const char* action = decision.reason;
             if (settings.autofire && (!autofirePrepared || !finalizerReady)) action = "native autofire contract unavailable";
-            else if (settings.autofire && request && decision.chance.valid &&
-                decision.chance.percent >= settings.hitchance && decision.weapon.ready) {
-                if (!Current(decision)) action = "target or weapon changed before request";
+            else if (settings.autofire && request && decision.automaticEligible) {
+                if (!active.load(std::memory_order_acquire) || !Foreground() ||
+                    !(settings == SilentAimGetSettings()) || !Current(decision)) action = "aim state changed before request";
                 else if (!Reachable(decision)) action = decision.reason;
                 else {
                     request->decision = decision;

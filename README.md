@@ -765,10 +765,27 @@ cancel the owned automatic attack and regenerate its native CRC. Source, target,
 geometry, weapon and settings are revalidated after tracing. No clear-path result
 is cached across callbacks. Manual primary input remains available.
 
+Autofire selects the angular-nearest **eligible** enemy within Aim FOV. A nearer
+enemy with unavailable geometry, insufficient hitchance or a blocked path does
+not prevent another eligible enemy from being selected. At 180 degrees, this
+includes enemies behind the current view. Candidates share one current weapon
+snapshot; the selected path is traced again immediately before requesting fire
+and at history publication. Manual fire retains nearest-landmark targeting.
+The minimum hitchance still applies regardless of FOV, including when scoped
+weapon accuracy is low. `AIM_HITCHANCE` now records angular `separation`, outgoing
+`aim` and `eligibility_rejected` to distinguish selection from firing gates.
+
+**Wide-FOV correction, October 18, 2026:** public and diagnostic Release builds
+each pass **44/44 CTest suites**, including 113 integrated pipeline checks and
+real entity-scan regressions for a 180-degree fallback. All **21 installed-file
+compatibility checks** pass in `logs/compatibility/20261018T144006926027Z/`.
+Both DLLs retain zero static TLS and delay imports. No client/server was launched;
+live behavior of this correction remains unobserved. Restart CS2 normally before
+using **Load Overlay.cmd** with the new build if an older copy is resident.
+
 This is a conservative occlusion check: all cover blocks automatic fire,
-including penetrable walls. It does not simulate penetration or predict damage,
-choose another target when the selected one is blocked, or trace every spread
-sample. Hitchance remains a geometric selected-capsule estimate. Native shot-time
+including penetrable walls. It does not simulate penetration, predict damage,
+or trace every spread sample. Hitchance remains a geometric selected-capsule estimate. Native shot-time
 interpolation, future recoil/spread changes and server timing can differ from
 this snapshot; a clear center path and high percentage do not guarantee a hit.
 

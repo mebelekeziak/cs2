@@ -175,7 +175,8 @@ bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, A
 }
 
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
-                           const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics) noexcept {
+                           const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
+                           AimTargetFilter filter, void* filterContext) noexcept {
     target = {};
     if (diagnostics) { *diagnostics = {}; diagnostics->stage = "local actor"; }
     AimActor local{};
@@ -234,7 +235,12 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
             }
             if (target.solution.valid && solution.separation >= target.solution.separation) continue;
             if (!Same(source.system, enemy)) continue;
-            target = {local, enemy, solution, eye, point, hitbox};
+            const AimTarget candidate{local, enemy, solution, eye, point, hitbox};
+            if (filter && !filter(candidate, filterContext)) {
+                if (diagnostics) ++diagnostics->eligibilityRejected;
+                continue;
+            }
+            target = candidate;
         }
     }
     if (diagnostics) diagnostics->stage = target.solution.valid ? "target revalidation" : "no candidate selected";

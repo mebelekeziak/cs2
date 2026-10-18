@@ -29,6 +29,9 @@ bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volum
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
 bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
 unsigned traceCalls = 0;
+bool multipleTargets = false, reverseCandidates = false;
+int rejectedCandidate = 0; // 1 cover, 2 range/chance, 3 missing geometry.
+unsigned weaponReads = 0;
 bool recorderSawNativePress = false, builderSawPrimary = false, checksumSawCancelledPrimary = false;
 std::vector<std::string> telemetry;
 std::vector<ShotLogMetadata> shotMetadata;
@@ -169,6 +172,7 @@ struct World {
         weaponAvailable = weaponCurrent = checksumAvailable = true;
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
+        multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
         telemetry.clear();
         shotMetadata.clear(); shotPumps = 0;
         ShotLogSetSettings({});
@@ -500,8 +504,8 @@ void OcclusionChecks(World& world) {
     world.Reset();
     Command clear;
     world.Prepare(clear); world.History(clear);
-    Expect(traceCalls == 2 && recorderCalls == 1 && Equal(clear.History(), Desired()),
-        "clear path is traced freshly before request and again before history publication");
+    Expect(traceCalls == 3 && recorderCalls == 1 && Equal(clear.History(), Desired()),
+        "clear path is traced for eligibility, freshly before request and again before history publication");
 
     world.Reset();
     Command rebuild;
@@ -532,45 +536,106 @@ void OcclusionChecks(World& world) {
         Equal(takeover.History(), Command::PhysicalView),
         "new cover cancels automatic aiming without clearing physical primary takeover");
 }
+
+void WideFovChecks(World& world) {
+    for (int rejection = 1; rejection <= 3; ++rejection) {
+        for (bool reversed : {false, true}) {
+            world.Reset();
+            multipleTargets = true; reverseCandidates = reversed; rejectedCandidate = rejection;
+            auto settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+            Command command;
+            const auto baseBefore = command.baseAngles;
+            world.Prepare(command); world.History(command);
+            Expect(recorderCalls == 1 && Equal(command.History(), AimAngles{0, 180, 0}) &&
+                shotMetadata.size() == 1 && shotMetadata[0].targetPawn == 0x8005 &&
+                command.baseAngles == baseBefore,
+                "180-degree autofire skips ineligible crosshair-nearest enemy and aims behind; rejection=" +
+                std::to_string(rejection) + " reversed=" + std::to_string(reversed));
+            Expect(weaponReads == 1, "candidate scan shares one command-owner weapon snapshot");
+        }
+    }
+    world.Reset(); multipleTargets = true; rejectedCandidate = 1;
+    Command narrow;
+    world.Prepare(narrow);
+    Expect(recorderCalls == 0, "fallback candidates still obey the configured FOV");
+
+    world.Reset(); multipleTargets = true;
+    auto settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+    Command nearest;
+    world.Prepare(nearest); world.History(nearest);
+    Expect(Equal(nearest.History(), Desired()) && shotMetadata.size() == 1 && shotMetadata[0].targetPawn == 0x8004,
+        "eligible nearest enemy retains priority over a farther angular candidate");
+
+    world.Reset(); multipleTargets = true; rejectedCandidate = 1;
+    settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+    Command lateCover;
+    world.Prepare(lateCover); pathClear = false; world.History(lateCover);
+    Expect(recorderCalls == 1 && checksumCalls == 1 && !(lateCover.Buttons().down & 1) && shotMetadata.empty(),
+        "fallback target gets fresh publication occlusion and owned-attack cancellation");
+
+    world.Reset(); multipleTargets = true; rejectedCandidate = 1;
+    settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+    Command manual;
+    Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(manual);
+    Expect(Equal(manual.History(), Desired()) && traceCalls == 0 && shotMetadata.size() == 1 && !shotMetadata[0].automatic,
+        "manual primary keeps nearest-landmark behavior even while autofire is enabled");
+}
 }
 
 // Replace only engine-dependent snapshots and effects. The integrated suite
 // links the real runtime, real history/ownership code, settings and estimator.
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
-    const AimBoneContext&, AimTarget& target, AimTargetDiagnostics* diagnostics) noexcept {
+    const AimBoneContext&, AimTarget& target, AimTargetDiagnostics* diagnostics,
+    AimTargetFilter filter, void* filterContext) noexcept {
     if (!selectAvailable) return false;
     target = {};
-    target.local.pawn = source.pawn;
-    target.local.controllerHandle = 0x8002; target.local.pawnHandle = 0x8003;
-    target.enemy.pawn = 0x555000; target.enemy.pawnHandle = 0x8004;
-    target.eye = {}; target.point = {100, 10, 0}; target.hitbox = hitbox;
-    target.solution = SilentAimSolve(target.eye, target.point, view, fov);
+    for (int i = 0; i < (multipleTargets ? 2 : 1); ++i) {
+        const bool fallback = multipleTargets && (reverseCandidates ? i == 0 : i == 1);
+        AimTarget candidate{};
+        candidate.local.pawn = source.pawn;
+        candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = 0x8003;
+        candidate.enemy.pawn = fallback ? 0x556000 : 0x555000;
+        candidate.enemy.pawnHandle = fallback ? 0x8005 : 0x8004;
+        candidate.point = fallback ? AimVector{-100, 0, 0} : AimVector{100, 10, 0}; candidate.hitbox = hitbox;
+        candidate.solution = SilentAimSolve(candidate.eye, candidate.point, view, fov);
+        if (!candidate.solution.valid || (target.solution.valid && candidate.solution.separation >= target.solution.separation)) continue;
+        if (filter && !filter(candidate, filterContext)) continue;
+        target = candidate;
+    }
     if (diagnostics) diagnostics->stage = target.solution.valid ? "selected" : "outside FOV";
     return target.solution.valid;
 }
 bool SilentAimTargetValid(const AimSource&, const AimTarget&) noexcept { return targetCurrent; }
 bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTargetVolume& volume,
     const char*& reason) noexcept {
-    if (!volumeAvailable) { reason = "fixture geometry unavailable"; return false; }
+    if (!volumeAvailable || (rejectedCandidate == 3 && target.enemy.pawnHandle == 0x8004)) {
+        reason = "fixture geometry unavailable"; return false;
+    }
     volume = {};
-    volume.capsule = {{100, 10, -2}, {100, 10, 2}, 4};
-    volume.center = {100, 10, 0}; volume.pawn = target.enemy.pawn; volume.valid = true;
+    volume.center = target.point;
+    if (rejectedCandidate == 2 && target.enemy.pawnHandle == 0x8004) volume.center = {2000, 200, 0};
+    volume.capsule = {{volume.center.x, volume.center.y, -2}, {volume.center.x, volume.center.y, 2}, 4};
+    volume.pawn = target.enemy.pawn; volume.valid = true;
     reason = "fixture authored capsule";
     return true;
 }
 bool SilentAimTargetVolumeValid(const AimSource&, const AimTarget&, const AimTargetVolume&) noexcept { return volumeCurrent; }
 bool AimWeaponPrepare(std::uintptr_t client, AimWeaponContext& context) noexcept { context.client = client; return true; }
 bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot& out) noexcept {
+    ++weaponReads;
     out = weapon;
     return weaponAvailable;
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
 bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept { context = {client, true}; return true; }
-AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget&, const AimTargetVolume&) noexcept {
+AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget& target, const AimTargetVolume&) noexcept {
     ++traceCalls;
     if (changeDuringTrace) weaponCurrent = false;
-    return {pathAvailable, pathAvailable && pathClear, pathClear ? 1.0f : 0.25f,
-        !pathAvailable ? "occlusion trace unavailable" : pathClear ? "direct path clear" : "target occluded"};
+    const bool clear = pathClear && !(rejectedCandidate == 1 && target.enemy.pawnHandle == 0x8004);
+    return {pathAvailable, pathAvailable && clear, clear ? 1.0f : 0.25f,
+        !pathAvailable ? "occlusion trace unavailable" : clear ? "direct path clear" : "target occluded"};
 }
 bool MovementRefinalizeCommand(void*, void* command) noexcept {
     ++checksumCalls;
@@ -593,6 +658,7 @@ int main() {
     CancellationChecks(world);
     OwnershipChecks(world);
     OcclusionChecks(world);
+    WideFovChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

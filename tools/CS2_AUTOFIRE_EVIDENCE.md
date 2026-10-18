@@ -8,6 +8,54 @@ The thirteen existing compatibility components passed before investigation.
 This is native client command integration; it uses no server plugin framework.
 No game/server process was launched or installed file changed for this work.
 
+## October 18: wide-FOV target eligibility
+
+The reported crosshair dependence was investigated against
+`logs/overlay-19716-134368069092234122.log` and the current client source. The
+run contains 180-degree settings, Head selection, a 70% minimum and ready SSG08
+snapshots rejected for insufficient chance or a blocked direct path. Some
+snapshots show 100% chance with cover blocking, others show low chance with
+large native inaccuracy. Automatic requests and publications also occur.
+Local actor failures were misleadingly reported as "no enemy in aim FOV".
+These records do not identify which on-screen enemy the user intended.
+
+The source selected the nearest angular enemy before testing geometry, chance
+and occlusion, then stopped if that enemy failed. It never considered another
+enemy in the configured FOV. Changing the view could therefore change which
+enemy supplied the only firing decision, even at 180 degrees.
+
+Selection now has an optional command-owner eligibility filter. Autofire uses
+it to reject unavailable geometry, insufficient chance and blocked/unavailable
+direct paths while continuing the same scan. Angular ranking only prunes against
+accepted candidates. Native weapon accuracy/readiness is sampled once per
+decision and shared across candidates. The nearest rejected candidate supplies
+diagnostics if none qualifies. Manual aiming uses the unfiltered scanner.
+The final chosen candidate is revalidated and freshly traced before requesting
+an attack; history publication retains its separate trace and cancellation.
+No offsets, native ABI, recorder, loader or installed game files changed.
+
+The integrated regression initially failed seven assertions with the old
+decision path. Cases cover cover/chance/geometry rejection of the enemy near
+the crosshair with a valid enemy directly behind, in both entity orders; narrow
+FOV rejection; nearest eligible priority; one weapon sample; late cover with
+owned-attack cancellation; and manual input while autofire is enabled. The real
+entity scanner is tested separately with authored synthetic identities and poses,
+including 180-degree fallback, all-rejected state and pruning expensive checks.
+These are standalone checks; live behavior of this change remains unobserved.
+
+`AIM_HITCHANCE` now includes angular separation, intended outgoing pitch/yaw
+and the eligibility rejection count. Invalid local actors report "local actor
+unavailable" rather than claiming an enemy FOV rejection. Thresholds and cover
+checks continue to apply at 180 degrees; this change does not establish that
+every reported instance of crosshair dependence had the same cause.
+
+Validation: both x64 Release builds succeed without compiler warnings and each
+passes all 44 CTest suites (113 integrated pipeline assertions). All 21 installed
+contracts pass in `logs/compatibility/20261018T144006926027Z/`. Both payloads
+retain AMD64 with zero static TLS and delay-import directories. Build/test output
+is saved in `logs/autofire-wide-fov-{public,diagnostic}-{build,tests}.log`.
+No CS2 client/server was started or loaded for this correction.
+
 ## October 18: pre-request base-view rejection
 
 The supplied offline run `logs/overlay-4016-134366430011225970.log` ends with
