@@ -13,4 +13,6 @@ void AntiAimFlushTelemetry() noexcept;
 bool AntiAimBeginCommand(void* input, void* command) noexcept;
 void AntiAimFinishCommand(void* input, void* command) noexcept;
 void AntiAimObserveIngest(void* services, void* command) noexcept;
-void AntiAimPhysicalHistory(std::uintptr_t services, float& forward, float& left) noexcept;
+// Movement planner: obtain this sequence's physical predecessor, independent
+// of the latest prediction ingestion. Failure leaves the copied axes intact.
+bool AntiAimPhysicalHistory(std::uintptr_t services, std::uintptr_t command, float& forward, float& left) noexcept;

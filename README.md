@@ -461,6 +461,34 @@ unresolved movement-correction defect in this checkpoint. The standalone
 world-vector and copied-command tests pass, but do not reproduce the complete
 native input/prediction pipeline or establish correct movement during fast spin.
 
+**Movement correction, revision 5, October 18:** command rebuilds now obtain
+their starting movement from the native controller ring's **previous sequence**,
+instead of whichever command prediction most recently ingested. Rebuilding N
+after simulating N previously selected N's already-rotated axes and could omit
+the time-zero correction needed when N restarts from N-1. That produces sideways
+movement as spin/jitter changes the heading. Bunnyhop/autostrafe planning uses
+the same predecessor. Copied publication history still identifies its physical
+basis; missing or unrecognized edited predecessors pass through.
+
+Native replay also copies outgoing direction buttons into physical input's
+previous-button state. Its wrapper now advances those direction bits from the
+current physical input, alongside preserving the view. Real presses, releases
+and reversals advance normally; native action buttons and edge resets remain
+native. The command lookup and input fields were decoded from the installed
+client and added to the compatibility verifier. Build and launch commands are
+unchanged. Restart CS2 normally before loading this revision through
+**Load Overlay.cmd** if the older DLL is resident.
+
+The original code fails the added physical-input replay regression. New checks
+cover 9,216 pattern-command replays, 4,608 same-sequence prediction rebuilds,
+10,000 changing view/key transitions and stale/missing predecessor slots.
+Public and diagnostic x64 Release builds each pass **42/42 CTest suites**.
+All **21 installed-file compatibility checks** pass in
+`logs/compatibility/20261018T134556585408Z/`; four deliberately incorrect input
+or lookup contracts are rejected. Both payloads retain zero static TLS and
+delay imports. These are standalone regressions; no CS2 client/server was
+started and live movement confirmation remains pending.
+
 **Verification, October 16, 2026:** public and diagnostic x64 Release builds
 succeed; **22/22 CTest suites pass in each**. This includes dense/randomized
 angle-basis checks, 10,000 changing physical replay views, 9,000 movement-basis

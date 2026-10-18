@@ -38,9 +38,7 @@ struct Source {
 Source source{};
 std::uint64_t sourceEpoch = 1;
 AntiAimHistoryState publications{};
-std::uintptr_t ingestedServices = 0;
-bool ingestedEdited = false, ingestedBasisKnown = false;
-AimAngles ingestedPhysical{}, ingestedOutgoing{};
+bool ingestedBasisKnown = false;
 struct Cached {
     bool valid = false;
     std::uintptr_t command = 0;
@@ -55,6 +53,7 @@ std::uint64_t beginCalls = 0, finishCalls = 0, replayCalls = 0;
 std::uint64_t localIngests = 0, editedIngests = 0, physicalIngests = 0, unknownIngests = 0;
 std::uint64_t publishedCommands = 0;
 std::uint64_t boundaryEdits = 0;
+std::uint64_t previousHistoryReads = 0, previousHistoryMisses = 0;
 int lastEditedSequence = 0, lastIngestSequence = 0;
 AimAngles lastOutgoingView{}, lastIngestView{};
 std::uint32_t lastOutgoingPresence = 0, lastIngestPresence = 0;
@@ -67,7 +66,7 @@ void State(const char* value) noexcept { status.store(value, std::memory_order_r
 void Invalidate() noexcept {
     for (auto& entry : cache) { entry.valid = false; entry.boundary.valid = false; entry.command = 0; }
     source = {}; protectReplay = false;
-    ingestedServices = 0; ingestedEdited = false; ingestedBasisKnown = false;
+    ingestedBasisKnown = false;
     if (!++sourceEpoch) ++sourceEpoch;
     AntiAimHistoryReset(publications);
 }
@@ -124,6 +123,44 @@ bool Action(std::uintptr_t command) noexcept {
     }
     return false;
 }
+bool CommandHistory(std::uintptr_t command, std::uintptr_t services,
+    float& historicalForward, float& historicalLeft, float& physicalForward, float& physicalLeft) noexcept {
+    int sequence = 0;
+    if (!Read(command + movement_offsets::command::Sequence, sequence) || sequence <= 0) return false;
+    AntiAimHistoryCommand previous{}, matched{};
+    if (AntiAimHistoryReadPrevious(reinterpret_cast<AntiAimCommandLookup>(client + off::CommandLookup),
+        reinterpret_cast<void*>(source.controller), sequence, sourceEpoch, previous)) {
+        ++previousHistoryReads;
+        historicalForward = previous.directions & (movement_offsets::Forward | movement_offsets::Back) ? previous.forward : 0;
+        historicalLeft = previous.directions & (movement_offsets::Left | movement_offsets::Right) ? previous.left : 0;
+        physicalForward = historicalForward; physicalLeft = historicalLeft;
+        if (AntiAimHistoryMatch(publications, previous, matched)) {
+            if (!matched.edited) return true;
+            const auto physical = AntiAimCorrectWalkMovement(matched.outgoing, matched.physical, historicalForward, historicalLeft);
+            if (!physical.valid) return false;
+            physicalForward = physical.forward; physicalLeft = physical.left;
+            return true;
+        }
+        // Before the first edit, unpublished older commands are physical.
+        // Afterwards an unknown predecessor must never be guessed from the
+        // most recently simulated command, even if its services are readable.
+        if (!protectReplay) return true;
+        ++previousHistoryMisses;
+        return false;
+    }
+    if (protectReplay) { ++previousHistoryMisses; return false; }
+    // Initial activation can precede a readable predecessor. No command from
+    // this source has been edited yet, so native history is still physical.
+    MovementButtons buttons{};
+    if (!Read(services + movement_offsets::services::Buttons, buttons) ||
+        !Read(services + movement_offsets::services::CommandForward, historicalForward) ||
+        !Read(services + movement_offsets::services::CommandLeft, historicalLeft) ||
+        !std::isfinite(historicalForward) || !std::isfinite(historicalLeft)) return false;
+    if (!(buttons.down & (movement_offsets::Forward | movement_offsets::Back))) historicalForward = 0;
+    if (!(buttons.down & (movement_offsets::Left | movement_offsets::Right))) historicalLeft = 0;
+    physicalForward = historicalForward; physicalLeft = historicalLeft;
+    return true;
+}
 bool BoundaryStillActive(const AntiAimBoundaryPatch& patch) noexcept {
     std::uintptr_t base = 0, rep = 0; int count = 0;
     if (!Read(patch.command + movement_offsets::command::Base, base) || base != patch.base ||
@@ -155,10 +192,15 @@ void HookReplay(void* input, int slot) noexcept {
     const auto address = reinterpret_cast<std::uintptr_t>(input) + off::InputAngles;
     const bool preserve = slot == 0 && protectReplay && Identity(input) &&
         ReadSource(current, false) && current == source;
-    // Native replay writes command angles back into input. Its remaining work
-    // only adjusts event times/counters, so retain the real view across it.
+    // Native replay resets both the previous-down mask and the camera from
+    // the outgoing command. Rotated directions must not become physical input
+    // edges on the next rebuild. Advance previous directions from physical
+    // current input, rather than freezing the old previous-down mask;
+    // native action-button state, edge resets and timestamps still advance.
     ReplaySource before{input, current};
-    if (AntiAimReplayPreservingView(address, preserve, originalReplay, input, slot, &ReplaySourceValid, &before)) ++replayRestored;
+    if (AntiAimReplayPreservingInput(address, reinterpret_cast<std::uintptr_t>(input) + off::InputCurrentButtons,
+        reinterpret_cast<std::uintptr_t>(input) + off::InputPreviousButtons,
+        preserve, originalReplay, input, slot, &ReplaySourceValid, &before)) ++replayRestored;
     ReleaseSRWLockExclusive(&lock);
 }
 }
@@ -169,13 +211,16 @@ bool AntiAimPrepare(AntiAimLogCallback callback) noexcept {
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
     std::uintptr_t vtable = 0, method = 0;
     std::array<unsigned char, sizeof(off::ReplayBytes)> bytes{};
+    std::array<unsigned char, sizeof(off::CommandLookupBytes)> lookupBytes{};
     if (!client || !Read(client, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 || dos.e_lfanew > 0x100000 ||
         !Read(client + dos.e_lfanew, nt) || nt.Signature != IMAGE_NT_SIGNATURE ||
         nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 || nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
         nt.FileHeader.TimeDateStamp != cs2_offsets::ClientTimestamp || nt.OptionalHeader.SizeOfImage != cs2_offsets::ClientImageSize ||
         !Read(client + off::Input, vtable) || vtable != client + off::InputVtable ||
         !Read(vtable + off::ReplaySlot * sizeof(std::uintptr_t), method) || method != client + off::Replay ||
-        !MovementCopy(method, bytes.data(), bytes.size()) || std::memcmp(bytes.data(), off::ReplayBytes, bytes.size())) {
+        !MovementCopy(method, bytes.data(), bytes.size()) || std::memcmp(bytes.data(), off::ReplayBytes, bytes.size()) ||
+        !MovementCopy(client + off::CommandLookup, lookupBytes.data(), lookupBytes.size()) ||
+        std::memcmp(lookupBytes.data(), off::CommandLookupBytes, lookupBytes.size())) {
         State("installed anti aim build verification failed"); return false;
     }
     if (MH_CreateHook(reinterpret_cast<void*>(method), reinterpret_cast<void*>(&HookReplay),
@@ -184,7 +229,7 @@ bool AntiAimPrepare(AntiAimLogCallback callback) noexcept {
         State("anti aim replay hook preparation failed"); return false;
     }
     prepared = true; State("awaiting anti aim activation");
-    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=4 configurable_command_patterns; command finalizer integration; input replay slot=8; physical input/history retained");
+    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=5 sequence_previous_history; command finalizer integration; input replay slot=8; physical view/direction input retained");
     return true;
 }
 void AntiAimActivate(bool commandHookReady) noexcept {
@@ -249,7 +294,7 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
         if (Foreground() && (GetAsyncKeyState(VK_END) & 0x8000)) { stopped = true; active.store(false, std::memory_order_release); }
         const auto options = AntiAimGetSettings();
         const bool enabled = active.load(std::memory_order_acquire) && options.enabled && Foreground();
-        if (enabled || ingestedEdited) {
+        if (enabled || protectReplay) {
             Source current{};
             const auto address = reinterpret_cast<std::uintptr_t>(command);
             int sequence = 0;
@@ -260,33 +305,23 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                 entry.command = address; entry.sequence = sequence; entry.valid = false; entry.boundary.valid = false;
                 const char* reason = nullptr;
                 std::uintptr_t services = 0;
-                MovementButtons historyButtons{};
                 float historicalForward = 0, historicalLeft = 0;
+                float physicalForward = 0, physicalLeft = 0;
                 if (!Read(current.pawn + movement_offsets::pawn::MovementServices, services) || !services ||
-                    !Read(services + movement_offsets::services::Buttons, historyButtons) ||
-                    !Read(services + movement_offsets::services::CommandForward, historicalForward) ||
-                    !Read(services + movement_offsets::services::CommandLeft, historicalLeft) ||
-                    !std::isfinite(historicalForward) || !std::isfinite(historicalLeft)) {
-                    ++rejected; State("historical movement unavailable");
+                    !CommandHistory(address, services, historicalForward, historicalLeft, physicalForward, physicalLeft)) {
+                    ++rejected; State("previous command movement unavailable");
                 } else {
-                    if (!(historyButtons.down & (movement_offsets::Forward | movement_offsets::Back))) historicalForward = 0;
-                    if (!(historyButtons.down & (movement_offsets::Left | movement_offsets::Right))) historicalLeft = 0;
-                    float physicalForward = historicalForward, physicalLeft = historicalLeft;
-                    if (ingestedEdited && services == ingestedServices) {
-                        const auto physical = AntiAimCorrectWalkMovement(ingestedOutgoing, ingestedPhysical, historicalForward, historicalLeft);
-                        if (physical.valid) { physicalForward = physical.forward; physicalLeft = physical.left; }
-                    }
                     Source walking{};
-                    const bool historyReady = ingestedBasisKnown || !protectReplay;
-                    const bool transform = enabled && historyReady && ReadSource(walking, true) && walking == current && !Action(address);
+                    const bool transform = enabled && ReadSource(walking, true) && walking == current && !Action(address);
                     if (transform) entry.valid = AntiAimApplyCommand(address, entry.patch, options, &reason, &commandDiagnostics);
                     float targetForward = physicalForward, targetLeft = physicalLeft;
                     if (entry.valid) {
                         const auto outgoing = AntiAimCorrectWalkMovement(entry.patch.originalView, entry.patch.editedView, physicalForward, physicalLeft);
                         targetForward = outgoing.forward; targetLeft = outgoing.left;
                     }
-                    // Re-express the ingested physical axes in this command's
-                    // outgoing basis, including mode changes and passthrough.
+                    // Native simulation starts this sequence from sequence-1,
+                    // even when the latest ingestion was this same command.
+                    // Serialize that predecessor's change of basis at time 0.
                     const float deltaForward = targetForward - historicalForward, deltaLeft = targetLeft - historicalLeft;
                     if ((deltaForward != 0 || deltaLeft != 0) && !AntiAimAppendBoundary(address, deltaForward, deltaLeft,
                         client + movement_offsets::AllocateSubtick, client + movement_offsets::AddAllocatedSubtick, entry.boundary, &reason)) {
@@ -307,7 +342,7 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                         lastOutgoingPresence = entry.patch.editedAnglePresence;
                         State("configured angles; local view preserved");
                     } else if (transform) { ++rejected; State(reason ? reason : "unsupported command; unchanged"); }
-                    else State(!historyReady ? "unrecognized historical command; physical passthrough" : stopped ? "stopped; physical movement handoff" : enabled ? "attack/movement passthrough" : "disabled; physical movement handoff");
+                    else State(stopped ? "stopped; physical movement handoff" : enabled ? "attack/movement passthrough" : "disabled; physical movement handoff");
                     if (entry.boundary.valid && entry.boundary.appended) ++boundaryEdits;
                 }
             }
@@ -347,13 +382,14 @@ void AntiAimFlushTelemetry() noexcept {
     char message[1536]{};
     AcquireSRWLockShared(&lock);
     std::snprintf(message, sizeof(message),
-        "ANTI_AIM revision=4 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_view_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x; mutation/ingestion evidence is not observed model facing or server receipt",
+        "ANTI_AIM revision=5 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_input_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu previous_history_reads=%llu previous_history_misses=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x; mutation/ingestion evidence is not observed model facing or server receipt",
         beginCalls, finishCalls, replayCalls, active.load(std::memory_order_acquire), AntiAimGetSettings().enabled,
         edited, rejected, replayRestored, AntiAimStatus(), commandDiagnostics.reason,
         commandDiagnostics.commandPresence, commandDiagnostics.basePresence, commandDiagnostics.anglePresence,
         commandDiagnostics.count, commandDiagnostics.capacity, commandDiagnostics.allocated,
         lastEditedSequence, lastOutgoingView.pitch, lastOutgoingView.yaw, lastOutgoingView.roll, lastOutgoingPresence,
-        publishedCommands, localIngests, editedIngests, physicalIngests, unknownIngests, ingestedBasisKnown, boundaryEdits, lastIngestSequence,
+        publishedCommands, localIngests, editedIngests, physicalIngests, unknownIngests, ingestedBasisKnown, boundaryEdits,
+        previousHistoryReads, previousHistoryMisses, lastIngestSequence,
         lastIngestView.pitch, lastIngestView.yaw, lastIngestView.roll, lastIngestPresence);
     ReleaseSRWLockShared(&lock);
     logger(message);
@@ -368,8 +404,6 @@ void AntiAimObserveIngest(void* services, void* command) noexcept {
         ReleaseSRWLockExclusive(&lock);
         return;
     }
-    ingestedServices = localServices;
-    ingestedEdited = false;
     ingestedBasisKnown = false;
     ++localIngests;
     AntiAimHistoryCommand observed{}, matched{};
@@ -377,8 +411,6 @@ void AntiAimObserveIngest(void* services, void* command) noexcept {
         lastIngestSequence = observed.sequence; lastIngestView = observed.outgoing; lastIngestPresence = observed.anglePresence;
         if (AntiAimHistoryMatch(publications, observed, matched)) {
             ingestedBasisKnown = true;
-            ingestedEdited = matched.edited;
-            ingestedPhysical = matched.physical; ingestedOutgoing = matched.outgoing;
             if (matched.edited) ++editedIngests;
             else ++physicalIngests;
         }
@@ -386,11 +418,14 @@ void AntiAimObserveIngest(void* services, void* command) noexcept {
     if (!ingestedBasisKnown) ++unknownIngests;
     ReleaseSRWLockExclusive(&lock);
 }
-void AntiAimPhysicalHistory(std::uintptr_t services, float& forward, float& left) noexcept {
-    AcquireSRWLockShared(&lock);
-    if (ingestedEdited && services == ingestedServices) {
-        const auto corrected = AntiAimCorrectWalkMovement(ingestedOutgoing, ingestedPhysical, forward, left);
-        if (corrected.valid) { forward = corrected.forward; left = corrected.left; }
+bool AntiAimPhysicalHistory(std::uintptr_t services, std::uintptr_t command, float& forward, float& left) noexcept {
+    AcquireSRWLockExclusive(&lock);
+    bool valid = true;
+    if (protectReplay) {
+        float historicalForward = 0, historicalLeft = 0, physicalForward = 0, physicalLeft = 0;
+        valid = CommandHistory(command, services, historicalForward, historicalLeft, physicalForward, physicalLeft);
+        if (valid) { forward = physicalForward; left = physicalLeft; }
     }
-    ReleaseSRWLockShared(&lock);
+    ReleaseSRWLockExclusive(&lock);
+    return valid;
 }

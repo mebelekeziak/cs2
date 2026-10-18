@@ -18,6 +18,8 @@ CHECKS = {
     "clone_proto_sequence": (0xB5E32B, "488d4f104885ff488d5310480f44c8e8a16ac5ff8b4308488bcf894708"),
     "producer_snapshot_copy": (0xB65F4C, "4c89442430488d4de0458ba090000000498bd0e8ac83ffff"),
     "setup_dispatch_same_command": (0xA7102C, "488b074d8bc6498bd5488bcfff9038010000"),
+    "command_lookup_entry": (0x9444A0, "40534883ec208bdae883000000"),
+    "replay_buttons_reset": (0xB6C9F7, "4889866002000048898668020000488b476048898650020000"),
     "replay_wrapper": (0xCEA280, "40534883ec20488bd9e8f226e8ff33c0c683bd0b00000048c783cc0b0000ffffffff8983d80b00008983f00b0000c783f40b0000ffffffff4883c4205bc3"),
     "replay_angle_loads": (0xB6CA17, "488b4f404885c9480f45c1488b4840488d05bbb869014885c9480f45c1488d4c2420f30f105820f30f10501cf30f104818e8133761ff"),
     "replay_camera_stores": (0xB6CA4D, "f20f104424208bd38b442428488bcef20f118688060000898690060000c78694060000ffffffffe82737ffff"),
@@ -50,6 +52,9 @@ CHECKS = {
     "air_combine": (0x8E5A5B, "f3440f594540c744245800000000f3440f595540440f28a424a0000000f3410f59fff3450f59cf440f28bc2480000000f3410f58faf3450f58c1"),
 }
 WINDOWS = {
+    "sequence_checked_command_lookup": (0x9444A0, 0x4E, "d07b8ccce4c3721c7409d0ccf3240853b4b7bd64631bd29f32b5b4cffd226839"),
+    "controller_command_ring": (0x944530, 0x18A, "9b4052a836b35e31fa2ed00b771497dbb3b88ab00980d7a312f664137cf50250"),
+    "producer_previous_button_input": (0xB668F0, 0x5B, "1b81f65dd55ec85c315331250f3de5a8e6c2d1647991404a86a2ffc6efcb6aa2"),
     # Raw button selects digital versus analog; raw angle deltas are always
     # accumulated. Digital axis dispatch recognizes exact single-button masks.
     "subtick_raw_decoder": (0xA74CF3, 0x70, "20dd7ac41dde2e252c5c43a1fe0c387beaeb1011ce4309330c5600b7a3d20a41"),
@@ -76,6 +81,9 @@ def verify_source(image, base, header):
         "Input": rip(0xEE574), "InputVtable": rip(0xEE58C),
         "Replay": 0xCEA280, "ReplaySlot": 8,
         "InputAngles": struct.unpack_from("<I", image, 0xB6CA60)[0],
+        "InputPreviousButtons": struct.unpack_from("<I", image, 0xB6CA0C)[0],
+        "InputCurrentButtons": struct.unpack_from("<I", image, 0xB6690D)[0],
+        "CommandLookup": 0xB6C9BC + 5 + struct.unpack_from("<i", image, 0xB6C9BD)[0],
         "Up": image[0xB663DB], "UpPresent": struct.unpack_from("<I", image, 0xB663D3)[0],
     }
     # Independently connect the game-specific vtable to its native base reset.
@@ -92,10 +100,16 @@ def verify_source(image, base, header):
             raise SystemExit(f"Source constant {name} differs from native operand: {native:#x}")
     if struct.unpack_from("<I", image, 0xB6CA66)[0] != expected["InputAngles"] + 8:
         raise SystemExit("Input angle roll store no longer follows pitch/yaw")
+    if struct.unpack_from("<I", image, 0xB66927)[0] != expected["InputPreviousButtons"]:
+        raise SystemExit("Producer previous-button input differs from replay destination")
     prefix = re.search(r"ReplayBytes\[\]\s*\{([^}]*)\}", source, re.S)
     parsed = bytes(int(x.strip(), 0) for x in prefix[1].split(",") if x.strip()) if prefix else b""
     if parsed != bytes.fromhex(CHECKS["replay_wrapper"][1])[:23]:
         raise SystemExit("ReplayBytes differs from independently frozen entry")
+    lookup_prefix = re.search(r"CommandLookupBytes\[\]\s*\{([^}]*)\}", source, re.S)
+    parsed_lookup = bytes(int(x.strip(), 0) for x in lookup_prefix[1].split(",") if x.strip()) if lookup_prefix else b""
+    if parsed_lookup != bytes.fromhex(CHECKS["command_lookup_entry"][1]):
+        raise SystemExit("CommandLookupBytes differs from independently decoded entry")
     for name, record, string, text in (
             ("Attack", 0x1B28D10, 0x1B28F78, b"IN_ATTACK\0"),
             ("Use", 0x1B28DB0, 0x1B28FB8, b"IN_USE\0"),

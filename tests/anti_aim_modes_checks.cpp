@@ -1,6 +1,7 @@
 #include "anti_aim_command.h"
 #include "anti_aim_boundary.h"
 #include "anti_aim_history.h"
+#include "anti_aim_view.h"
 #include "movement_offsets.h"
 #include "silent_aim_offsets.h"
 #include <Windows.h>
@@ -262,6 +263,80 @@ void PatternCommands() {
     }
     Expect(patterns, "command rebuilds select configured jitter spin random and pitch phases from their sequence");
 }
+struct ReplayInput {
+    AimAngles view{};
+    std::uint64_t currentDown = 0;
+    MovementButtons buttons{};
+    std::uintptr_t command = 0;
+    int calls = 0;
+};
+void ReplayCommand(void* context, int slot) {
+    auto& input = *static_cast<ReplayInput*>(context);
+    ++input.calls;
+    if (slot) return;
+    const auto base = Get<std::uintptr_t>(input.command + mo::command::Base);
+    const auto angles = Get<std::uintptr_t>(base + mo::base::Angles);
+    input.view = Get<AimAngles>(angles + so::angle::Pitch);
+    // Installed B6C9F7..B6CA09 clears changed/tap and copies command down
+    // into the physical input state, independently of the camera reset.
+    input.buttons = {Get<MovementButtons>(input.command + mo::command::Buttons).down, 0, 0};
+}
+bool ReplayValid(void*) { return true; }
+void PhysicalInputReplay() {
+    constexpr std::array<std::array<float, 2>, 9> axes{{
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}, {0, 0}}};
+    bool held = true, edges = true, view = true, native = true, restored = true;
+    unsigned incompatibleMasks = 0;
+    for (const auto mode : {AntiAimYawMode::Static, AntiAimYawMode::Jitter, AntiAimYawMode::Spin, AntiAimYawMode::Random}) {
+        ReplayInput input{};
+        std::uint64_t previousPhysical = 0;
+        for (int sequence = 1; sequence <= 2304; ++sequence) {
+            Fixture f;
+            const auto& axis = axes[static_cast<std::size_t>((sequence - 1) / 256)];
+            MovementButtons physical{};
+            MovementEncodeStrafe(physical, axis[0], axis[1], previousPhysical);
+            // Changed directions in physical input must reflect only the real
+            // WASD transition, never the previous command's rotating axes.
+            if ((sequence - 1) % 256)
+                edges &= ((input.buttons.down ^ physical.down) & mo::Directions) == 0;
+            previousPhysical = physical.down;
+            physical.down |= mo::Jump;
+            input.view = {12, Wrap(sequence * 0.25), 0};
+            input.currentDown = physical.down; input.command = Address(f.command);
+            Put(Address(f.command) + mo::command::Sequence, sequence);
+            Put(Address(f.command) + mo::command::Buttons, physical);
+            Put(Address(f.base) + mo::base::Forward, axis[0]); Put(Address(f.base) + mo::base::Left, axis[1]);
+            Put(Address(f.angles) + so::angle::Pitch, input.view);
+            auto settings = Settings(180);
+            settings.yawMode = mode; settings.spinSpeed = sequence % 2 ? 137.0f : -179.0f;
+            settings.jitterRange = 270; settings.jitterInterval = 1;
+            AntiAimCommandPatch patch{};
+            if (!AntiAimApplyCommand(Address(f.command), patch, settings)) { held = false; break; }
+            incompatibleMasks += ((patch.editedButtons.down ^ physical.down) & mo::Directions) != 0;
+            // Native action changes and its edge reset must survive the wrapper.
+            auto outgoingButtons = patch.editedButtons;
+            outgoingButtons.down &= ~mo::Jump; outgoingButtons.down |= 0x20;
+            Put(Address(f.command) + mo::command::Buttons, outgoingButtons);
+            const auto outgoingCommand = f.command; const auto outgoingBase = f.base;
+            const auto physicalView = input.view;
+            const int before = input.calls;
+            const bool preserved = AntiAimReplayPreservingInput(Address(input.view), Address(input.currentDown), Address(input.buttons.down), true,
+                &ReplayCommand, &input, 0, &ReplayValid, &input);
+            held &= preserved && (input.buttons.down & mo::Directions) == (physical.down & mo::Directions);
+            view &= std::memcmp(&input.view, &physicalView, sizeof(physicalView)) == 0;
+            native &= input.calls == before + 1 && input.buttons.changed == 0 && input.buttons.third == 0 &&
+                (input.buttons.down & ~mo::Directions) == (outgoingButtons.down & ~mo::Directions);
+            restored &= f.command == outgoingCommand && f.base == outgoingBase;
+            Put(Address(f.command) + mo::command::Buttons, patch.editedButtons);
+            restored &= AntiAimRestoreCommand(patch);
+        }
+    }
+    Expect(held && incompatibleMasks > 4000,
+        "9216 static jitter spin and random command replays retain physical WASD despite corrected command masks");
+    Expect(edges, "held physical directions do not generate artificial input edges after fast angle changes");
+    Expect(view && native, "replay preserves the fresh physical view while retaining native action changes and edge reset");
+    Expect(restored, "physical-input replay leaves corrected wire commands and command restoration intact");
+}
 struct HandoffFixture : Fixture {
     std::array<std::uintptr_t, 9> grown{};
     MovementSubtick generated{};
@@ -316,6 +391,78 @@ struct CopiedHandoff {
         }
     }
 };
+struct PreviousCommand {
+    std::uintptr_t command = 0;
+    int requested = 0;
+};
+void* LookupPrevious(void* controller, int sequence) {
+    auto& previous = *static_cast<PreviousCommand*>(controller);
+    previous.requested = sequence;
+    return reinterpret_cast<void*>(previous.command);
+}
+void PredictionRebuildHandoffs() {
+    static AntiAimHistoryState history{};
+    AntiAimHistoryReset(history);
+    bool selected = true, intervals = true, deterministic = true;
+    unsigned oldFailures = 0, rebuilds = 0;
+    for (const auto mode : {AntiAimYawMode::Static, AntiAimYawMode::Jitter, AntiAimYawMode::Spin, AntiAimYawMode::Random}) {
+        AntiAimHistoryReset(history);
+        auto settings = Settings(180); settings.yawMode = mode;
+        settings.jitterRange = 270; settings.jitterInterval = 1; settings.spinSpeed = 137;
+        AntiAimHistoryCommand previous{};
+        previous.sequence = 1; previous.source = 77;
+        previous.physical = previous.outgoing = {12, 23, 0}; previous.anglePresence = 3;
+        previous.forward = 1; previous.directions = mo::Forward;
+        for (int sequence = 2; sequence <= 385; ++sequence) {
+            Fixture predecessor;
+            Put(Address(predecessor.command) + mo::command::Sequence, previous.sequence);
+            Put(Address(predecessor.command) + mo::command::Buttons, MovementButtons{previous.directions, 0, 0});
+            Put(Address(predecessor.base) + mo::base::Forward, previous.forward);
+            Put(Address(predecessor.base) + mo::base::Left, previous.left);
+            Put(Address(predecessor.angles) + so::angle::Presence, previous.anglePresence);
+            Put(Address(predecessor.angles) + so::angle::Pitch, previous.outgoing);
+            selected &= AntiAimHistoryPublish(history, previous);
+            PreviousCommand controller{Address(predecessor.command)};
+            Fixture current;
+            const AimAngles physical{12, Wrap(sequence * 0.125), 0};
+            Put(Address(current.command) + mo::command::Sequence, sequence);
+            Put(Address(current.command) + mo::command::Buttons, MovementButtons{mo::Forward, 0, 0});
+            Put(Address(current.base) + mo::base::Forward, 1.0f); Put(Address(current.base) + mo::base::Left, 0.0f);
+            Put(Address(current.base) + mo::base::SubtickSize, 0);
+            Put(Address(current.angles) + so::angle::Pitch, physical);
+            AntiAimCommandPatch patch{};
+            selected &= AntiAimApplyCommand(Address(current.command), patch, settings);
+            AntiAimHistoryCommand latestIngest{};
+            selected &= AntiAimHistoryReadCommand(Address(current.command), 77, latestIngest);
+            latestIngest.physical = physical; latestIngest.edited = true;
+            // Simulate ingest of N before rebuilding N again. The original
+            // runtime selected these axes and produced a zero boundary even
+            // though simulation of N restarts from N-1's different axes.
+            selected &= AntiAimHistoryPublish(history, latestIngest);
+            if (!WorldWish(physical, patch.editedView, 1, 0, previous.forward, previous.left)) ++oldFailures;
+            float firstF = 0, firstL = 0;
+            for (int replay = 0; replay < 3; ++replay) {
+                AntiAimHistoryCommand observed{}, matched{};
+                selected &= AntiAimHistoryReadPrevious(&LookupPrevious, &controller, sequence, 77, observed) &&
+                    controller.requested == sequence - 1 && AntiAimHistoryMatch(history, observed, matched) &&
+                    matched.sequence == previous.sequence;
+                const auto physicalHistory = matched.edited ? AntiAimCorrectWalkMovement(matched.outgoing, matched.physical,
+                    matched.forward, matched.left) : AntiAimMovement{matched.forward, matched.left, 0, true};
+                const auto target = AntiAimCorrectWalkMovement(physical, patch.editedView, physicalHistory.forward, physicalHistory.left);
+                const float deltaF = target.forward - observed.forward, deltaL = target.left - observed.left;
+                intervals &= physicalHistory.valid && target.valid && WorldWish(physical, patch.editedView, 1, 0,
+                    previous.forward + deltaF, previous.left + deltaL);
+                if (replay) deterministic &= deltaF == firstF && deltaL == firstL;
+                else { firstF = deltaF; firstL = deltaL; }
+                ++rebuilds;
+            }
+            previous = latestIngest;
+        }
+    }
+    Expect(selected && rebuilds == 4608, "4608 prediction rebuilds select sequence-1 while the latest ingested command is sequence N");
+    Expect(intervals && deterministic, "rebuilt fast spin and jitter commands retain identical correct time-zero movement boundaries");
+    Expect(oldFailures > 1000, "latest-ingestion zero boundaries reproduce sideways world wish in over 1000 changing-angle commands");
+}
 void HistoricalHandoffs() {
     AntiAimHistoryState history{}; AntiAimHistoryCommand previous{};
     float historicalF = 0, historicalL = 0, previousPhysicalF = 0, previousPhysicalL = 0;
@@ -477,6 +624,6 @@ void Rejections() {
 }
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); HistoricalHandoffs(); Rejections();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); Rejections();
     return failures ? 1 : 0;
 }

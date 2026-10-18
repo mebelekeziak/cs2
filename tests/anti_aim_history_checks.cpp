@@ -37,9 +37,45 @@ struct NativeCommand {
         Put(Address(angles) + so::angle::Pitch, value.outgoing);
     }
 };
+struct Lookup {
+    void* command = nullptr;
+    int requested = 0, calls = 0;
+};
+void* Previous(void* controller, int sequence) {
+    auto& lookup = *static_cast<Lookup*>(controller);
+    lookup.requested = sequence; ++lookup.calls;
+    return lookup.command;
+}
+void PreviousLookup() {
+    const auto value = Example(); NativeCommand native(value);
+    Lookup lookup{reinterpret_cast<void*>(Address(native.command))};
+    AntiAimHistoryCommand previous{};
+    Check(AntiAimHistoryReadPrevious(&Previous, &lookup, 43, value.source, previous) && lookup.requested == 42 &&
+        previous.sequence == 42 && previous.outgoing.yaw == value.outgoing.yaw && previous.forward == value.forward,
+        "rebuild of sequence 43 reads sequence 42 from its controller ring");
+    const auto unchanged = previous;
+    for (int wrong : {41, 43, 99}) {
+        Put(Address(native.command) + movement_offsets::command::Sequence, wrong);
+        Check(!AntiAimHistoryReadPrevious(&Previous, &lookup, 43, value.source, previous) &&
+            std::memcmp(&previous, &unchanged, sizeof(previous)) == 0,
+            "old current and future ring slots reject without replacing predecessor output");
+    }
+    lookup.command = nullptr;
+    Check(!AntiAimHistoryReadPrevious(&Previous, &lookup, 43, value.source, previous), "missing ring slot rejects");
+    lookup.command = reinterpret_cast<void*>(1);
+    Check(!AntiAimHistoryReadPrevious(&Previous, &lookup, 43, value.source, previous), "unmapped ring slot rejects safely");
+    const auto calls = lookup.calls;
+    Check(!AntiAimHistoryReadPrevious(&Previous, &lookup, 1, value.source, previous) &&
+        !AntiAimHistoryReadPrevious(&Previous, &lookup, 0, value.source, previous) &&
+        !AntiAimHistoryReadPrevious(nullptr, &lookup, 43, value.source, previous) &&
+        !AntiAimHistoryReadPrevious(&Previous, nullptr, 43, value.source, previous) &&
+        !AntiAimHistoryReadPrevious(&Previous, &lookup, 43, 0, previous) && lookup.calls == calls,
+        "invalid predecessor request never enters native lookup");
+}
 }
 
 int main() {
+    PreviousLookup();
     // Static to keep the deliberately fixed-capacity history off thread stacks.
     static AntiAimHistoryState state;
     AntiAimHistoryCommand matched{};

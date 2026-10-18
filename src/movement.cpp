@@ -468,8 +468,7 @@ bool ReadHistory(const Pawn& pawn, const Patch& patch, float& forward, float& le
         !Writable(patch.base + off::base::SubtickSize, sizeof(int))) return false;
     if (!(buttons.down & (off::Forward | off::Back))) forward = 0;
     if (!(buttons.down & (off::Left | off::Right))) left = 0;
-    AntiAimPhysicalHistory(pawn.services, forward, left);
-    return true;
+    return AntiAimPhysicalHistory(pawn.services, patch.command, forward, left);
 }
 void RememberReplay(const Patch& patch, const MovementReplayContext& context,
                     const MovementReplayPlan& plan, bool repeated = false) noexcept {

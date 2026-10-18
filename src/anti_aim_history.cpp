@@ -99,3 +99,15 @@ bool AntiAimHistoryReadCommand(std::uintptr_t command, std::uint64_t source,
     observed = value;
     return true;
 }
+
+bool AntiAimHistoryReadPrevious(AntiAimCommandLookup lookup, void* controller, int sequence,
+                                std::uint64_t source, AntiAimHistoryCommand& previous) noexcept {
+    if (!lookup || !controller || sequence <= 1 || !source) return false;
+    std::uintptr_t address = 0;
+    __try { address = reinterpret_cast<std::uintptr_t>(lookup(controller, sequence - 1)); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    AntiAimHistoryCommand value{};
+    if (!AntiAimHistoryReadCommand(address, source, value) || value.sequence != sequence - 1) return false;
+    previous = value;
+    return true;
+}

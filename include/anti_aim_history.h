@@ -42,3 +42,10 @@ void AntiAimHistoryReset(AntiAimHistoryState& state) noexcept;
 // The caller assigns the source lifecycle cookie. Failure preserves observed.
 bool AntiAimHistoryReadCommand(std::uintptr_t command, std::uint64_t source,
                                AntiAimHistoryCommand& observed) noexcept;
+
+using AntiAimCommandLookup = void* (*)(void*, int);
+// Read sequence-1 from the native controller command ring. The latest ingested
+// command may be this same sequence or a later prediction replay; it is not
+// the starting history for a rebuild. Reject missing/reused ring slots intact.
+bool AntiAimHistoryReadPrevious(AntiAimCommandLookup lookup, void* controller, int sequence,
+                                std::uint64_t source, AntiAimHistoryCommand& previous) noexcept;

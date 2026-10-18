@@ -320,3 +320,59 @@ necessary when yaw or pitch settings change and during existing passthrough
 transitions. These are installed-client static contracts; configurable settings
 and successful compatibility checks do not establish observed movement,
 visible model facing, server receipt or authoritative server physics.
+
+## Revision 5: prediction rebuilds and physical direction feedback
+
+Read-only inspection on October 18, 2026 confirms the same installed AMD64
+client hash and patch 1.41.9.1 / client-server 2000933. The supplied revision-4
+log `logs/overlay-32200-134368034829666506.log` contains 41,637 finalizer calls
+with last edited sequence 17,240 and recognized edited ingestion. Generation and
+ingestion are not a one-to-one timeline. Static rotation tests that immediately
+ingest each generated command do not model rebuilding the same sequence after
+its prediction already ran.
+
+The previous implementation used the most recently ingested movement-service
+axes/basis for a serialized boundary. If that ingestion was N itself, rebuilding
+N could calculate a zero boundary even though prediction restarts N from N-1.
+A static relative heading hides this difference. Changing headings expose it.
+The added regression reproduces incorrect world wish in over 1,000 changing
+commands when that zero boundary is applied to the predecessor's axes.
+
+The native controller lookup at `0x9444A0`, called by replay at `0xB6C9BC`, has
+ABI `command*(controller*, int sequence)`. It calls `0x944530` for the controller's
+command ring, rejects nonpositive sequences, indexes `sequence % 150` with stride
+`0x98`, and returns null unless the slot's native sequence at `+8` matches. The
+ring helper resolves the controller index through `0x15DF9F0`; its existing-ring
+branch returns directly. Its missing-ring branch allocates/initializes a ring;
+normal finalization already owns a command in that ring. The complete lookup
+and ring helper bodies, native replay call target and runtime entry bytes are
+verified. No ring pointers are retained across callbacks.
+
+Revision 5 reads sequence N-1 through this lookup and matches its copied wire
+values to publication history, recovering the physical axes before expressing
+them in N's outgoing basis. The movement planner uses the same source. Unknown
+edited predecessors reject correction instead of borrowing a different
+prediction sequence. The initial pre-edit fallback can still use physical
+native services when no readable predecessor exists. Stopping/disabling retains
+the predecessor handoff and replay compensation until source change or exit.
+
+Replay has another relevant side effect. At `0xB6C9F7/0xB6C9FE`, it clears input
+`+0x260/+0x268`; at `0xB6CA05..0xB6CA10`, it loads command native down `+0x60`
+and stores it to input **previous-down `+0x250`**. Producer
+`0xB668F0..0xB6694B` combines previous-down, **current physical `+0x258`**,
+changed and tap fields to encode command buttons. Thus restoring camera angles
+alone leaves rotating command directions feeding physical button transitions.
+The wrapper now captures current physical directions before native replay and
+replaces only direction bits in previous-down afterwards. It advances to the
+current input rather than retaining a stale previous mask. Native action bits,
+changed/tap resets and timestamp processing remain native. Both destinations
+are preflighted and the source lifecycle is revalidated before restoration.
+
+Regression coverage adds 9,216 actual pattern-command/replay transactions,
+4,608 rebuild/predecessor lookups and 10,000 fresh view/key transitions, including
+presses, releases, diagonals, reversals, native action changes and protected
+storage. The unchanged original view-only wrapper fails the new direction and
+held-edge checks. Missing/reused/wrong-sequence ring slots reject without
+changing the caller output. Existing 6,144 copied-command/subtick handoffs
+continue to run. These checks establish copied-value behavior and the installed
+client contracts, not observed live movement or authoritative server physics.

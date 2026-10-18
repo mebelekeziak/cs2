@@ -222,6 +222,8 @@ Details: [command/view evidence](../tools/CS2_ANTI_AIM_EVIDENCE.md).
 | --- | --- | --- |
 | `anti_aim_offsets::Replay`, `ReplaySlot` | `0xCEA280`, function RVA; `8`, vtable slot | `CCSGOInput` RTTI/vtable; wrapper calls native reset `0xB6C980`, ABI `void(input*, int slot)` |
 | `InputAngles` | `0x688`, input member, inline float3 | Native reset stores at `0xB6CA5C/0xB6CA64`; producer uses input-slot state `+0x228/+0x460` |
+| `InputPreviousButtons`, `InputCurrentButtons` | `0x250`, `0x258`, input members, uint64 masks | Native replay stores command down to previous at `0xB6CA09`; producer combines previous/current at `0xB66924`/`0xB6690A` |
+| `CommandLookup` | `0x9444A0`, function RVA | Native replay calls it at `0xB6C9BC`; ABI `command*(controller*, int sequence)`, sequence-checked 150-command ring with `0x98` stride |
 | `Attack`, `Attack2`, `Use` | `1`, `0x800`, `0x20`, uint64 button masks | Named `IN_ATTACK`, `IN_ATTACK2`, `IN_USE` native enum records |
 | `base::Up`, `UpPresent` | `0x60`, base member; `0x100`, presence mask | Native producer `0xB663D0`, ingestion `0xA77658` |
 
@@ -241,6 +243,14 @@ and relevant dispatch sites. Revision 3 uses a +89-degree ground-facing pitch;
 native pitch clamp `0xB63B70` consumes their live values. These are ordinary
 defaults, rather than immutable bounds. The user confirmed local view for
 revision 2; revision 3 movement and server results remain unobserved.
+
+Revision 5 reads sequence N-1 through the controller lookup for each rebuild of
+N; the most recently ingested prediction command can be N itself. Movement
+planning and serialized time-zero handoffs use the same predecessor. Replay
+also advances previous direction bits from current physical input, retaining
+native action bits and changed/tap resets. Lookup/ring bodies and the input
+producer/reset fields are frozen by the verifier. New replay/rebuild regressions
+pass; live movement confirmation remains pending.
 
 ## Third-person camera: client.dll
 
