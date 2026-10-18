@@ -33,6 +33,10 @@ struct AimWeaponSnapshot {
 bool AimWeaponPrepare(std::uintptr_t client, AimWeaponContext& context) noexcept;
 bool AimWeaponRead(const AimWeaponContext& context, const AimSource& source,
     AimWeaponSnapshot& out) noexcept;
+// Read only the visual accuracy cone on the native command owner. Does not
+// query firing readiness, recoil punch, time or console variables.
+bool AimWeaponReadSpread(const AimWeaponContext& context, const AimSource& source,
+    AimWeaponSnapshot& out) noexcept;
 // Revalidate identity/data/mode/ammo immediately before committing an aim/fire edit.
 bool AimWeaponStillCurrent(const AimWeaponContext& context, const AimSource& source,
     const AimWeaponSnapshot& snapshot) noexcept;

@@ -84,6 +84,42 @@ The installed catalog still has 739 entries. Both payloads retain zero static
 TLS and delay imports. No CS2 client/server was started for this correction;
 live character appearance remains unobserved.
 
+## Scoped third-person crosshair
+
+A custom white four-point crosshair appears automatically at screen center
+only while the alive local player is actually scoped with a supported scoped
+weapon and the third-person camera has successfully applied. It follows the
+reference's slender tapered arms, tiny center dot and subtle glow. Native
+spread plus inaccuracy gently opens the center gap by at most three pixels at
+1080p, smoothed over approximately 90 ms; the outer radius stays at 18 pixels.
+The graphic scales with viewport height and stays visible with the menu hidden.
+
+This works independently of ESP, aim assistance and the scoped zoom override.
+Unscoping, leaving third person, death, stale/replaced entities, missing accuracy
+data or cooperative stop hides it. Accuracy getters run on the existing native
+command callback; Present consumes copied values and validates current scope
+and camera state. Samples and camera publications expire after 250 ms without
+updates. No new hooks, game-file changes or command edits are added for it.
+
+Build and load with the existing commands below. Restart CS2 normally before
+using **Load Overlay.cmd** if an older DLL is resident; stopped and resident
+is not physically unloaded. Standalone software-D3D11 previews (synthetic
+scoped/camera state, without starting CS2):
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\scoped-crosshair-still.bmp 11 0 1920 1080
+.\build\Release\public_menu_preview.exe .\logs\scoped-crosshair-spread.bmp 12 0 1920 1080
+```
+
+See [crosshair implementation evidence](tools/CS2_SCOPED_CROSSHAIR_EVIDENCE.md).
+
+**Verification, October 18, 2026:** public and diagnostic x64 Release builds
+each pass **44/44 CTest suites**, including 199 scoped-state checks and 22
+drawing checks. Both software-D3D11 crosshair previews were inspected; all
+21 installed-file compatibility checks pass. Both DLLs retain zero static
+TLS and delay imports. No client/server was launched; live scoped appearance
+and spread feel remain unobserved.
+
 ## Scoped weapon zoom
 
 Under **Visuals**, scroll down, open **Scoped zoom**, then enable **Override

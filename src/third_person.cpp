@@ -48,9 +48,11 @@ struct Source {
 // view clears publication, so later model queries fall back with that view.
 SRWLOCK visibilityLock = SRWLOCK_INIT;
 Source visibleSource{};
+ULONGLONG visibleTime = 0;
 void PublishVisibility(const Source& source) noexcept {
     AcquireSRWLockExclusive(&visibilityLock);
     visibleSource = source;
+    visibleTime = source.pawn ? GetTickCount64() : 0;
     ReleaseSRWLockExclusive(&visibilityLock);
 }
 bool VisibleSource(const Source& source) noexcept {
@@ -260,6 +262,19 @@ void ThirdPersonStop(const char* reason) noexcept {
     }
 }
 const char* ThirdPersonStatus() noexcept { return status.load(std::memory_order_acquire); }
+bool ThirdPersonViewActive(std::uintptr_t pawn, std::uintptr_t identity,
+    std::uintptr_t controller, std::uint32_t handle) noexcept {
+    if (!pawn || !identity || !controller || handle == UINT32_MAX ||
+        !active.load(std::memory_order_acquire) || !ThirdPersonGetSettings().enabled) return false;
+    const Source expected{pawn, identity, controller, handle};
+    Source current{};
+    if (!ReadSource(current) || !(current == expected)) return false;
+    AcquireSRWLockShared(&visibilityLock);
+    const auto now = GetTickCount64();
+    const bool visible = visibleSource == expected && now >= visibleTime && now - visibleTime <= 250;
+    ReleaseSRWLockShared(&visibilityLock);
+    return visible && active.load(std::memory_order_acquire) && ThirdPersonGetSettings().enabled;
+}
 void ThirdPersonFlushTelemetry() noexcept {
     if (!logger) return;
     const auto now = GetTickCount64();

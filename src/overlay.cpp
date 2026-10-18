@@ -31,6 +31,8 @@
 #include "shot_logging.h"
 #include "anti_aim.h"
 #include "third_person.h"
+#include "scoped_crosshair.h"
+#include "scoped_crosshair_draw.h"
 #include "zoom.h"
 #include "model_swap.h"
 #include "model_swap_settings.h"
@@ -236,6 +238,7 @@ void ReleaseRendererOnOwner(const char* reason) {
         if (backendInitialized) ImGui_ImplDX11_Shutdown();
         backendInitialized = false;
         ImGui::DestroyContext(imguiContext);
+        ScopedCrosshairReset();
         if (previous != imguiContext) ImGui::SetCurrentContext(previous);
         imguiContext = nullptr;
     }
@@ -246,6 +249,8 @@ void ReleaseRendererOnOwner(const char* reason) {
 }
 
 void CleanupOnRenderThread(const char* reason) {
+    ScopedCrosshairStop();
+    ScopedCrosshairReset();
     MovementStop(reason);
     SilentAimStop(reason);
     ShotLoggingStop(reason);
@@ -300,6 +305,7 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
     ImGuiContext* previous = ImGui::GetCurrentContext();
     IMGUI_CHECKVERSION();
     imguiContext = ImGui::CreateContext();
+    ScopedCrosshairReset();
     ImGui::SetCurrentContext(imguiContext);
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; io.LogFilename = nullptr;
@@ -525,6 +531,9 @@ void DrawFrame(IDXGISwapChain* chain) {
     const int beforeEsp = espList->VtxBuffer.Size;
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
+    const auto crosshair = ScopedCrosshairCaptureForDraw();
+    ScopedCrosshairDraw({foreground && crosshair.visible, crosshair.spread, crosshair.inaccuracy, crosshair.sourceKey},
+        io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);
 #if CS2_DIAGNOSTIC_UI
     if (visible) {
         ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_Always);
@@ -649,6 +658,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ShotLoggingStop("stopped before selecting render chain");
             AntiAimStop("stopped before selecting render chain");
             ThirdPersonStop("stopped before selecting render chain");
+            ScopedCrosshairStop();
             ZoomStop("stopped before selecting render chain");
             ModelSwapStop("stopped before selecting render chain");
             WorldSkyStop("stopped before selecting render chain");
@@ -740,6 +750,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool thirdPersonPrepared = ThirdPersonPrepare(&EspLog);
     const bool zoomPrepared = ZoomPrepare(&EspLog);
+    const bool crosshairPrepared = ScopedCrosshairPrepare();
+    EspLog(crosshairPrepared ? "SCOPED_CROSSHAIR_READY scoped third-person views only; copied native accuracy cone" :
+        "SCOPED_CROSSHAIR_UNAVAILABLE accuracy/scope contract verification failed");
     const bool modelSwapPrepared = ModelSwapPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
@@ -756,6 +769,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ShotLoggingStop("partial hook activation failure");
         AntiAimStop("partial hook activation failure");
         ThirdPersonStop("partial hook activation failure");
+        ScopedCrosshairStop();
         ZoomStop("partial hook activation failure");
         ModelSwapStop("partial hook activation failure");
         WorldSkyStop("partial hook activation failure");
@@ -795,6 +809,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ShotLoggingStop("explicit overlay stop request");
     AntiAimStop("explicit overlay stop request");
     ThirdPersonStop("explicit overlay stop request");
+    ScopedCrosshairStop();
     ZoomStop("explicit overlay stop request");
     ModelSwapStop("explicit overlay stop request");
     WorldSkyStop("explicit overlay stop request");

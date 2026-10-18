@@ -153,6 +153,27 @@ bool AimWeaponRead(const AimWeaponContext& context, const AimSource& source, Aim
     return true;
 }
 
+bool AimWeaponReadSpread(const AimWeaponContext& context, const AimSource& source,
+    AimWeaponSnapshot& out) noexcept {
+    out = {};
+    AimWeaponSnapshot before{}, after{};
+    if (!context.spread || !context.inaccuracy || !Source(context, source, before) ||
+        !Read(before.weapon + off::Mode, before.mode) || before.mode < 0 || before.mode > 1) return false;
+    // These native getters read the current accuracy model without updating it.
+    // Keep them on the existing command/prediction owner, never in Present.
+    __try {
+        before.spread = context.spread(reinterpret_cast<void*>(before.weapon));
+        before.inaccuracy = context.inaccuracy(reinterpret_cast<void*>(before.weapon), nullptr, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if (!std::isfinite(before.spread) || before.spread < 0 || before.spread > 1 ||
+        !std::isfinite(before.inaccuracy) || before.inaccuracy < 0 || before.inaccuracy > 1 ||
+        !Source(context, source, after) || !Read(after.weapon + off::Mode, after.mode) ||
+        before.weapon != after.weapon || before.identity != after.identity || before.handle != after.handle ||
+        before.services != after.services || before.data != after.data || before.mode != after.mode) return false;
+    out = before;
+    return true;
+}
+
 bool AimWeaponStillCurrent(const AimWeaponContext& context, const AimSource& source,
     const AimWeaponSnapshot& snapshot) noexcept {
     AimWeaponSnapshot current{}; int mode=-1,clip=-1,remaining=-1,bullets=0; float recoil=-1,nextAttack=0,range=0;

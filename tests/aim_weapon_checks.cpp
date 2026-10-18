@@ -31,7 +31,13 @@ struct Mock {
     AimAngles punch{1,-2,.25f};
 } mock;
 float Spread(void* p) { ++mock.calls; mock.arguments&=p==weapon.data();return mock.spread; }
-float Inaccuracy(void* p,float* move,float* air) { ++mock.calls; mock.arguments&=p==weapon.data() && !move && !air;return mock.inaccuracy; }
+float Inaccuracy(void* p,float* move,float* air) {
+    ++mock.calls; mock.arguments&=p==weapon.data() && !move && !air;
+    if(mock.mutation==8) Put(services.data(),off::ActiveWeapon,weaponHandle+0x8000);
+    if(mock.mutation==9) Put(weapon.data(),off::Data,std::uintptr_t{0});
+    if(mock.mutation==10) Put(weapon.data(),off::Mode,1);
+    return mock.inaccuracy;
+}
 int Cooldown(void* p) { ++mock.calls;mock.arguments&=p==weapon.data();return mock.cooldown; }
 float* Time(float* p,int scene) { ++mock.calls;mock.arguments&=scene==0;*p=mock.time;return p; }
 AimAngles* Punch(void* p,AimAngles* out,bool scale) {
@@ -114,6 +120,37 @@ void Readiness() {
     Reset();Put(services.data(),off::NextAttack,10.0f);AimWeaponSnapshot out{};
     Check(AimWeaponRead(context,source,out) && out.ready,"equal service deadline eligible");
 }
+void VisualSpread() {
+    for(std::size_t table=0;table<std::size(off::Tables);++table) {
+        Reset(table); AimWeaponSnapshot out{};
+        context.cooldown=nullptr; context.time=nullptr; context.punch=nullptr;
+        Put(pawn.data(),off::PunchServices,std::uintptr_t{0});
+        Put(memory,off::GameRules,std::uintptr_t{0});
+        Put(weapon.data(),off::Clip,0);
+        const auto originalWeapon=weapon; const auto originalPawn=pawn;
+        Check(AimWeaponReadSpread(context,source,out) && mock.calls==2 && mock.arguments,
+            "visual spread calls only the two native accuracy getters for each verified firearm");
+        Check(out.spread==mock.spread && out.inaccuracy==mock.inaccuracy && out.handle==weaponHandle,
+            "visual spread copies the current cone and serialized weapon");
+        Check(weapon==originalWeapon && pawn==originalPawn,"visual spread preserves entity bytes");
+    }
+    for(int mutation=0;mutation<9;++mutation) {
+        Reset(); AimWeaponSnapshot out{};
+        switch(mutation) {
+        case 0: mock.spread=std::numeric_limits<float>::quiet_NaN(); break;
+        case 1: mock.inaccuracy=std::numeric_limits<float>::infinity(); break;
+        case 2: mock.spread=-.01f; break;
+        case 3: mock.inaccuracy=1.01f; break;
+        case 4: mock.mutation=8; break;
+        case 5: mock.mutation=9; break;
+        case 6: mock.mutation=10; break;
+        case 7: context.inaccuracy=nullptr; break;
+        case 8: Put(weapon.data(),off::Mode,2); break;
+        }
+        Check(!AimWeaponReadSpread(context,source,out) && out.weapon==0,
+            "visual spread rejects invalid model results and source changes without publishing pointers");
+    }
+}
 void Reject() {
     for(int mutation=0;mutation<32;++mutation) {
         Reset();AimWeaponSnapshot out{};
@@ -160,6 +197,6 @@ void Reject() {
 int main() {
     memory=static_cast<unsigned char*>(VirtualAlloc(nullptr,ent::ClientImageSize,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if(!memory) return 2;
-    client=Address(memory);AimWeaponTestRuntime(true);Positive();Readiness();Reject();AimWeaponTestRuntime(false);
+    client=Address(memory);AimWeaponTestRuntime(true);Positive();Readiness();VisualSpread();Reject();AimWeaponTestRuntime(false);
     VirtualFree(memory,0,MEM_RELEASE);std::printf("aim_weapon_checks: %u checks, %u failures\n",checks,failures);return failures?1:0;
 }

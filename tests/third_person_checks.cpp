@@ -342,6 +342,34 @@ void StopChecks() {
     ThirdPersonActivate(); Draw(); CheckUnchanged("stopped resident hooks cannot reactivate");
     Check(ThirdPersonTestQuery(clientMemory + movement_offsets::Input,0) == 37,"query remains native after attempted reactivation");
 }
+void PublishedViewChecks() {
+    const auto published = [] {
+        return ThirdPersonViewActive(Address(pawn.data()), Address(identity.data()),
+            Address(controller.data()), 0x10003);
+    };
+    ThirdPersonTestConfigure(client,OriginalView,OriginalQuery,Shape,Result,Filter,Trace);
+    Reset();
+    Check(!published(),"third-person switch alone does not publish an active view");
+    Draw();
+    Check(published(),"successfully translated current primary view is published");
+    Sleep(270);
+    Check(!published(),"inactive camera callbacks expire the translated-view publication");
+    Draw();
+    Check(!ThirdPersonViewActive(Address(pawn.data()),Address(identity.data()),Address(controller.data()),0x20003),
+        "active-view query rejects a different serialized pawn handle");
+    Put(pawn.data(),ent::C_BaseEntity::m_iHealth,0);
+    Check(!published(),"active-view query immediately rejects death without another view callback");
+    Put(pawn.data(),ent::C_BaseEntity::m_iHealth,100);
+    Put(controller.data(),ent::CCSPlayerController::m_hPlayerPawn,std::uint32_t{0x20003});
+    Check(!published(),"active-view query rejects stale controller ownership");
+    Reset(); Draw(); ThirdPersonResetSettings();
+    Check(!published(),"disabling third person immediately invalidates active-view query");
+    Reset(); Draw(); Put(mode.data(),off::ModeSlot,1); Draw();
+    Check(!published(),"native secondary view clears translated-view publication");
+    Reset(); Draw(); ThirdPersonStop("published-view checks");
+    Check(!published(),"cooperative stop clears active-view publication");
+    ThirdPersonTestConfigure(client,OriginalView,OriginalQuery,Shape,Result,Filter,Trace);
+}
 }
 
 int main() {
@@ -351,7 +379,7 @@ int main() {
     if (!clientMemory) return 1;
     client = Address(clientMemory);
     ThirdPersonTestConfigure(client,OriginalView,OriginalQuery,Shape,Result,Filter,Trace);
-    ViewChecks(); SourceChecks(); StopChecks();
+    ViewChecks(); SourceChecks(); PublishedViewChecks(); StopChecks();
     ThirdPersonResetSettings();
     VirtualFree(clientMemory,0,MEM_RELEASE);
     std::printf("%u/%u third-person checks passed\n",checks-failures,checks);

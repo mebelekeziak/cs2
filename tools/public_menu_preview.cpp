@@ -19,6 +19,7 @@
 #include "anti_aim_settings.h"
 #include "model_swap_settings.h"
 #include "model_catalog.h"
+#include "scoped_crosshair_draw.h"
 #include <cstdio>
 #include <cwchar>
 #include <cstring>
@@ -71,13 +72,13 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 10 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 10.\n");
+    if (selectedTab < 0 || selectedTab > 12 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 12.\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -149,7 +150,10 @@ int wmain(int argc, wchar_t** argv) {
     for (int frame = 0; frame < 4; ++frame) {
         ImGui_ImplDX11_NewFrame();
         ImGui::NewFrame();
-        DrawPublicMenu();
+        if (selectedTab >= 11)
+            ScopedCrosshairDraw({true, .0005f, selectedTab == 12 ? .04f : .001f, 1},
+                io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);
+        else DrawPublicMenu();
         ImGui::Render();
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");

@@ -1,6 +1,7 @@
 #include "movement.h"
 #include "anti_aim.h"
 #include "silent_aim.h"
+#include "scoped_crosshair.h"
 #include "movement_math.h"
 #include "movement_jump.h"
 #include "movement_jump_trace.h"
@@ -795,6 +796,9 @@ void Process(void* input, void* commandPointer) noexcept {
     }
 }
 void HookFinalize(void* input, void* command) noexcept {
+    // Visual accuracy is independent of movement/aim switches and command edits.
+    if (reinterpret_cast<std::uintptr_t>(input) == client + off::Input && command)
+        ScopedCrosshairCaptureCommand();
     const bool commandReady = AntiAimBeginCommand(input, command);
     if (commandReady && enabled.load(std::memory_order_acquire)) {
         LARGE_INTEGER begin{}, end{};

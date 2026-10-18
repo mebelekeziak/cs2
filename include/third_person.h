@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 using ThirdPersonLogCallback = void (*)(const char*);
 // Setup/stop outside DllMain. Hooks remain resident and forward after stop.
@@ -8,6 +9,10 @@ void ThirdPersonStop(const char* reason) noexcept;
 void ThirdPersonPollControls(bool foreground) noexcept;
 const char* ThirdPersonStatus() noexcept;
 void ThirdPersonFlushTelemetry() noexcept;
+// True only for a recent successfully translated primary view of this live
+// serialized pawn. Memory reads only; never invokes engine code on the renderer.
+bool ThirdPersonViewActive(std::uintptr_t pawn, std::uintptr_t identity,
+    std::uintptr_t controller, std::uint32_t handle) noexcept;
 
 #ifdef CS2_THIRD_PERSON_CHECKS
 #include <cstdint>

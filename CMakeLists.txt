@@ -26,6 +26,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
+  src/scoped_crosshair.cpp src/scoped_crosshair_draw.cpp
   src/model_swap.cpp src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp
   src/third_person.cpp src/third_person_settings.cpp src/third_person_view.cpp
   src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim_history.cpp src/anti_aim.cpp
@@ -56,6 +57,17 @@ endforeach()
 target_link_options(cs2_overlay PRIVATE /INCREMENTAL:NO)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(scoped_crosshair_checks tests/scoped_crosshair_checks.cpp src/scoped_crosshair.cpp)
+  target_include_directories(scoped_crosshair_checks PRIVATE include)
+  target_compile_definitions(scoped_crosshair_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_SCOPED_CROSSHAIR_CHECKS)
+  target_compile_options(scoped_crosshair_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME scoped_crosshair_checks COMMAND scoped_crosshair_checks)
+  add_executable(scoped_crosshair_draw_checks tests/scoped_crosshair_draw_checks.cpp src/scoped_crosshair_draw.cpp)
+  target_include_directories(scoped_crosshair_draw_checks PRIVATE include)
+  target_link_libraries(scoped_crosshair_draw_checks PRIVATE imgui_dx11)
+  target_compile_definitions(scoped_crosshair_draw_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(scoped_crosshair_draw_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME scoped_crosshair_draw_checks COMMAND scoped_crosshair_draw_checks)
   add_library(model_catalog_mapping_probe SHARED tests/model_catalog_mapping_probe.cpp src/model_catalog.cpp src/model_resource_validation.cpp src/model_swap_settings.cpp)
   target_include_directories(model_catalog_mapping_probe PRIVATE include)
   target_compile_definitions(model_catalog_mapping_probe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
@@ -276,6 +288,7 @@ if(CS2_BUILD_UI_PREVIEW)
   add_executable(public_menu_preview tools/public_menu_preview.cpp src/local_config.cpp src/public_menu.cpp src/esp_draw.cpp src/movement_settings.cpp src/world_settings.cpp src/silent_aim_settings.cpp src/anti_aim_settings.cpp src/third_person_settings.cpp)
   target_sources(public_menu_preview PRIVATE src/zoom_settings.cpp src/shot_log_settings.cpp src/console_control_state.cpp)
   target_sources(public_menu_preview PRIVATE src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp)
+  target_sources(public_menu_preview PRIVATE src/scoped_crosshair_draw.cpp)
   target_include_directories(public_menu_preview PRIVATE include)
   target_link_libraries(public_menu_preview PRIVATE imgui_dx11 user32)
   target_compile_definitions(public_menu_preview PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE CS2_WORKSPACE_ROOT=L"${CMAKE_SOURCE_DIR}")
