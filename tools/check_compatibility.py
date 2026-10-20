@@ -63,6 +63,7 @@ def component_commands(game):
             "--animation", str(game / "bin/win64/animationsystem.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk")]),
         ("aim_weapon", "inspect_aim_weapon.py", ["--client", client]),
         ("aim_damage", "inspect_aim_damage.py", ["--game", str(game)]),
+        ("autowall", "inspect_autowall.py", ["--game", str(game)]),
         ("autofire", "inspect_autofire.py", ["--client", client]),
         ("aim_occlusion", "inspect_aim_occlusion.py", ["--client", client]),
         ("aim_console", "inspect_aim_console.py", ["--game", str(game)]),
@@ -132,6 +133,7 @@ def main():
                     ROOT / "src/client_frame.cpp",
                     ROOT / "src/scope_overlay.cpp", ROOT / "src/scoped_crosshair.cpp",
                     ROOT / "tools/verify_player_chams_materials.py",
+                    ROOT / "tools/aim_autowall_contract.json",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]
     snapshot["source_sha256"] = {

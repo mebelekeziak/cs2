@@ -60,6 +60,23 @@ The existing shared stage-8 owner captures copied world edges. Smoke is an XY
 voxel-column projection; fire uses a union of live visual patch disks. Rendering
 does not call engine methods. No live grenade appearance observation is claimed.
 
+## Ragebot autowall: client.dll
+
+Added October 20, 2026.
+
+`include/aim_autowall_offsets.h` and `tools/aim_autowall_contract.json` freeze the
+installed client's bullet-data constructor `0x87EE00`, destructor `0x87FB70`,
+trace producer `0x8830E0`, segment damage/penetration step `0x8A1820` and impact
+extractor `0x885830`. Named weapon penetration is `CCSWeaponBaseVData +0x82C`.
+The `0x1D20`-byte aligned buffer owns native hit and segment containers, including
+any heap growth; its destructor runs before returning from each prediction.
+No native trace pointers survive. The final native displacement at `+0x1D04`
+owns the fraction-to-distance conversion because the producer can extend a ray
+to locate exit surfaces. Native penetration state begins with a budget of four.
+See [autowall evidence](../tools/CS2_AUTOWALL_EVIDENCE.md) and run
+`python tools/inspect_autowall.py`. The optional autowall branch extends the
+direct-only behavior described in historical occlusion evidence below.
+
 ## Entity acquisition and ESP: client.dll
 
 Header: [cs2_offsets.h](../include/cs2_offsets.h), namespace `cs2_offsets`.
@@ -235,8 +252,9 @@ choose serialized indices. Cancellation restores owned primary fields and reruns
 the original checksum finalizer. It does not rewind native allocation/timing
 caches, retain a physical attack latch, or perform physical DLL unload.
 Newly obstructed or unavailable paths cancel owned automatic attacks through
-that same checksum path. The occlusion check conservatively blocks all cover;
-it does not simulate penetration or change manual input.
+that same checksum path. The direct occlusion check conservatively blocks all
+cover. Optional **Autowall** extends it with the native penetration path indexed
+above; manual input keeps its existing behavior.
 
 ## Anti aim: client.dll
 

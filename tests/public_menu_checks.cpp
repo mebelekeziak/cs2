@@ -761,6 +761,8 @@ int main() {
     Expect(SilentAimGetSettings().minDamage == 1, "minimum damage slider waits for enabled autofire");
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.75f);
+    ClickControl("Autowall");
+    Expect(SilentAimGetSettings().autowall, "autowall checkbox responds to real mouse input");
     ClickControl("##AimSamples", 0.8f);
     Expect(SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance > 60 && SilentAimGetSettings().samples > 700,
            "autofire threshold and sample count respond to real mouse input");

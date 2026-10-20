@@ -8,6 +8,7 @@
 #include "aim_weapon.h"
 #include "aim_occlusion.h"
 #include "aim_damage.h"
+#include "aim_autowall.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -30,6 +31,8 @@ unsigned failures = 0, checks = 0, recorderCalls = 0, builderCalls = 0, checksum
 bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volumeCurrent = true;
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
 bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
+bool penetrationClear = true, penetrationChange = false;
+unsigned penetrationCalls = 0;
 bool quickstopAvailable = true, wideFallback = false;
 bool damageAvailable = true, damageCurrent = true, damageChangeDuringTrace = false;
 int predictedHp = 34;
@@ -188,6 +191,7 @@ struct World {
         weaponAvailable = weaponCurrent = checksumAvailable = true;
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
+        penetrationClear = true; penetrationChange = false; penetrationCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
         selectionCalls = volumeReads = 0;
         performanceEnemies = 0;
@@ -826,6 +830,18 @@ bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot&
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
 bool AimDamagePrepare(std::uintptr_t client, AimDamageContext& context) noexcept { context = {client, true}; return true; }
+bool AimAutowallPrepare(std::uintptr_t client, AimAutowallContext& context) noexcept { context = {client, true}; return true; }
+AimOcclusionResult AimAutowallCheck(const AimAutowallContext&, const AimSource&, const AimTarget&,
+    const AimTargetVolume&, const AimWeaponSnapshot&) noexcept {
+    ++penetrationCalls;
+    if (penetrationChange) weaponCurrent = false;
+    AimOcclusionResult result{};
+    result.valid = result.clear = penetrationClear;
+    result.reason = penetrationClear ? "native bullet path reached target" : "penetration blocked";
+    result.penetrationDamage = penetrationClear ? 34.75f : -1;
+    result.penetrations = 1;
+    return result;
+}
 AimDamageResult AimDamageRead(const AimDamageContext&, const AimSource&, const AimTarget& target,
     const AimTargetVolume&, const AimWeaponSnapshot&, const AimOcclusionResult&) noexcept {
     AimDamageResult result{};
@@ -869,6 +885,39 @@ void ShotLoggingPump() noexcept { ++shotPumps; }
 void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept { shotMetadata.push_back(metadata); }
 
 void DamageGateChecks(World& world) {
+    world.Reset(); pathClear = false;
+    Command coveredDisabled; world.Prepare(coveredDisabled);
+    Expect(recorderCalls == 0 && penetrationCalls == 0, "autowall disabled keeps covered targets blocked");
+    world.Reset(); pathClear = false;
+    auto autowallSettings = SilentAimGetSettings(); autowallSettings.autowall = true;
+    SilentAimSetSettings(autowallSettings);
+    Command throughCover; world.Prepare(throughCover); world.History(throughCover);
+    Expect(recorderCalls == 1 && penetrationCalls >= 2 && shotMetadata.size() == 1,
+        "enabled autowall evaluates covered target before request and again at publication");
+    for (int mode = 0; mode < 5; ++mode) {
+        world.Reset(); pathClear = false;
+        autowallSettings = SilentAimGetSettings(); autowallSettings.autowall = true;
+        SilentAimSetSettings(autowallSettings);
+        Command pending; world.Prepare(pending);
+        if (mode == 0) penetrationClear = false;
+        if (mode == 1) penetrationChange = true;
+        if (mode == 2) { autowallSettings.autowall = false; SilentAimSetSettings(autowallSettings); }
+        if (mode == 3) predictedHp = 0;
+        if (mode == 4) pathAvailable = false;
+        world.History(pending);
+        Expect(checksumCalls == 1 && Equal(pending.Buttons(), pending.originalButtons) && shotMetadata.empty(),
+            "changed penetration damage settings or source cancels owned shot with checksum repair " + std::to_string(mode));
+    }
+    world.Reset(); pathClear = false;
+    autowallSettings = SilentAimGetSettings(); autowallSettings.autowall = true; autowallSettings.minDamage = 35;
+    SilentAimSetSettings(autowallSettings);
+    Command weakPenetration; world.Prepare(weakPenetration);
+    Expect(recorderCalls == 0 && penetrationCalls > 0 && LastBrake(false), "penetrated damage below minimum cannot fire or quickstop");
+    world.Reset();
+    autowallSettings = SilentAimGetSettings(); autowallSettings.autowall = true;
+    SilentAimSetSettings(autowallSettings);
+    Command clearWithAutowall; world.Prepare(clearWithAutowall); world.History(clearWithAutowall);
+    Expect(recorderCalls == 1 && penetrationCalls == 0, "direct shots keep the existing fast path with autowall enabled");
     for (bool quickstop : {false, true}) {
         world.Reset();
         auto settings = SilentAimGetSettings(); settings.minDamage = 35; settings.quickstop = quickstop;

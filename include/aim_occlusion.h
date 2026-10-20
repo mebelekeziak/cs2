@@ -18,6 +18,9 @@ struct AimOcclusionResult {
     bool hitgroupKnown = false;
     int hitgroup = 0;
     float distance = 0;
+    // Native autowall copies pre-hitgroup/armor damage, including range loss.
+    float penetrationDamage = -1, bulletRangeModifier = 0, bulletPenetration = 0;
+    int bulletBaseDamage = 0, penetrations = 0;
 };
 // Native command owner only. Fresh direct line of fire to the selected capsule;
 // no retained trace/manager/entity pointers and no penetration simulation.

@@ -3,13 +3,46 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-six
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-seven
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Ragebot autowall
+
+Under **Aim**, enable **Autowall** alongside **Autofire** to allow shots through
+penetrable cover. It starts disabled and saves as `aim.autowall` in local
+configs; older presets leave it disabled. **Minimum damage** applies after
+penetration, range loss, hitgroup scaling and armor. Candidate ranking,
+hitchance and quickstop use that resulting damage. With the toggle off, the
+existing direct-path requirement applies.
+
+Blocked central rays use the installed client's native multi-hit bullet trace
+and penetration calculation, including surface properties, thickness and the
+native four-penetration budget. Another player's body blocks this prediction.
+The complete path is evaluated again immediately before publishing an automatic
+shot; changed geometry, settings or damage inputs cancel the owned attack.
+Direct shots keep the existing fast path. Manual fire keeps its existing behavior.
+Hitchance models the selected capsule and spread; it does not simulate every
+spread ray through cover. Client prediction is not a guarantee of server damage.
+
+Build and load using the existing commands and **Load Overlay.cmd**. Restart
+CS2 normally before loading a rebuilt DLL if an older copy remains resident;
+stopped and resident is not physically unloaded. This adds no hooks or game-file
+changes. See [native autowall evidence](tools/CS2_AUTOWALL_EVIDENCE.md). Run
+`python tools/inspect_autowall.py` or the combined compatibility command to
+check the installed contracts. Development and testing remain offline/private.
+
+**Verification, October 20, 2026:** public and diagnostic x64 Release builds
+succeed without project warnings, each passing **55/55 CTest suites**. The
+autowall adapter passes 358 synthetic checks; damage and integrated pipeline
+suites pass 230 and 235 checks. All **27/27 installed-file compatibility checks**
+pass, and 50 altered autowall contracts reject. Both menu previews were inspected.
+Both DLLs retain zero static TLS and delay imports. No CS2 client/server was
+launched; live penetration and damage accuracy remain unobserved.
 
 ## Smoke, flash and grenade border auras
 
@@ -852,7 +885,8 @@ for this correction; live behavior of the new ranking remains unobserved.
 
 **Autofire** starts off. Enable it to request primary fire when the current
 estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
-ready, with a clear direct line of fire to the selected target. **Spread samples** controls the complete estimate (64–1024, initially
+ready, with a reachable line of fire to the selected target (direct, or penetrable
+with **Autowall** enabled). **Spread samples** controls the complete estimate (64–1024, initially
 256). **Minimum damage** (1–100 HP, initially 1) also gates autofire. These controls save in local configs; older presets restore these
 defaults. Manual primary fire stays available at any threshold, including when
 the weapon or geometry cannot be modeled. Autofire does not suppress manual input.
@@ -863,7 +897,8 @@ and helmet; and the target team's head/body damage scales. The current native
 ray supplies the first hitgroup and distance, including an arm intercepted on a
 chest aim. It honors `mp_damage_headshot_only`. Unknown native hitgroups,
 unavailable inputs, immunity and active healthshot damage modifiers prevent an
-automatic request. Cover remains blocked; this does not add wall penetration.
+automatic request. **Autowall** extends this prediction through penetrable cover
+using native residual bullet damage before the same hitgroup/armor calculation.
 
 The slider compares the estimate rounded down to whole HP, without capping it to
 remaining target health or adding a lethal-shot override. Both hitchance and
@@ -1088,9 +1123,10 @@ Both DLLs retain zero static TLS and delay imports. No client/server was launche
 live behavior of this correction remains unobserved. Restart CS2 normally before
 using **Load Overlay.cmd** with the new build if an older copy is resident.
 
-This is a conservative occlusion check: all cover blocks automatic fire,
-including penetrable walls. It does not simulate penetration, predict damage,
-or trace every spread sample. Hitchance remains a geometric selected-capsule estimate. Native shot-time
+With **Autowall** off, the conservative direct-path check blocks all cover.
+With it enabled, blocked rays use the native penetration and damage path
+described above. Neither mode traces every spread sample. Hitchance remains a
+geometric selected-capsule estimate. Native shot-time
 interpolation, future recoil/spread changes and server timing can differ from
 this snapshot; a clear center path and high percentage do not guarantee a hit.
 

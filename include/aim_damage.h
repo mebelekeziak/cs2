@@ -12,12 +12,13 @@ struct AimDamageContext {
     bool prepared = false;
 };
 // All values are copied on the native command owner. No engine pointers are
-// dereferenced by render/logging consumers. This estimates one direct bullet.
+// dereferenced by render/logging consumers. This estimates one bullet.
 struct AimDamageInput {
     int baseDamage = 0, armor = 0, hitgroup = 0;
     float headshotMultiplier = 0, armorRatio = 0, rangeModifier = 0;
     float distance = 0, range = 0, headScale = 0, bodyScale = 0;
     bool helmet = false, headshotOnly = false;
+    float penetrationDamage = -1, penetrationPower = 0;
     bool operator==(const AimDamageInput&) const = default;
 };
 struct AimDamageResult {

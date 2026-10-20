@@ -1,0 +1,99 @@
+{
+  "client_sha256": "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0",
+  "constants": {
+    "Initialize": 8908288,
+    "Destroy": 8911728,
+    "Trace": 8925408,
+    "Step": 9050144,
+    "Extract": 8935472,
+    "Penetration": 2092,
+    "DataSize": 7456,
+    "HitCount": 0,
+    "Hits": 8,
+    "HitCapacity": 16,
+    "HitSize": 56,
+    "SegmentCount": 7200,
+    "Segments": 7208,
+    "SegmentCapacity": 7216,
+    "SegmentSize": 24,
+    "SegmentFirst": 16,
+    "SegmentLast": 18,
+    "SegmentFlags": 20,
+    "DirectionVector": 7428,
+    "PenetrationCount": 4,
+    "MaxHits": 4096,
+    "MaxSegments": 8192
+  },
+  "windows": {
+    "Initialize": [
+      8908288,
+      152,
+      "12a7f11756a6a0b7bac2c48714a7419e7a1f23453d0af54edfeff2c027aef053"
+    ],
+    "Destroy": [
+      8911728,
+      310,
+      "ecc4acc64a7820475bd04b86aa69e863dbe18b30af34410ca88a1498a6aa65b0"
+    ],
+    "Trace": [
+      8925408,
+      274,
+      "34f66d76c9a3e0b1489fb4fd21aaf60229bd7d77aae4d2930edafcd52bd1d797"
+    ],
+    "Step": [
+      9050144,
+      2239,
+      "2b5af5c78a9f38dd3179eb27fbaddb09506ae09d30a093cdb290d970116cfcae"
+    ],
+    "Extract": [
+      8935472,
+      755,
+      "33b0cf66313f35a69f49096a1d29416de94813fb0f9d2387ca82c908a27f620c"
+    ],
+    "Segmentation": [
+      8937616,
+      1173,
+      "04ca7951b88768dea0fb6b817e2d3a23c747f2fd4c53ffadea582694f397da1b"
+    ],
+    "Direction": [
+      9030272,
+      1259,
+      "3c2892c68389bffb07c647dccfd794a1010223924e279e7a7c5a84a829ea25d8"
+    ],
+    "InitialTrace": [
+      9066592,
+      174,
+      "2a6e1567c3f8fa74b9dee631288c76e843141da9d1e23adf8b30a73132006f0b"
+    ],
+    "MultiTrace": [
+      10591888,
+      356,
+      "e72ee7f15f6f84f7ddfe79db7cd0fa37bd9e9fa5f57ef42976335549c8d401c0"
+    ],
+    "Filter": [
+      3483936,
+      310,
+      "6d865d66564d6b89ee213a23e8e84fd713dd5a2c61086ab18112c915cd06dd75"
+    ],
+    "Producer": [
+      8945247,
+      499,
+      "ee06183f19162f2c3a8868aa90d2a6cb899c7fc51a1637d2260689b0251e1514"
+    ],
+    "ShooterTeam": [
+      11009344,
+      12,
+      "321089a22c079f18bceb3c40c297d653634b830056f36a2310b03c35ef86df83"
+    ],
+    "WeaponInputs": [
+      13777731,
+      41,
+      "0ac47a99a7bd3c08a57543e4ac67262932711193a69a474c223a726ff0e8eaba"
+    ],
+    "TraceResult": [
+      24613632,
+      528,
+      "80d2b44b6abab9c1cc981a7f4944f2a521ee8ffeddfd45d4becda906d7ff23cb"
+    ]
+  }
+}

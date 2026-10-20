@@ -176,7 +176,7 @@ int main() {
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
     const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67,
-        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs)};
+        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true};
     SilentAimSetSettings(expectedAim);
     const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
         -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
@@ -272,6 +272,7 @@ int main() {
         "version=1\naim.hitgroups=1\naim.hitgroups=2\n",
         "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
         "version=1\naim.quickstop=2\n", "version=1\naim.quickstop=true\n",
+        "version=1\naim.autowall=2\n", "version=1\naim.autowall=0\naim.autowall=1\n",
         "version=1\naim.quickstop=0\naim.quickstop=1\n",
         "version=1\naim.min_damage=1.5\n", "version=1\naim.min_damage=nan\n",
         "version=1\naim.min_damage=35junk\n", "version=1\naim.min_damage=99999999999999\n",

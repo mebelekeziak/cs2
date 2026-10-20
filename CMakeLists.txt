@@ -25,7 +25,7 @@ target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
 add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp
   src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_visuals.cpp src/grenade_effects.cpp
   src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_material.cpp src/client_frame.cpp
-  src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp src/aim_damage.cpp
+  src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
   src/scoped_crosshair.cpp src/scoped_crosshair_draw.cpp src/scope_overlay.cpp
@@ -170,8 +170,10 @@ if(BUILD_TESTING)
   target_compile_definitions(aim_occlusion_checks PRIVATE CS2_AIM_OCCLUSION_CHECKS)
   add_executable(aim_damage_checks tests/aim_damage_checks.cpp src/aim_damage.cpp)
   target_compile_definitions(aim_damage_checks PRIVATE CS2_AIM_DAMAGE_CHECKS)
+  add_executable(aim_autowall_checks tests/aim_autowall_checks.cpp src/aim_autowall.cpp)
+  target_compile_definitions(aim_autowall_checks PRIVATE CS2_AIM_AUTOWALL_CHECKS)
   add_executable(aim_hitchance_checks tests/aim_hitchance_checks.cpp src/aim_hitchance.cpp src/silent_aim_target.cpp src/silent_aim_math.cpp)
-  foreach(target console_control_checks aim_console_checks silent_aim_autofire_checks aim_weapon_checks aim_hitchance_checks aim_occlusion_checks aim_damage_checks)
+  foreach(target console_control_checks aim_console_checks silent_aim_autofire_checks aim_weapon_checks aim_hitchance_checks aim_occlusion_checks aim_damage_checks aim_autowall_checks)
     target_include_directories(${target} PRIVATE include)
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_compile_options(${target} PRIVATE /W4 /Zc:threadSafeInit-)

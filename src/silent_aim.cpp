@@ -10,6 +10,7 @@
 #include "aim_weapon.h"
 #include "aim_occlusion.h"
 #include "aim_damage.h"
+#include "aim_autowall.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -33,6 +34,7 @@ AimBoneContext bones{};
 AimWeaponContext weaponContext{};
 AimOcclusionContext occlusionContext{};
 AimDamageContext damageContext{};
+AimAutowallContext autowallContext{};
 AimRecordHistoryFn recordHistory = nullptr;
 bool weaponPrepared = false, autofirePrepared = false, finalizerReady = false;
 SilentAimLogCallback logger = nullptr;
@@ -356,7 +358,7 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
     char message[1536]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; direct-bullet estimate; no penetration",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; autowall=%u penetrations=%d",
         handle, static_cast<int>(decision.target.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
@@ -366,7 +368,8 @@ void Report(const Decision& decision, const char* action, bool event = false) no
         decision.occlusion.valid, decision.occlusion.clear, decision.occlusion.fraction, decision.occlusion.reason,
         decision.target.solution.separation, decision.target.solution.angles.pitch, decision.target.solution.angles.yaw,
         targetDiagnostics.eligibilityRejected, decision.damage.valid, decision.damage.damage, decision.damage.healthDamage,
-        decision.settings.minDamage, decision.damage.input.hitgroup, decision.damage.reason);
+        decision.settings.minDamage, decision.damage.input.hitgroup, decision.damage.reason,
+        decision.settings.autowall, decision.occlusion.penetrations);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
@@ -381,6 +384,8 @@ bool Reachable(Decision& decision, bool enforceMinimum) noexcept {
     if (!Current(decision)) { decision.reason = "target or weapon changed before occlusion check"; return false; }
     ++performance.traces;
     decision.occlusion = AimOcclusionCheck(occlusionContext, decision.source, decision.target, decision.volume);
+    if (decision.occlusion.valid && !decision.occlusion.clear && decision.settings.autowall && Current(decision))
+        decision.occlusion = AimAutowallCheck(autowallContext, decision.source, decision.target, decision.volume, decision.weapon);
     if (!decision.occlusion.valid || !decision.occlusion.clear) {
         ++occlusionRejected;
         decision.reason = decision.occlusion.reason; return false;
@@ -580,6 +585,7 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     weaponPrepared = AimWeaponPrepare(client, weaponContext);
     AimOcclusionPrepare(client, occlusionContext);
     AimDamagePrepare(client, damageContext);
+    AimAutowallPrepare(client, autowallContext);
     namespace fire = aim_autofire_offsets;
     std::array<unsigned char, sizeof(fire::RecordHistoryBytes)> recorderBytes{};
     autofirePrepared = MovementCopy(client + fire::RecordHistory, recorderBytes.data(), recorderBytes.size()) &&
@@ -590,8 +596,8 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     if (logger) {
         char message[384]{};
         std::snprintf(message, sizeof(message),
-            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u damage=%u; native accuracy and direct-bullet damage snapshots; path and minimum damage checked before request and publication; autofire starts off; command finalizer required for native CRC",
-            weaponPrepared, autofirePrepared, occlusionContext.prepared, damageContext.prepared);
+            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u damage=%u autowall=%u; native accuracy and bullet damage snapshots; path and minimum damage checked before request and publication; autofire starts off; command finalizer required for native CRC",
+            weaponPrepared, autofirePrepared, occlusionContext.prepared, damageContext.prepared, autowallContext.prepared);
         logger(message);
     }
     return true;
@@ -757,6 +763,7 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     lastEventReport = 0; lastObservedAction = "not evaluated";
     weaponContext.client = base;
     damageContext = {base, true};
+    autowallContext = {base, true};
     occlusionContext = {base, true};
     callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
     decisions = requested = fired = cancelled = chanceRejected = occlusionRejected = damageRejected = 0;

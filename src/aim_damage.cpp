@@ -1,5 +1,6 @@
 #include "aim_damage.h"
 #include "aim_damage_offsets.h"
+#include "aim_autowall_offsets.h"
 #include "aim_occlusion.h"
 #include "aim_weapon.h"
 #include "aim_weapon_offsets.h"
@@ -62,6 +63,8 @@ bool Sample(const AimDamageContext& context, const AimSource& source, const AimT
         !Scale(context.client, team == 3 ? off::DamageScaleCtBody : off::DamageScaleTBody, input.bodyScale) ||
         !Read(context.client + off::HeadshotOnly + off::CvarValuePointer, storage) || !storage ||
         !Read(storage + off::CvarValue, headshotOnly) || headshotOnly > 1) return false;
+    if (input.penetrationDamage >= 0 &&
+        !Read(data + aim_autowall_offsets::Penetration, input.penetrationPower)) return false;
     if (immune) { result.reason = "damage target immune"; return false; }
     result.reason = "damage healthshot modifier unavailable or active";
     if (!std::isfinite(weapon.currentTime) || weapon.currentTime < 0 ||
@@ -87,7 +90,11 @@ AimDamageResult AimDamageCalculate(const AimDamageInput& input) noexcept {
         !std::isfinite(input.range) || input.range <= 0 || input.range > 1000000 || input.distance > input.range ||
         !std::isfinite(input.headScale) || input.headScale < 0 || input.headScale > 100 ||
         !std::isfinite(input.bodyScale) || input.bodyScale < 0 || input.bodyScale > 100) return result;
-    float damage = static_cast<float>(input.baseDamage) * std::pow(input.rangeModifier, input.distance / 500.0f);
+    if (!std::isfinite(input.penetrationDamage) || input.penetrationDamage < -1 ||
+        (input.penetrationDamage != -1 && (input.penetrationDamage < 0 || input.penetrationDamage > input.baseDamage ||
+            !std::isfinite(input.penetrationPower) || input.penetrationPower <= 0 || input.penetrationPower > 100))) return result;
+    float damage = input.penetrationDamage >= 0 ? input.penetrationDamage :
+        static_cast<float>(input.baseDamage) * std::pow(input.rangeModifier, input.distance / 500.0f);
     if (input.headshotOnly && input.hitgroup != 1) damage = 0;
     else if (input.hitgroup == 1) { damage *= input.headshotMultiplier; damage *= input.headScale; }
     else if (input.hitgroup == 3) { damage *= 1.25f; damage *= input.bodyScale; }
@@ -105,7 +112,7 @@ AimDamageResult AimDamageCalculate(const AimDamageInput& input) noexcept {
     // every server's event rounding or damage hooks.
     result.healthDamage = static_cast<int>(std::floor(damage));
     result.valid = true;
-    result.reason = "direct-bullet damage estimate";
+    result.reason = input.penetrationDamage >= 0 ? "native penetration damage estimate" : "direct-bullet damage estimate";
     return result;
 }
 
@@ -138,7 +145,12 @@ AimDamageResult AimDamageRead(const AimDamageContext& context, const AimSource& 
     if (!path.valid || !path.clear || !path.hitgroupKnown) return sample;
     sample.input.hitgroup = path.hitgroup;
     sample.input.distance = path.distance;
+    sample.input.penetrationDamage = path.penetrationDamage;
     if (!Sample(context, source, target, volume, weapon, sample)) return sample;
+    if (path.penetrationDamage >= 0 && (sample.input.baseDamage != path.bulletBaseDamage ||
+        sample.input.rangeModifier != path.bulletRangeModifier || sample.input.penetrationPower != path.bulletPenetration)) {
+        sample.reason = "weapon damage inputs changed during penetration"; return sample;
+    }
     auto result = AimDamageCalculate(sample.input);
     result.itemServices = sample.itemServices;
     if (result.valid && !AimDamageStillCurrent(context, source, target, volume, weapon, result)) {
@@ -154,6 +166,7 @@ bool AimDamageStillCurrent(const AimDamageContext& context, const AimSource& sou
     AimDamageResult current{};
     current.input.hitgroup = snapshot.input.hitgroup;
     current.input.distance = snapshot.input.distance;
+    current.input.penetrationDamage = snapshot.input.penetrationDamage;
     return Sample(context, source, target, volume, weapon, current) &&
         current.itemServices == snapshot.itemServices && current.input == snapshot.input;
 }

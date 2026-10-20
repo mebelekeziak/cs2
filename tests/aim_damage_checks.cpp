@@ -1,5 +1,6 @@
 #include "aim_damage.h"
 #include "aim_damage_offsets.h"
+#include "aim_autowall_offsets.h"
 #include "aim_occlusion.h"
 #include "aim_weapon.h"
 #include "aim_weapon_offsets.h"
@@ -54,6 +55,17 @@ void MathChecks() {
             "armor covers helmet and torso groups while legs bypass armor");
     }
     auto input = bullet;
+    input.penetrationDamage = 30; input.penetrationPower = 2; input.distance = 500;
+    Check(Near(AimDamageCalculate(input).damage, 30), "native residual damage does not apply range falloff twice");
+    input.armor = 100;
+    Check(Near(AimDamageCalculate(input).damage, 15), "native residual damage still applies current armor");
+    input.hitgroup = 1; input.helmet = true;
+    Check(Near(AimDamageCalculate(input).damage, 60), "native residual damage still applies head multiplier and helmet");
+    for(float bad : {-2.0f, -.5f, 101.0f, std::numeric_limits<float>::quiet_NaN()}) {
+        input.penetrationDamage = bad;
+        Check(!AimDamageCalculate(input).valid, "invalid residual penetration damage cannot predict health loss");
+    }
+    input = bullet;
     input.headScale = .5f; input.bodyScale = .25f;
     Check(Near(AimDamageCalculate(input).damage, 25), "body scale applies independently of head scale");
     input.hitgroup = 1;
@@ -228,6 +240,13 @@ void RuntimeChecks() {
     Check(!AimDamagePrepare(0, rejected) && !rejected.prepared, "missing module cannot prepare");
     Reset();
     auto saved = Predict();
+    path.penetrationDamage = 30; path.bulletBaseDamage = 100; path.bulletRangeModifier = .8f; path.bulletPenetration = 2;
+    Put(data.data(), aim_autowall_offsets::Penetration, 2.0f);
+    auto penetrated = Predict();
+    Check(penetrated.valid && penetrated.damage == 30 && Current(penetrated), "runtime consumes native penetration residual and retains current weapon inputs");
+    Put(data.data(), aim_autowall_offsets::Penetration, 1.0f);
+    Check(!Predict().valid && !Current(penetrated), "penetration power change invalidates new and retained damage");
+    Reset(); saved = Predict();
     Check(saved.valid && Near(saved.damage, 80) && saved.healthDamage == 80 && Current(saved) &&
         saved.itemServices == Address(itemServices.data()), "runtime copies direct-hit damage and validates unchanged source");
     Check(!AimDamageRead({}, source, target, volume, weapon, path).valid, "unprepared runtime rejects prediction");

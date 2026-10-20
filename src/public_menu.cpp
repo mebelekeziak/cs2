@@ -626,6 +626,7 @@ void DrawPublicMenu() {
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::SliderFloat("##AimFov", &settings.fov, 0.1f, 180, "%.1f degrees");
                 changed |= FeatureCheckbox("Autofire", settings.autofire);
+                changed |= FeatureCheckbox("Autowall", settings.autowall);
                 ImGui::TextUnformatted("Minimum hitchance");
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::SliderFloat("##AimHitchance", &settings.hitchance, 0, 100, "%.0f%%");
@@ -641,10 +642,10 @@ void DrawPublicMenu() {
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::TextWrapped("Quickstop brakes ready shots below minimum hitchance and releases movement during weapon cooldown.");
-                ImGui::TextWrapped("Autofire requires a clear direct path, minimum hitchance and minimum predicted damage. Manual fire remains available.");
-                ImGui::TextWrapped("Damage estimates account for range, hitgroup and armor on unobstructed shots.");
+                ImGui::TextWrapped("Autofire requires a reachable target, minimum hitchance and minimum predicted damage. Manual fire remains available.");
+                ImGui::TextWrapped("Autowall predicts damage through penetrable cover using the weapon and surface properties, then applies hitgroup and armor.");
                 ImGui::TextWrapped("Selected hitgroups compete using damage and hitchance after the configured minimums pass.");
-                ImGui::TextWrapped("Cover blocks autofire, including penetrable walls. Hitchance estimates spread; server timing can still prevent a hit.");
+                ImGui::TextWrapped("With Autowall off, cover blocks autofire. Hitchance estimates spread; cover and server timing can still prevent a hit.");
                 ImGui::TextDisabled("F10  Silent aim");
                 ImGui::Separator();
                 shotLogChanged |= FeatureCheckbox("Shot logs", shotLog.enabled);

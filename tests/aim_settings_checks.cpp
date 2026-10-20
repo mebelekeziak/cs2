@@ -53,6 +53,7 @@ int main() {
     auto multiFirst = first;
     multiFirst.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Hands);
     auto multiSecond = second;
+    multiSecond.autowall = true;
     multiSecond.hitgroups = AimHitgroupBit(AimHitgroup::Legs) | AimHitgroupBit(AimHitgroup::Feet);
     SilentAimSetSettings(multiFirst);
     std::atomic<bool> torn{false};
