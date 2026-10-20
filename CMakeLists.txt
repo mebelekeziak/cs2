@@ -32,7 +32,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/third_person.cpp src/third_person_settings.cpp src/third_person_view.cpp
   src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim_history.cpp src/anti_aim.cpp
   src/silent_aim.cpp src/silent_aim_settings.cpp src/silent_aim_math.cpp src/silent_aim_command.cpp src/silent_aim_target.cpp
-  src/movement_settings.cpp src/movement_math.cpp src/movement.cpp src/movement_command.cpp
+  src/movement_settings.cpp src/movement_math.cpp src/movement.cpp src/movement_command.cpp src/quickstop_command.cpp
   src/movement_jump.cpp src/movement_steering.cpp src/movement_telemetry.cpp src/movement_jump_trace.cpp
   src/world_settings.cpp src/world_postprocess.cpp src/world_sky.cpp src/world_materials.cpp
   src/world_lighting_switches.cpp src/world_lighting.cpp src/world_environment_lighting.cpp)
@@ -238,6 +238,11 @@ if(BUILD_TESTING)
   foreach(target anti_aim_math_checks anti_aim_command_checks anti_aim_boundary_checks anti_aim_history_checks)
     target_sources(${target} PRIVATE src/anti_aim_settings.cpp)
   endforeach()
+  add_executable(quickstop_checks tests/quickstop_checks.cpp src/quickstop_command.cpp src/anti_aim_boundary.cpp src/movement_command.cpp)
+  target_include_directories(quickstop_checks PRIVATE include)
+  target_compile_definitions(quickstop_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(quickstop_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME quickstop_checks COMMAND quickstop_checks)
   add_executable(movement_checks tests/movement_checks.cpp src/movement_math.cpp src/movement_command.cpp)
   target_include_directories(movement_checks PRIVATE include)
   target_compile_options(movement_checks PRIVATE /W4)

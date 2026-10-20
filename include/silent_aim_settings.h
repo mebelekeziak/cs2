@@ -9,6 +9,7 @@ struct SilentAimSettings {
     bool autofire = false;
     float hitchance = 50;
     int samples = 256;
+    bool quickstop = false;
 
     bool operator==(const SilentAimSettings&) const = default;
 };

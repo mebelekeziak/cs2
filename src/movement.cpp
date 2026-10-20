@@ -11,6 +11,7 @@
 #include "movement_offsets.h"
 #include "movement_memory.h"
 #include "movement_telemetry.h"
+#include "quickstop_command.h"
 #include "cs2_offsets.h"
 #include <Windows.h>
 #include <MinHook.h>
@@ -151,6 +152,19 @@ struct Pawn {
     std::array<float, 3> velocity{};
     float friction = 0, maxSpeed = 0;
 };
+struct QuickstopEntry {
+    QuickstopCommandPatch patch{};
+    Pawn pawn{};
+    DWORD thread = 0;
+    bool brake = false;
+    float physicalForward = 0, physicalLeft = 0;
+};
+std::array<QuickstopEntry, 256> quickstopEntries{};
+Pawn quickstopHistoryPawn{};
+DWORD quickstopOwner = 0;
+bool quickstopHistory = false;
+bool quickstopRebuildHandoff = false;
+float quickstopPhysicalForward = 0, quickstopPhysicalLeft = 0;
 bool SamePawn(const Pawn& pawn) noexcept {
     std::uintptr_t current = 0, back = 0, bucket = 0, resolved = 0, services = 0, system = 0;
     std::uint32_t handle = UINT32_MAX, controllerHandle = UINT32_MAX, linkedPawn = UINT32_MAX;
@@ -193,6 +207,36 @@ bool ReadPawn(Pawn& pawn) noexcept {
         !Read(pawn.controller + off::controller::TickBase, pawn.simulationTick)) return false;
     for (float component : pawn.velocity) if (!std::isfinite(component) || std::abs(component) > 100000) return false;
     return SamePawn(pawn);
+}
+bool BeginQuickstop(void* command) noexcept {
+    // AntiAimBeginCommand has already restored physical camera/movement space.
+    // Restore our previous physical patch before the movement replay sees it.
+    AcquireSRWLockExclusive(&commandLock);
+    bool ready = true;
+    quickstopRebuildHandoff = false;
+    int sequence = 0;
+    if (command && Read(reinterpret_cast<std::uintptr_t>(command) + off::command::Sequence, sequence) && sequence > 0) {
+        auto& entry = quickstopEntries[static_cast<unsigned>(sequence) % quickstopEntries.size()];
+        if (entry.patch.valid && entry.patch.boundary.command == reinterpret_cast<std::uintptr_t>(command) &&
+            entry.patch.boundary.sequence == sequence) {
+            // Replaced sources/owners invalidate stored allocation ownership.
+            // Never write an old pawn's command snapshot through a new source.
+            if (entry.thread == GetCurrentThreadId() && SamePawn(entry.pawn)) {
+                if (QuickstopRestoreCommand(entry.patch)) {
+                    quickstopRebuildHandoff = !entry.brake;
+                    quickstopPhysicalForward = entry.physicalForward;
+                    quickstopPhysicalLeft = entry.physicalLeft;
+                    quickstopHistoryPawn = entry.pawn;
+                    if (entry.brake) quickstopHistory = true;
+                }
+                else if (QuickstopCommandStillEdited(entry.patch)) ready = false;
+            }
+            if (ready) entry = {};
+        }
+    }
+    if (!ready) State("quickstop command ownership changed; command edits skipped");
+    ReleaseSRWLockExclusive(&commandLock);
+    return ready;
 }
 bool AirSpeed(const Pawn& pawn, float& speed) noexcept {
     if (!EffectiveSpeed(pawn.address, speed)) return false;
@@ -799,7 +843,8 @@ void HookFinalize(void* input, void* command) noexcept {
     // Visual accuracy is independent of movement/aim switches and command edits.
     if (reinterpret_cast<std::uintptr_t>(input) == client + off::Input && command)
         ScopedCrosshairCaptureCommand();
-    const bool commandReady = AntiAimBeginCommand(input, command);
+    const bool antiReady = AntiAimBeginCommand(input, command);
+    const bool commandReady = antiReady && BeginQuickstop(command);
     if (commandReady && enabled.load(std::memory_order_acquire)) {
         LARGE_INTEGER begin{}, end{};
         QueryPerformanceCounter(&begin);
@@ -950,6 +995,7 @@ void MovementStop(const char* reason) noexcept {
     enabled.store(false, std::memory_order_release);
     AcquireSRWLockExclusive(&commandLock);
     stopEverRequested = true;
+    quickstopHistory = false;
     enabled.store(false, std::memory_order_release);
     Reset(); State("stopped and resident");
     Log("MOVE_STOPPED_RESIDENT reason=%s callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu; command mutations drained, hook/trampoline retained",
@@ -964,4 +1010,71 @@ bool MovementRefinalizeCommand(void* input, void* command) noexcept {
         reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client) return false;
     original(input, command);
     return true;
+}
+bool MovementQuickstop(void* command, bool brake) noexcept {
+    AcquireSRWLockExclusive(&commandLock);
+    const auto run = [&]() noexcept {
+        if (!brake && !quickstopHistory && !quickstopRebuildHandoff) return true;
+        if (!command || !enabled.load(std::memory_order_acquire) ||
+            reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client) return false;
+        const auto thread = GetCurrentThreadId();
+        if (quickstopOwner != thread) {
+            quickstopHistory = quickstopRebuildHandoff = false; quickstopOwner = thread;
+        }
+        Pawn pawn{};
+        if (!ReadPawn(pawn)) { quickstopHistory = quickstopRebuildHandoff = false; return !brake; }
+        if ((quickstopHistory || quickstopRebuildHandoff) &&
+            (!SamePawn(quickstopHistoryPawn) || pawn.handle != quickstopHistoryPawn.handle ||
+             pawn.services != quickstopHistoryPawn.services || pawn.controllerHandle != quickstopHistoryPawn.controllerHandle))
+            quickstopHistory = quickstopRebuildHandoff = false;
+        if (!brake && !quickstopHistory && !quickstopRebuildHandoff) return true;
+        Patch layout{};
+        layout.command = reinterpret_cast<std::uintptr_t>(command);
+        int sequence = 0;
+        std::uintptr_t angles = 0;
+        float yaw = 0, forward = 0, left = 0, historicalForward = 0, historicalLeft = 0;
+        MovementButtons buttons{};
+        if (!Read(layout.command + off::command::Sequence, sequence) || sequence <= 0 ||
+            !Read(layout.command + off::command::Base, layout.base) || !layout.base ||
+            !Read(layout.command + off::command::Buttons, buttons) ||
+            !Read(layout.base + off::base::Forward, forward) || !Read(layout.base + off::base::Left, left) ||
+            !Read(layout.base + off::base::Angles, angles) || !angles ||
+            !Read(angles + 0x1C, yaw) || !std::isfinite(yaw) ||
+            !ReadHistory(pawn, layout, historicalForward, historicalLeft)) return false;
+        // A rejected ground brake must first release prior brake history on
+        // this takeoff command. Preserve all current jump/air/user input, and
+        // return unavailable to aim so it cannot publish a ground-stop shot.
+        // Bunnyhop can synthesize release while physical Space remains held.
+        const bool refusedBrake = brake && (!(pawn.flags & off::OnGround) ||
+            (buttons.down & off::Jump) || (GetAsyncKeyState(VK_SPACE) & 0x8000));
+        if (refusedBrake) {
+            if (!quickstopHistory && !quickstopRebuildHandoff) return false;
+            brake = false;
+        }
+        if (brake) {
+            const auto axes = QuickstopBrakeAxes(pawn.velocity[0], pawn.velocity[1], yaw);
+            if (!axes.valid) return false;
+            forward = axes.forward; left = axes.left;
+        } else { forward = quickstopPhysicalForward; left = quickstopPhysicalLeft; }
+        auto& entry = quickstopEntries[static_cast<unsigned>(sequence) % quickstopEntries.size()];
+        // BeginQuickstop must have restored a retained edit for this command.
+        if (entry.patch.valid && entry.patch.boundary.command == layout.command && entry.patch.boundary.sequence == sequence)
+            return false;
+        QuickstopCommandPatch patch{};
+        if (!SamePawn(pawn) || !QuickstopApplyCommand(layout.command, forward, left, historicalForward, historicalLeft,
+            buttons.down ^ buttons.changed, client + off::AllocateSubtick, client + off::AddAllocatedSubtick, patch, !brake)) return false;
+        entry.patch = patch; entry.pawn = pawn; entry.thread = thread; entry.brake = brake;
+        if (brake) {
+            quickstopPhysicalForward = (patch.originalButtons.down & (off::Forward | off::Back)) ? patch.originalForward : 0;
+            quickstopPhysicalLeft = (patch.originalButtons.down & (off::Left | off::Right)) ? patch.originalLeft : 0;
+        }
+        entry.physicalForward = quickstopPhysicalForward; entry.physicalLeft = quickstopPhysicalLeft;
+        quickstopRebuildHandoff = false;
+        quickstopHistory = brake;
+        quickstopHistoryPawn = pawn;
+        return !refusedBrake;
+    };
+    const bool result = run();
+    ReleaseSRWLockExclusive(&commandLock);
+    return result;
 }

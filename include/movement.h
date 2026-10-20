@@ -13,3 +13,7 @@ void MovementFlushTelemetry() noexcept;
 // Native command owner only: regenerate CRC after cancelling an autofire
 // request whose original finalizer already ran. Calls the original directly.
 bool MovementRefinalizeCommand(void* input, void* command) noexcept;
+
+// Native command owner: ground-only counter-velocity brake, or release handoff.
+// Called after normal movement and before anti aim / native CRC generation.
+bool MovementQuickstop(void* command, bool brake) noexcept;

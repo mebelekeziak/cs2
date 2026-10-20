@@ -9,6 +9,7 @@ namespace {
 // Hundredths of a degree, with the enable bit above the entire FOV range.
 constexpr std::uint64_t enableBit = 1ull << 16;
 constexpr std::uint64_t autofireBit = 1ull << 19;
+constexpr std::uint64_t quickstopBit = 1ull << 45;
 std::atomic<std::uint64_t> settings{500 | (1ull << 17) | (5000ull << 20) | (256ull << 34)};
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 bool wasDown = false; // Render owner only.
@@ -18,7 +19,8 @@ SilentAimSettings SilentAimGetSettings() noexcept {
     const auto value = settings.load(std::memory_order_acquire);
     return {(value & enableBit) != 0, static_cast<float>(value & 0xffff) / 100.0f,
         static_cast<AimHitbox>((value >> 17) & 3), (value & autofireBit) != 0,
-        static_cast<float>((value >> 20) & 0x3fff) / 100.0f, static_cast<int>((value >> 34) & 0x7ff)};
+        static_cast<float>((value >> 20) & 0x3fff) / 100.0f, static_cast<int>((value >> 34) & 0x7ff),
+        (value & quickstopBit) != 0};
 }
 void SilentAimSetSettings(const SilentAimSettings& value) noexcept {
     const float fov = std::isfinite(value.fov) ? std::clamp(value.fov, 0.1f, 180.0f) : 5.0f;
@@ -27,7 +29,8 @@ void SilentAimSetSettings(const SilentAimSettings& value) noexcept {
     settings.store(static_cast<std::uint64_t>(std::lround(fov * 100)) |
         (value.enabled ? enableBit : 0) | (static_cast<std::uint64_t>(hitbox) << 17) |
         (value.autofire ? autofireBit : 0) | (static_cast<std::uint64_t>(std::lround(chance * 100)) << 20) |
-        (static_cast<std::uint64_t>(std::clamp(value.samples, 64, 1024)) << 34), std::memory_order_release);
+        (static_cast<std::uint64_t>(std::clamp(value.samples, 64, 1024)) << 34) |
+        (value.quickstop ? quickstopBit : 0), std::memory_order_release);
 }
 void SilentAimPollControls(bool foreground) noexcept {
     const bool down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;

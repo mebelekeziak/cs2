@@ -28,6 +28,10 @@ unsigned failures = 0, checks = 0, recorderCalls = 0, builderCalls = 0, checksum
 bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volumeCurrent = true;
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
 bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
+bool quickstopAvailable = true, wideFallback = false;
+std::vector<bool> quickstopBrakes;
+std::vector<void*> quickstopCommands;
+std::uint32_t selectedPawnHandle = 0x8004, localPawnHandle = 0x8003;
 unsigned traceCalls = 0;
 bool multipleTargets = false, reverseCandidates = false;
 int rejectedCandidate = 0; // 1 cover, 2 range/chance, 3 missing geometry.
@@ -69,8 +73,8 @@ struct Command {
     MovementButtons originalButtons{0x8, 0x200, 0x400};
     static constexpr std::uint32_t OriginalPresence = 0x8000;
     static constexpr AimAngles PhysicalView{};
-    Command() {
-        Put(Address(command) + move::command::Sequence, 37);
+    explicit Command(int sequence = 37) {
+        Put(Address(command) + move::command::Sequence, sequence);
         Put(Address(command) + move::command::Base, Address(base));
         Put(Address(command) + move::command::Buttons, originalButtons);
         Put(Address(command) + cmd::command::Presence, OriginalPresence);
@@ -173,6 +177,9 @@ struct World {
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
+        quickstopAvailable = true; wideFallback = false;
+        quickstopBrakes.clear(); quickstopCommands.clear();
+        selectedPawnHandle = 0x8004; localPawnHandle = 0x8003;
         telemetry.clear();
         shotMetadata.clear(); shotPumps = 0;
         ShotLogSetSettings({});
@@ -582,6 +589,149 @@ void WideFovChecks(World& world) {
     Expect(Equal(manual.History(), Desired()) && traceCalls == 0 && shotMetadata.size() == 1 && !shotMetadata[0].automatic,
         "manual primary keeps nearest-landmark behavior even while autofire is enabled");
 }
+
+void EnableQuickstop() {
+    auto settings = SilentAimGetSettings();
+    settings.quickstop = true;
+    SilentAimSetSettings(settings);
+    weapon.inaccuracy = 0.4f;
+}
+bool LastBrake(bool brake) {
+    return !quickstopBrakes.empty() && quickstopBrakes.back() == brake;
+}
+void QuickstopChecks(World& world) {
+    world.Reset(); EnableQuickstop();
+    Command moving;
+    const auto before = moving.command;
+    world.Prepare(moving);
+    Expect(LastBrake(true) && quickstopCommands.back() == moving.Pointer() && recorderCalls == 0 && moving.command == before &&
+        std::strstr(SilentAimStatus(), "braking below hitchance"),
+        "clear ready target below hitchance acquires braking without inventing a shot or modifying its accuracy sample");
+    world.History(moving);
+    Expect(shotMetadata.empty(), "braking command alone does not publish a shot context");
+
+    weapon.inaccuracy = 0;
+    Command threshold(38);
+    world.Prepare(threshold);
+    Expect(LastBrake(true) && recorderCalls == 1,
+        "next command meeting exact hitchance retains the active brake through the requested shot");
+    world.History(threshold);
+    Expect(Equal(threshold.History(), Desired()) && shotMetadata.size() == 1,
+        "stopped command publishes through the existing real autofire history path");
+
+    weapon.ready = false; weapon.reason = "primary cooldown"; weapon.inaccuracy = 0.4f;
+    Command cycling(39);
+    world.Prepare(cycling);
+    Expect(LastBrake(false) && recorderCalls == 1 && Equal(cycling.Buttons(), cycling.originalButtons),
+        "weapon recovery releases normal movement even when the target remains below hitchance");
+    weapon.ready = true; weapon.reason = "ready";
+    Command readyAgain(40);
+    world.Prepare(readyAgain);
+    Expect(LastBrake(true) && recorderCalls == 1, "ready weapon begins a fresh brake cycle for a still-valid low-chance target");
+
+    constexpr const char* cancellations[]{"quickstop off", "autofire off", "aim off", "unfocused", "no target",
+        "missing geometry", "invalid volume", "missing weapon", "stale target", "stale weapon", "covered",
+        "trace unavailable", "trace invalidates state", "out of weapon range", "invalid accuracy", "invalid view", "stopped"};
+    for (int mode = 0; mode < static_cast<int>(std::size(cancellations)); ++mode) {
+        world.Reset(); EnableQuickstop();
+        Command initial;
+        world.Prepare(initial);
+        Expect(LastBrake(true), std::string(cancellations[mode]) + ": initial cycle acquired");
+        auto settings = SilentAimGetSettings();
+        Command released(38);
+        switch (mode) {
+        case 0: settings.quickstop = false; SilentAimSetSettings(settings); break;
+        case 1: settings.autofire = false; SilentAimSetSettings(settings); break;
+        case 2: settings.enabled = false; SilentAimSetSettings(settings); break;
+        case 3: SilentAimTestForeground(false); break;
+        case 4: selectAvailable = false; break;
+        case 5: volumeAvailable = false; break;
+        case 6: volumeCurrent = false; break;
+        case 7: weaponAvailable = false; break;
+        case 8: targetCurrent = false; break;
+        case 9: weaponCurrent = false; break;
+        case 10: pathClear = false; break;
+        case 11: pathAvailable = false; break;
+        case 12: changeDuringTrace = true; break;
+        case 13: weapon.range = 50; break;
+        case 14: weapon.inaccuracy = -1; break;
+        case 15:
+            Put(Address(released.baseAngles) + cmd::angle::Presence, std::uint32_t{0});
+            Put(Address(released.baseAngles) + cmd::angle::Pitch, AimAngles{1, 0, 0}); break;
+        case 16: SilentAimStop("quickstop cancellation regression"); break;
+        }
+        world.Prepare(released);
+        Expect(LastBrake(false) && recorderCalls == 0 && Equal(released.Buttons(), released.originalButtons),
+            std::string(cancellations[mode]) + ": releases braking and cannot request a shot");
+    }
+
+    for (bool activeCycle : {false, true}) {
+        world.Reset(); EnableQuickstop();
+        Command initial;
+        if (activeCycle) world.Prepare(initial);
+        quickstopAvailable = false;
+        weapon.inaccuracy = activeCycle ? 0.0f : 0.4f;
+        Command unavailable(38);
+        world.Prepare(unavailable);
+        Expect(LastBrake(true) && recorderCalls == 0 && std::strstr(SilentAimStatus(), "movement unavailable"),
+            activeCycle ? "failed firing-command brake cancels automatic request for an active stop cycle" :
+                "failed first brake cannot create an automatic request");
+    }
+
+    world.Reset(); EnableQuickstop(); weapon.inaccuracy = 0; quickstopAvailable = false;
+    Command failedRelease;
+    world.Prepare(failedRelease);
+    Expect(LastBrake(false) && recorderCalls == 0 && Equal(failedRelease.Buttons(), failedRelease.originalButtons) &&
+        std::strstr(SilentAimStatus(), "movement unavailable"),
+        "failed release handoff suppresses even an immediately eligible automatic shot");
+
+    for (int changed = 0; changed < 10; ++changed) {
+        world.Reset(); EnableQuickstop();
+        Command initial;
+        world.Prepare(initial);
+        weapon.inaccuracy = 0;
+        auto settings = SilentAimGetSettings();
+        switch (changed) {
+        case 0: Put(world.Base() + cs2_offsets::globals::dwLocalPlayerPawn, std::uintptr_t{0x334000}); break;
+        case 1: settings.fov = 29; SilentAimSetSettings(settings); break;
+        case 2: selectedPawnHandle = 0x9004; break;
+        case 3: ++weapon.handle; break;
+        case 4: ++localPawnHandle; break;
+        case 5: Put(world.Base() + cs2_offsets::globals::dwLocalPlayerController, std::uintptr_t{0x223000}); break;
+        case 6: ++weapon.services; break;
+        case 7: ++weapon.data; break;
+        case 8: ++weapon.mode; break;
+        case 9: ++weapon.weapon; break;
+        }
+        Command replacement(38);
+        world.Prepare(replacement);
+        Expect(LastBrake(false) && recorderCalls == 1,
+            "source/settings/target/weapon identity change cannot inherit firing-command brake case " + std::to_string(changed));
+    }
+
+    for (bool reversed : {false, true}) {
+        world.Reset(); EnableQuickstop(); multipleTargets = true; reverseCandidates = reversed; rejectedCandidate = 1;
+        auto settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+        Command clearFallback;
+        world.Prepare(clearFallback);
+        Expect(LastBrake(true) && recorderCalls == 0 && !telemetry.empty() &&
+            telemetry.back().find("target=0x00008005") != std::string::npos && weaponReads == 1,
+            "blocked nearest target yields brake ownership to clear below-chance fallback; reversed=" + std::to_string(reversed));
+
+        world.Reset(); EnableQuickstop(); multipleTargets = true; reverseCandidates = reversed; wideFallback = true;
+        settings = SilentAimGetSettings(); settings.fov = 180; SilentAimSetSettings(settings);
+        Command shootableFallback;
+        world.Prepare(shootableFallback); world.History(shootableFallback);
+        Expect(LastBrake(false) && recorderCalls == 1 && shotMetadata.size() == 1 && shotMetadata[0].targetPawn == 0x8005 &&
+            Equal(shootableFallback.History(), AimAngles{0, 180, 0}),
+            "immediately eligible alternative takes priority over below-chance brake target; reversed=" + std::to_string(reversed));
+    }
+
+    world.Reset(); EnableQuickstop(); weapon.inaccuracy = 0;
+    Command alreadyAccurate;
+    world.Prepare(alreadyAccurate);
+    Expect(LastBrake(false) && recorderCalls == 1, "already sufficient hitchance fires without starting an unnecessary stop cycle");
+}
 }
 
 // Replace only engine-dependent snapshots and effects. The integrated suite
@@ -595,9 +745,9 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
         const bool fallback = multipleTargets && (reverseCandidates ? i == 0 : i == 1);
         AimTarget candidate{};
         candidate.local.pawn = source.pawn;
-        candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = 0x8003;
+        candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = localPawnHandle;
         candidate.enemy.pawn = fallback ? 0x556000 : 0x555000;
-        candidate.enemy.pawnHandle = fallback ? 0x8005 : 0x8004;
+        candidate.enemy.pawnHandle = fallback ? 0x8005 : selectedPawnHandle;
         candidate.point = fallback ? AimVector{-100, 0, 0} : AimVector{100, 10, 0}; candidate.hitbox = hitbox;
         candidate.solution = SilentAimSolve(candidate.eye, candidate.point, view, fov);
         if (!candidate.solution.valid || (target.solution.valid && candidate.solution.separation >= target.solution.separation)) continue;
@@ -617,6 +767,7 @@ bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTar
     volume.center = target.point;
     if (rejectedCandidate == 2 && target.enemy.pawnHandle == 0x8004) volume.center = {2000, 200, 0};
     volume.capsule = {{volume.center.x, volume.center.y, -2}, {volume.center.x, volume.center.y, 2}, 4};
+    if (wideFallback && target.enemy.pawnHandle == 0x8005) volume.capsule.radius = 80;
     volume.pawn = target.enemy.pawn; volume.valid = true;
     reason = "fixture authored capsule";
     return true;
@@ -646,6 +797,10 @@ bool MovementRefinalizeCommand(void*, void* command) noexcept {
         !(Get<std::uint32_t>(address + cmd::command::Presence) & cmd::command::Attack1Present);
     return checksumAvailable;
 }
+bool MovementQuickstop(void* command, bool brake) noexcept {
+    quickstopBrakes.push_back(brake); quickstopCommands.push_back(command);
+    return quickstopAvailable;
+}
 void MovementTelemetryPush(const char* message) noexcept { if (message) telemetry.emplace_back(message); }
 void ShotLoggingPump() noexcept { ++shotPumps; }
 void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept { shotMetadata.push_back(metadata); }
@@ -659,6 +814,7 @@ int main() {
     OwnershipChecks(world);
     OcclusionChecks(world);
     WideFovChecks(world);
+    QuickstopChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

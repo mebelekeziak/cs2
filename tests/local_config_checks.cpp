@@ -104,8 +104,8 @@ int main() {
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
-    Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\n") != std::string::npos,
-        "default preset saves autofire off and hitchance controls");
+    Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\naim.quickstop=0\n") != std::string::npos,
+        "default preset saves autofire and quickstop off and hitchance controls");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
     Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\nzoom.sensitivity=100\n") != std::string::npos,
@@ -143,7 +143,7 @@ int main() {
     for (unsigned c = 0; c < std::size(worldColors); ++c)
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
-    const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512};
+    const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true};
     SilentAimSetSettings(expectedAim);
     const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
         -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
@@ -223,6 +223,8 @@ int main() {
         "version=1\nesp.boxThickness=nan\n", "version=1\nworld.tint.1=0.5junk\n",
         "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n",
         "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
+        "version=1\naim.quickstop=2\n", "version=1\naim.quickstop=true\n",
+        "version=1\naim.quickstop=0\naim.quickstop=1\n",
         "version=1\naim.hitchance=25\naim.hitchance=75\n",
         "version=1\nanti_aim.enabled=true\n", "version=1\nanti_aim.enabled=2\n",
         "version=1\nanti_aim.yawMode=1.5\n", "version=1\nanti_aim.yawBase=world\n",
@@ -267,7 +269,8 @@ int main() {
         "unknown keys accepted and existing setters enforce bounds");
     Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
-        SilentAimGetSettings().samples == 256, "older presets restore autofire off and hitchance defaults");
+        SilentAimGetSettings().samples == 256 && !SilentAimGetSettings().quickstop,
+        "older presets restore autofire and quickstop off and hitchance defaults");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");

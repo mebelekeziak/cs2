@@ -678,8 +678,9 @@ int main() {
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.9f);
     ClickControl("##AimSamples", 0.9f);
-    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256,
-           "disabled aim master blocks autofire and hitchance edits");
+    ClickControl("Quickstop");
+    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256 &&
+           !SilentAimGetSettings().quickstop, "disabled aim master blocks autofire, quickstop and hitchance edits");
     ClickControl("##AimFov", 0.8f);
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
@@ -694,13 +695,19 @@ int main() {
         SelectEspCombo("##AimHitbox", name, static_cast<int>(hitbox));
         Expect(SilentAimGetSettings().hitbox == hitbox, "hitbox selector publishes selected body region");
     }
+    ClickControl("Quickstop");
+    Expect(!SilentAimGetSettings().quickstop, "quickstop checkbox waits for enabled autofire");
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.75f);
     ClickControl("##AimSamples", 0.8f);
     Expect(SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance > 60 && SilentAimGetSettings().samples > 700,
            "autofire threshold and sample count respond to real mouse input");
+    ClickControl("Quickstop");
+    Expect(SilentAimGetSettings().quickstop, "quickstop checkbox publishes its enabled preference with autofire enabled");
     ClickControl("Autofire");
-    Expect(!SilentAimGetSettings().autofire, "autofire checkbox turns automatic primary attack off independently");
+    ClickControl("Quickstop");
+    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().quickstop,
+        "disabling autofire preserves quickstop preference and blocks quickstop edits");
     ClickControl("Enable silent aim");
     Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
            "silent aim changes preserve independent ESP settings");

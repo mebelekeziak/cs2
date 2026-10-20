@@ -59,6 +59,7 @@ struct Decision {
     const char* reason = "not evaluated";
     bool selected = false;
     bool automaticEligible = false;
+    bool quickstopEligible = false;
 };
 struct Pending {
     AimAutofirePatch patch{};
@@ -67,6 +68,8 @@ struct Pending {
 };
 std::array<Pending, 256> requests{};
 Decision lastDecision{};
+Decision stopCycle{};
+bool stopping = false;
 #ifdef CS2_AIM_PIPELINE_CHECKS
 bool testRuntime = false, testForeground = true;
 #endif
@@ -168,7 +171,7 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
     return result;
 }
 struct AutofireSelection {
-    Decision prototype{}, accepted{}, rejected{};
+    Decision prototype{}, accepted{}, rejected{}, brake{};
     AimAngles view{};
     WeaponSample weapon{};
     float rejectedSeparation = 181;
@@ -179,11 +182,24 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
     candidate.target = target;
     candidate.selected = true;
     candidate = EvaluateTarget(candidate, selection.view, selection.weapon);
-    if (candidate.chance.valid && candidate.chance.percent >= candidate.settings.hitchance &&
-        candidate.weapon.ready && Reachable(candidate)) {
-        candidate.automaticEligible = true;
-        selection.accepted = candidate;
-        return true;
+    if (candidate.chance.valid && candidate.weapon.ready &&
+        (candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) && Reachable(candidate)) {
+        if (candidate.chance.percent >= candidate.settings.hitchance) {
+            candidate.automaticEligible = true;
+            selection.accepted = candidate;
+            return true;
+        }
+        // Preserve a clear, ready fallback while continuing the search for an
+        // immediately shootable enemy. A covered nearer enemy cannot own stop.
+        const auto dx = candidate.volume.center.x - candidate.target.eye.x;
+        const auto dy = candidate.volume.center.y - candidate.target.eye.y;
+        const auto dz = candidate.volume.center.z - candidate.target.eye.z;
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (distance <= candidate.weapon.range &&
+            (!selection.brake.selected || candidate.target.solution.separation < selection.brake.target.solution.separation)) {
+            candidate.quickstopEligible = true;
+            selection.brake = candidate;
+        }
     }
     // Keep a useful rejection when no candidate qualifies; later failed
     // candidates must not replace an already accepted decision.
@@ -206,6 +222,7 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
     const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitbox, bones,
         result.target, &targetDiagnostics, selectEligible ? &EligibleTarget : nullptr, &selection);
     if (selectEligible && found) { ++selected; return selection.accepted; }
+    if (selectEligible && selection.brake.selected) { ++selected; return selection.brake; }
     if (selectEligible && selection.rejected.selected) { ++selected; return selection.rejected; }
     if (!found) {
         result.reason = std::strcmp(targetDiagnostics.localFailure, "none") ?
@@ -215,6 +232,18 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
     result.selected = true; ++selected;
     WeaponSample weapon{};
     return EvaluateTarget(result, view, weapon);
+}
+bool SameStopCycle(const Decision& decision) noexcept {
+    return stopping && decision.settings == stopCycle.settings &&
+        decision.source.system == stopCycle.source.system && decision.source.controller == stopCycle.source.controller &&
+        decision.source.pawn == stopCycle.source.pawn &&
+        decision.target.local.pawnHandle == stopCycle.target.local.pawnHandle &&
+        decision.target.local.controllerHandle == stopCycle.target.local.controllerHandle &&
+        decision.target.enemy.pawnHandle == stopCycle.target.enemy.pawnHandle &&
+        decision.target.enemy.controllerHandle == stopCycle.target.enemy.controllerHandle &&
+        decision.weapon.weapon == stopCycle.weapon.weapon && decision.weapon.handle == stopCycle.weapon.handle &&
+        decision.weapon.identity == stopCycle.weapon.identity && decision.weapon.services == stopCycle.weapon.services &&
+        decision.weapon.data == stopCycle.weapon.data && decision.weapon.mode == stopCycle.weapon.mode;
 }
 void Report(const Decision& decision, const char* action, bool event = false) noexcept {
     lastDecision = decision;
@@ -436,7 +465,7 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
         !std::memcmp(recorderBytes.data(), fire::RecordHistoryBytes, recorderBytes.size());
     if (autofirePrepared) recordHistory = reinterpret_cast<AimRecordHistoryFn>(client + fire::RecordHistory);
     Status("awaiting history hook activation");
-    if (logger) logger("AIM_BUILD_VERIFIED native history slot=25; primary-fire history edited after original; dynamic named bones from copied pose; no camera/base/movement writes");
+    if (logger) logger("AIM_BUILD_VERIFIED native history slot=25; primary-fire history edited after original; dynamic named bones from copied pose; aim angles edit primary history only; optional quickstop edits command movement before native CRC");
     if (logger) {
         char message[384]{};
         std::snprintf(message, sizeof(message),
@@ -456,7 +485,9 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
     ShotLoggingPump();
     AcquireSRWLockExclusive(&mutationLock);
     ++prepareCalls;
+    bool movementHandled = false;
     if (!commandReady) {
+        stopping = false;
         ++prepareBlocked; prepareStage = "anti_aim_restore_unresolved";
         ReleaseSRWLockExclusive(&mutationLock);
         return;
@@ -487,7 +518,20 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
             ++prepareEvaluated;
             auto decision = Evaluate(view, settings, settings.autofire);
             const char* action = decision.reason;
-            if (settings.autofire && (!autofirePrepared || !finalizerReady)) action = "native autofire contract unavailable";
+            const bool wantsStop = settings.autofire && settings.quickstop && autofirePrepared && finalizerReady &&
+                request && (decision.quickstopEligible || (decision.automaticEligible && SameStopCycle(decision)));
+            // Recheck after native selection/tracing callbacks before movement
+            // ownership is acquired. Accuracy is observed again next command;
+            // we never pretend braking already changed this command's cone.
+            const bool stopValid = wantsStop && active.load(std::memory_order_acquire) && Foreground() &&
+                settings == SilentAimGetSettings() && Current(decision);
+            const bool movementReady = MovementQuickstop(command, stopValid);
+            movementHandled = true;
+            stopping = stopValid && movementReady;
+            if (stopping) stopCycle = decision;
+            if (!movementReady || (wantsStop && !stopping)) action = "quickstop movement unavailable";
+            else if (decision.quickstopEligible && stopping) action = "quickstop braking below hitchance";
+            else if (settings.autofire && (!autofirePrepared || !finalizerReady)) action = "native autofire contract unavailable";
             else if (settings.autofire && request && decision.automaticEligible) {
                 if (!active.load(std::memory_order_acquire) || !Foreground() ||
                     !(settings == SilentAimGetSettings()) || !Current(decision)) action = "aim state changed before request";
@@ -505,12 +549,14 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
             Report(decision, action);
         }
     }
+    if (!movementHandled) { stopping = false; MovementQuickstop(command, false); }
     ReleaseSRWLockExclusive(&mutationLock);
 }
 void SilentAimStop(const char* reason) noexcept {
     active.store(false, std::memory_order_release);
     AcquireSRWLockExclusive(&mutationLock);
     stopped = true;
+    stopping = false;
     active.store(false, std::memory_order_release);
     Status("stopped and resident");
     ReleaseSRWLockExclusive(&mutationLock);
@@ -572,6 +618,7 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     testRuntime = true; testForeground = true;
     client = base; original = builder; recordHistory = recorder;
     active.store(true); stopped = false; prepared = weaponPrepared = autofirePrepared = finalizerReady = true;
+    stopping = false; stopCycle = {};
     requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
     lastEventReport = 0; lastObservedAction = "not evaluated";
     weaponContext.client = base;

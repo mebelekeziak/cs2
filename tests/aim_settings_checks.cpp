@@ -12,8 +12,8 @@ int main() {
         failures += !ok;
     };
     check(SilentAimGetSettings() == SilentAimSettings{}, "default settings keep automatic attack disabled");
-    SilentAimSetSettings({true, -999, static_cast<AimHitbox>(99), true, 999, 99999});
-    check(SilentAimGetSettings() == SilentAimSettings{true, 0.1f, AimHitbox::Pelvis, true, 100, 1024}, "all fields clamp without bit overlap");
+    SilentAimSetSettings({true, -999, static_cast<AimHitbox>(99), true, 999, 99999, true});
+    check(SilentAimGetSettings() == SilentAimSettings{true, 0.1f, AimHitbox::Pelvis, true, 100, 1024, true}, "all fields clamp without quickstop bit overlap");
     SilentAimSetSettings({false, 999, static_cast<AimHitbox>(-1), false, -999, -1});
     check(SilentAimGetSettings() == SilentAimSettings{false, 180, AimHitbox::Head, false, 0, 64}, "FOV clamps to 180 with zero threshold and minimum samples valid");
     const SilentAimSettings maximumFov{true, 180, AimHitbox::Pelvis, true, 100, 1024};
@@ -23,7 +23,11 @@ int main() {
         std::numeric_limits<float>::infinity(), 256});
     check(SilentAimGetSettings() == SilentAimSettings{true, 5, AimHitbox::Head, true, 50, 256}, "nonfinite numbers restore defaults");
     const SilentAimSettings first{true, 0.25f, AimHitbox::Head, false, 99.25f, 65};
-    const SilentAimSettings second{false, 179.75f, AimHitbox::Pelvis, true, 0.75f, 1023};
+    const SilentAimSettings second{false, 179.75f, AimHitbox::Pelvis, true, 0.75f, 1023, true};
+    auto quickstopOnly = first;
+    quickstopOnly.quickstop = true;
+    SilentAimSetSettings(quickstopOnly);
+    check(SilentAimGetSettings() == quickstopOnly, "quickstop preference survives disabled autofire without changing other fields");
     SilentAimSetSettings(first);
     std::atomic<bool> torn{false};
     std::thread writer([&] { for (int i = 0; i < 100000; ++i) SilentAimSetSettings((i & 1) ? first : second); });

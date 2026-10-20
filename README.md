@@ -664,6 +664,50 @@ pitch. All eleven binary checks pass in
 controlled during this repair. Restart CS2 normally before loading the rebuilt
 DLL through **Load Overlay.cmd**.
 
+## Quickstop
+
+Under **Aim**, enable **Autofire**, then **Quickstop**. Quickstop starts off and
+saves with presets; older presets keep it off. Silent aim must also be enabled.
+A live enemy within FOV, with current capsule geometry, a clear direct path and
+a ready weapon, can start braking when sampled hitchance is below your minimum.
+Covered, out-of-range and otherwise invalid candidates do not start a stop.
+An immediately shootable enemy takes priority over a candidate needing braking.
+
+Braking opposes observed horizontal velocity in physical camera space, tapers
+near rest, and uses fresh native accuracy on subsequent commands. Autofire
+requests the shot at **the configured minimum**, with no hidden percentage
+margin. A stop already in progress retains braking on its firing command.
+There is no guessed stationary-accuracy prediction or promise that a requested
+threshold can be reached: spread, recoil, stance, scope and target geometry can
+still limit hitchance after movement has stopped.
+
+During weapon cooldown, including bolt-action recovery, ordinary user movement
+resumes. When the weapon becomes ready, a remaining eligible target below the
+threshold starts another stop. Losing the target/path, changing sources or
+settings, disabling aim/autofire/quickstop, or losing focus ends the cycle.
+Braking applies only to normal grounded walking; jumping, air movement, swimming
+and ladders keep their normal movement behavior. Manual primary fire remains
+available. The existing aim range, geometry, occlusion and fire-readiness checks
+continue to govern automatic shots.
+
+Movement edits include direction buttons and a time-zero analog subtick, with
+restoration before prediction rebuilds and a handoff to physical input when
+released. They run before anti aim and native checksum generation. See
+[quickstop implementation evidence](tools/CS2_QUICKSTOP_EVIDENCE.md).
+Build/load using the existing commands and **Load Overlay.cmd**. Restart CS2
+normally before loading a rebuilt DLL if an older copy remains resident;
+**stopped and resident is not physically unloaded**.
+
+**Verification, October 20, 2026:** public and diagnostic x64 Release builds
+succeed; **48/48 CTest suites pass in each**. The aim pipeline runs 171 checks,
+including stop/fire/cooldown/restart and target/source/settings changes. Native
+command fixtures cover 1,000 repeated restores, anti-aim pool growth, partial
+rebuild ownership, timed-input handoffs and failed allocation rollback. Settings,
+old presets and mouse-driven menu checks pass; normal/narrow software-D3D11 menu
+previews were inspected. All **22 installed-file compatibility components** pass.
+Both DLLs retain zero static TLS and delay imports. No CS2 client/server was
+launched; live deceleration, recovery timing and movement feel remain unobserved.
+
 ## Silent aim, hitchance and autofire
 
 The **Aim** tab has an **Enable silent aim** checkbox, a **Hitbox** selector
@@ -1092,7 +1136,8 @@ authorized built-in offline bot match. **WASD**, including diagonal combinations
 selects camera-relative travel direction and rebuilds speed after slowing down.
 When opposing keys overlap, the most recently observed press wins on that axis;
 simultaneous first presses cancel. Diagonals remain available throughout a turn.
-Releasing all movement keys stops assisted steering; no autostop is implemented.
+Releasing all movement keys stops assisted steering and allows normal coasting.
+The separate **Aim > Quickstop** option brakes only for eligible automatic shots.
 The steering reads physical W/A/S/D before synthesized input, so generated
 side movement cannot latch the turn after release. The **Movement** menu tab
 has independent toggles, also available through F8/F9 with the menu hidden.
@@ -1329,7 +1374,7 @@ Restart CS2 normally if an older DLL is still resident. Launch the offline bot
 match, load using **Load Overlay.cmd**, hide the menu with Insert and hold Space
 while moving. Test with F9 off to isolate bunnyhop, then enable F9 and steer with
 WASD, including diagonals and low-speed recovery. Release WASD to check normal
-coasting with no autostop. For revision 8, also test W→S at low and running speeds,
+coasting with Aim Quickstop disabled. For revision 8, also test W→S at low and running speeds,
 cycle W → WA → A → AS → S → SD → D
 → DW and turn the camera with a diagonal held. The launcher writes movement telemetry to the existing
 `logs/overlay-PID-STARTTIME.log` alongside ESP diagnostics:
