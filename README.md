@@ -3,7 +3,7 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-five
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-six
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -178,22 +178,38 @@ The installed catalog still has 739 entries. Both payloads retain zero static
 TLS and delay imports. No CS2 client/server was started for this correction;
 live character appearance remains unobserved.
 
-## Scoped third-person crosshair
+## First-person scope replacement and custom scoped crosshair
+
+Under **Visuals → Scoped zoom**, enable **Remove scope overlay** to replace the
+first-person scope graphic and scope blur with the existing custom white
+crosshair. This switch works independently of **Override scoped zoom**, ESP and
+third person, starts disabled, and saves with local configs. **Reset scoped zoom**
+also restores the native scope overlay. Older presets leave removal disabled.
+
+Sniper scopes and AUG/SG556 iron sights are supported. The native acquisition
+callbacks still run; replacement changes only transient visual outputs for the
+matching alive local scoped pawn/weapon. Weapon scope state, magnification, sensitivity and firing remain
+under their existing controls. The native graphic stays available when a fresh
+custom-crosshair accuracy sample is unavailable. Unscoping, death, source changes,
+disable and cooperative stop invalidate the replacement. No installed game files
+are changed. See [scope rendering evidence](tools/CS2_SCOPE_OVERLAY_EVIDENCE.md).
 
 A custom white four-point crosshair appears automatically at screen center
 only while the alive local player is actually scoped with a supported scoped
-weapon and the third-person camera has successfully applied. It follows the
+weapon and the third-person camera has successfully applied, or the first-person
+scope has been replaced using the option above. It follows the
 reference's slender tapered arms, tiny center dot and subtle glow. Native
 spread plus inaccuracy gently opens the center gap by at most three pixels at
 1080p, smoothed over approximately 90 ms; the outer radius stays at 18 pixels.
 The graphic scales with viewport height and stays visible with the menu hidden.
 
 This works independently of ESP, aim assistance and the scoped zoom override.
-Unscoping, leaving third person, death, stale/replaced entities, missing accuracy
+Unscoping, leaving the eligible camera/replacement view, death, stale/replaced entities, missing accuracy
 data or cooperative stop hides it. Accuracy getters run on the existing native
 command callback; Present consumes copied values and validates current scope
 and camera state. Samples and camera publications expire after 250 ms without
-updates. No new hooks, game-file changes or command edits are added for it.
+updates. The first-person option adds two verified visual-output hooks; the
+existing third-person drawing path adds no hooks or command edits.
 
 Build and load with the existing commands below. Restart CS2 normally before
 using **Load Overlay.cmd** if an older DLL is resident; stopped and resident
@@ -214,6 +230,16 @@ drawing checks. Both software-D3D11 crosshair previews were inspected; all
 TLS and delay imports. No client/server was launched; live scoped appearance
 and spread feel remain unobserved.
 
+**First-person extension verification, October 20, 2026:** public and diagnostic
+x64 Release builds each pass **54/54 CTest suites**. Scope suppression has 32
+adapter checks and shared crosshair state has 403 checks. All **26/26 installed-file
+compatibility components** pass, including modern sniper stencil/crop and AUG/SG556
+geometry/filter paths; 33 incorrect scope contracts/windows are rejected. The
+Scoped zoom menu preview was inspected. Both DLLs retain zero static TLS and
+delay imports. No CS2 client/server was launched; live scope removal remains
+unobserved. Restart CS2 normally before using **Load Overlay.cmd** with the
+rebuilt DLL if an older copy is resident.
+
 ## Scoped weapon zoom
 
 Under **Visuals**, scroll down, open **Scoped zoom**, then enable **Override
@@ -229,10 +255,11 @@ stages; the Zoom 1/2 magnification sliders do not change this selection.
 
 The setting starts disabled, works independently of ESP and third person, and
 saves with local configs. **Reset scoped zoom** disables it and restores all
-three sliders to 100%. Older presets use these defaults, preserving native
-sensitivity. This adjusts the current world-view FOV and scoped mouse
-sensitivity; the scope graphic, weapon state and firing behavior are unchanged.
-It does not remove the scope graphic.
+three sliders to 100% and restores the native scope overlay. Older presets use
+these defaults, preserving native sensitivity. Magnification and sensitivity
+controls adjust the current world-view FOV and scoped mouse sensitivity. The
+separate **Remove scope overlay** switch controls scope replacement; weapon
+state and firing behavior are unchanged.
 
 The implementation uses the final game-specific camera callback, current
 serialized active-weapon identity and the native unscoped FOV getter. Sensitivity

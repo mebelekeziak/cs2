@@ -66,6 +66,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(camera, enabled); FIELD(camera, distance); FIELD(camera, shoulder);
     FIELD(camera, height); FIELD(camera, collision);
     FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2); FIELD(zoom, sensitivity);
+    FIELD(zoom, removeScope);
     FIELD(shot_log, enabled); FIELD(shot_log, verbose);
     FIELD(model_swap, enabled); FIELD(model_swap, model);
     FIELD(player_chams, enabled); FIELD(player_chams, teammates); FIELD(player_chams, localPlayer);

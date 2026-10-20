@@ -4,7 +4,7 @@
 
 // All inputs are copied values; this module never reads game objects.
 // The caller establishes that the local player is alive, scoped with a scoped
-// weapon, and actually using the third-person camera before setting visible.
+// weapon, with an applied third-person camera or a replaced first-person scope.
 struct ScopedCrosshairDrawInput {
     bool visible = false;
     float spread = 0;

@@ -465,6 +465,11 @@ void ZoomControls() {
     ClickControl("##Zoom2", 0.9f);
     ClickControl("##ZoomSensitivity", 0.1f);
     Expect(ZoomGetSettings() == ZoomSettings{}, "disabled scoped zoom master blocks all three sliders");
+    ClickControl("Remove scope overlay");
+    Expect(ZoomGetSettings() == ZoomSettings{false, 100, 100, 100, true},
+           "scope overlay removal works with zoom, ESP and third person disabled");
+    ClickControl("Remove scope overlay");
+    Expect(ZoomGetSettings() == ZoomSettings{}, "scope overlay removal can restore native overlay independently");
     ClickControl("Override scoped zoom");
     ClickControl("##Zoom1", 0.2f);
     const float firstLevel = ZoomGetSettings().zoom1;
@@ -504,13 +509,17 @@ void ZoomControls() {
     Expect(std::strstr(labels, "Zoom 1") && std::strstr(labels, "Zoom 2") &&
            std::strstr(labels, "0%: no zoom. 100%: weapon default. 200%: stronger zoom.") &&
            std::strstr(labels, "Zoom sensitivity") && std::strstr(labels, "0% uses unscoped sensitivity") &&
-           std::strstr(labels, "100% uses CS2 native scoped sensitivity") && std::strstr(labels, "Values between blend the two."),
+           std::strstr(labels, "100% uses CS2 native scoped sensitivity") && std::strstr(labels, "Values between blend the two.") &&
+           std::strstr(labels, "Remove scope overlay") && std::strstr(labels, "Replaces the first-person scope overlay with the custom crosshair."),
            "scoped zoom labels explain both zoom levels, sensitivity endpoints and blending");
     ImGui::LogFinish();
     ImGui::Render();
     ClickControl("Reset ESP appearance");
     Expect(ZoomGetSettings() == ZoomSettings{true, 0, 200, 0}, "ESP reset preserves scoped zoom and sensitivity controls");
     ClickControl("Override scoped zoom");
+    ClickControl("Remove scope overlay");
+    Expect(!ZoomGetSettings().enabled && ZoomGetSettings().removeScope,
+           "scope replacement remains available after zoom override is disabled");
     ClickControl("Reset scoped zoom");
     Expect(ZoomGetSettings() == ZoomSettings{}, "scoped zoom reset restores native sensitivity while its master is disabled");
     Expect(!ThirdPersonGetSettings().enabled && MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe &&
@@ -519,7 +528,7 @@ void ZoomControls() {
     EspSetSettings(savedEsp);
     ThirdPersonSetSettings(savedCamera);
     // Keep zoom endpoints and blended sensitivity for the Configs mouse-flow persistence check.
-    ZoomSetSettings({true, 0, 200, 42.5f});
+    ZoomSetSettings({true, 0, 200, 42.5f, true});
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }

@@ -433,6 +433,33 @@ adjustment. Verify the complete caller chain before reusing this assumption.
 | `MouseCaller`, `MouseScopeDispatch` | `0xB655C3`, `0xBA68DA`, code windows | Native caller passes literal 1 through identity getter; dispatcher multiplies positive pawn scope adjustment and forwards XMM3 |
 | `MouseScaleUnit`, `FovSensitivity` | `0x1AC6074`, float constant RVA; `0x149C`, pawn member | Caller literal and named `C_BasePlayerPawn::m_flFOVSensitivityAdjust` schema; runtime does not write the member |
 
+## First-person scope overlay: client.dll
+
+Header: [scope_overlay_offsets.h](../include/scope_overlay_offsets.h).
+Verifier: [inspect_scope_overlay.py](../tools/inspect_scope_overlay.py).
+Details: [scope overlay evidence](../tools/CS2_SCOPE_OVERLAY_EVIDENCE.md).
+
+The native producer `void(pawn*, output*)` at `0x8E15E0` writes temporary visual
+parameters. Only its render caller returning to `0x11DA311` is eligible for scope
+replacement; the FOV caller returning to `0xCEFCAF` remains native. Output byte
+`+4` gates the legacy sniper scope mask, lines and blur at the graph consumer
+`0x11EC870` / scope branch `0x11ECA98`. Output float `+0` belongs to the separate
+health-boost effect and must be preserved, along with all remaining fields.
+The caller also copies byte `+4` to stack `[rbp+0x176]`, or view-state `+0x1B6`.
+That flag gates the modern `SniperZoomStencil` and sniper crop setup too.
+Re-establish the producer, both callers, copied view-state flag and complete
+consumer branch before adapting these constants. Replacement also requires a
+fresh crosshair sample for the same validated local pawn and scoped weapon.
+
+For AUG/SG556, `CIronSightController::IsRendering` at `0x82FE70` returns a boolean.
+Its geometry and complete resolve/filter graph callers return to `0x8321E2` and
+`0x11F9976` respectively; both have native resource-free early exits when false.
+Only these two call sites may override a native true result. The controller is
+embedded in its owning weapon at schema field `m_IronSightController` (`0x1BD0`),
+so the full active local weapon identity can be checked before replacement.
+Other predicate consumers remain native. Recheck both complete caller windows,
+controller ownership, gate ABI and native early exits when updating.
+
 ## Local player models: client, engine, host, resource system and tier0
 
 Header: [model_swap_offsets.h](../include/model_swap_offsets.h).

@@ -3,6 +3,7 @@
 #include "aim_weapon_offsets.h"
 #include "zoom_offsets.h"
 #include "third_person.h"
+#include "zoom_settings.h"
 #include "cs2_offsets.h"
 #include "movement_memory.h"
 #include <atomic>
@@ -32,7 +33,11 @@ struct Publication {
     float spread=0, inaccuracy=0;
     ULONGLONG captured=0;
     bool valid=false;
+    bool thirdPerson=false;
 } publication;
+Source suppressedSource{};
+ULONGLONG suppressedTime=0;
+bool suppressed=false;
 ULONGLONG Now() noexcept {
 #ifdef CS2_SCOPED_CROSSHAIR_CHECKS
     if (testClock) return testClock();
@@ -104,6 +109,7 @@ bool ScopedCrosshairPrepare() noexcept {
     AcquireSRWLockExclusive(&stateLock);
     active.store(false,std::memory_order_release);
     publication={};
+    suppressed=false;
     const auto client=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll"));
     // Reuse the installed weapon-model build identity and byte/slot checks.
     // Scope fields/classes use the existing independently verified zoom contract.
@@ -124,13 +130,17 @@ void ScopedCrosshairCaptureCommand() noexcept {
     publication={};
     Source before{}, after{};
     AimWeaponSnapshot weapon{};
-    if (active.load(std::memory_order_acquire) && ReadSource(before) && ThirdPerson(before) &&
+    const bool sourceValid=active.load(std::memory_order_acquire) && ReadSource(before);
+    const bool thirdPerson=sourceValid && ThirdPerson(before);
+    if (sourceValid && (thirdPerson || ZoomGetSettings().removeScope) &&
         AimWeaponReadSpread(context,{before.system,before.controller,before.pawn},weapon) && Matches(before,weapon) &&
         std::isfinite(weapon.spread) && weapon.spread>=0 && weapon.spread<=1 &&
         std::isfinite(weapon.inaccuracy) && weapon.inaccuracy>=0 && weapon.inaccuracy<=1 &&
-        ReadSource(after) && after==before && ThirdPerson(after) && active.load(std::memory_order_acquire)) {
-        publication={after,weapon.spread,weapon.inaccuracy,Now(),true};
+        ReadSource(after) && after==before && ThirdPerson(after)==thirdPerson &&
+        (thirdPerson || ZoomGetSettings().removeScope) && active.load(std::memory_order_acquire)) {
+        publication={after,weapon.spread,weapon.inaccuracy,Now(),true,thirdPerson};
     }
+    if (!publication.valid || publication.thirdPerson || suppressedSource!=publication.source) suppressed=false;
     ReleaseSRWLockExclusive(&stateLock);
 }
 ScopedCrosshairDrawInput ScopedCrosshairCaptureForDraw() noexcept {
@@ -142,7 +152,10 @@ ScopedCrosshairDrawInput ScopedCrosshairCaptureForDraw() noexcept {
     // No native getter is called from the render thread. Current source checks
     // also prevent old values surviving unscoping, death or weapon recycling.
     if (active.load(std::memory_order_acquire) && publication.valid && now>=publication.captured &&
-        now-publication.captured<=250 && ReadSource(current) && current==publication.source && ThirdPerson(current) &&
+        now-publication.captured<=250 && ReadSource(current) && current==publication.source &&
+        ThirdPerson(current)==publication.thirdPerson &&
+        (publication.thirdPerson || (ZoomGetSettings().removeScope && suppressed &&
+            suppressedSource==current && now>=suppressedTime && now-suppressedTime<=250)) &&
         ReadSource(final) && final==current) {
         output.visible=true;
         output.spread=publication.spread;
@@ -153,10 +166,32 @@ ScopedCrosshairDrawInput ScopedCrosshairCaptureForDraw() noexcept {
     ReleaseSRWLockShared(&stateLock);
     return output;
 }
+namespace {
+bool SuppressNative(std::uintptr_t pawn, std::uintptr_t weapon) noexcept {
+    if (!active.load(std::memory_order_acquire) || !ZoomGetSettings().removeScope) return false;
+    // Called only from the verified native scope visual-parameter callback. Suppress
+    // only when we already have a usable replacement for the same scoped source.
+    if (!TryAcquireSRWLockExclusive(&stateLock)) return false;
+    const auto now=Now();
+    Source current{}, final{};
+    const bool replace=active.load(std::memory_order_acquire) && ZoomGetSettings().removeScope &&
+        publication.valid && !publication.thirdPerson && now>=publication.captured &&
+        now-publication.captured<=250 && ReadSource(current) && current==publication.source &&
+        ((pawn && current.pawn==pawn) || (weapon && current.weapon==weapon)) &&
+        !ThirdPerson(current) && ReadSource(final) && final==current;
+    suppressed=replace;
+    if (replace) { suppressedSource=current; suppressedTime=now; }
+    ReleaseSRWLockExclusive(&stateLock);
+    return replace;
+}
+}
+bool ScopedCrosshairSuppressNativeScope(std::uintptr_t pawn) noexcept { return SuppressNative(pawn,0); }
+bool ScopedCrosshairSuppressNativeIronSight(std::uintptr_t weapon) noexcept { return SuppressNative(0,weapon); }
 void ScopedCrosshairStop() noexcept {
     active.store(false,std::memory_order_release);
     AcquireSRWLockExclusive(&stateLock);
     publication={};
+    suppressed=false;
     ReleaseSRWLockExclusive(&stateLock);
 }
 #ifdef CS2_SCOPED_CROSSHAIR_CHECKS
@@ -166,6 +201,7 @@ void ScopedCrosshairTestConfigure(const AimWeaponContext& selected, ScopedCrossh
     testRuntime=true;
     testClock=clock;
     publication={};
+    suppressed=false;
     active.store(true,std::memory_order_release);
     ReleaseSRWLockExclusive(&stateLock);
 }

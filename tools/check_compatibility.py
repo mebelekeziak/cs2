@@ -54,6 +54,7 @@ def component_commands(game):
         ("anti_aim", "inspect_anti_aim.py", ["--client", client]),
         ("third_person", "inspect_third_person.py", ["--client", client]),
         ("scoped_zoom", "inspect_zoom.py", ["--client", client]),
+        ("scope_overlay", "inspect_scope_overlay.py", ["--client", client]),
         ("model_swap", "inspect_model_swap.py", ["--game", str(game)]),
         ("player_chams", "verify_player_chams.py", ["--game", str(game)]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),
@@ -129,6 +130,7 @@ def main():
                     ROOT / "src/model_swap.cpp", ROOT / "src/model_catalog.cpp", ROOT / "src/model_resource_validation.cpp",
                     ROOT / "src/player_chams.cpp", ROOT / "src/player_chams_material.cpp",
                     ROOT / "src/client_frame.cpp",
+                    ROOT / "src/scope_overlay.cpp", ROOT / "src/scoped_crosshair.cpp",
                     ROOT / "tools/verify_player_chams_materials.py",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]

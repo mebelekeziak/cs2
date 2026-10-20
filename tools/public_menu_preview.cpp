@@ -138,7 +138,7 @@ int wmain(int argc, wchar_t** argv) {
         AntiAimSetSettings(antiAim);
     }
     if (selectedTab == 6) ThirdPersonSetSettings({true});
-    if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50});
+    if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50, true});
     if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
     if (selectedTab == 13 || selectedTab == 14) {
         PlayerChamsSettings chams;

@@ -3,6 +3,7 @@
 #include "aim_weapon_offsets.h"
 #include "zoom_offsets.h"
 #include "cs2_offsets.h"
+#include "zoom_settings.h"
 #include <Windows.h>
 #include <array>
 #include <cstdio>
@@ -41,6 +42,7 @@ void Identity(unsigned index,std::uint32_t handle,void* entity) {
 void Reset(std::size_t table=0,int level=1) {
     pawn.fill(0);weapon.fill(0);controller.fill(0);services.fill(0);entitySystem.fill(0);bucket.fill(0);
     thirdPerson=nativeSuccess=true;nativeCalls=mutation=0;clockValue=1000;spread=.01f;inaccuracy=.02f;
+    ZoomResetSettings();
     Put(memory,ent::globals::dwLocalPlayerPawn,Address(pawn.data()));
     Put(memory,ent::globals::dwLocalPlayerController,Address(controller.data()));
     Put(memory,ent::globals::dwGameEntitySystem,Address(entitySystem.data()));
@@ -142,12 +144,73 @@ void Reject() {
     ScopedCrosshairCaptureCommand();
     Check(ScopedCrosshairCaptureForDraw().visible && ScopedCrosshairCaptureForDraw().sourceKey!=oldKey,"fresh respawn changes smoothing source key");
 }
+void FirstPersonReplacement() {
+    for (std::size_t table=0;table<std::size(zoom::ScopedWeaponVtables);++table) {
+        for (int level=1;level<=2;++level) {
+            Reset(table,level);thirdPerson=false;
+            ScopedCrosshairCaptureCommand();
+            Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+                "default first-person view preserves native scope");
+            auto settings=ZoomGetSettings();settings.removeScope=true;ZoomSetSettings(settings);
+            Check(!settings.enabled && !ScopedCrosshairSuppressNativeScope(Address(pawn.data())),
+                "scope removal independent of zoom override still waits for fresh accuracy");
+            ScopedCrosshairCaptureCommand();
+            Check(!ScopedCrosshairCaptureForDraw().visible,"first-person crosshair waits for native scope suppression");
+            Check(!ScopedCrosshairSuppressNativeScope(Address(controller.data())),
+                "render parameters for another pawn never replace the local scope");
+            Check(!ScopedCrosshairSuppressNativeIronSight(Address(controller.data())) &&
+                !ScopedCrosshairSuppressNativeIronSight(0),
+                "foreign or absent iron-sight weapon cannot borrow local replacement");
+            const auto originalPawn=pawn;const auto originalWeapon=weapon;
+            Check(ScopedCrosshairSuppressNativeScope(Address(pawn.data())),"each scoped weapon/stage can replace native scope");
+            const auto input=ScopedCrosshairCaptureForDraw();
+            Check(input.visible && input.spread==spread && input.inaccuracy==inaccuracy,
+                "first person uses the same copied spread response");
+            Check(ScopedCrosshairSuppressNativeIronSight(Address(weapon.data())) && ScopedCrosshairCaptureForDraw().visible,
+                "exact active local iron-sight weapon can publish same replacement");
+            Check(pawn==originalPawn && weapon==originalWeapon && nativeCalls==1,
+                "scope callback/draw perform no native getters or entity writes");
+            settings.removeScope=false;ZoomSetSettings(settings);
+            Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+                "disable immediately restores native scope and hides first-person replacement");
+        }
+    }
+    for (unsigned which=1;which<22;++which) {
+        Reset();thirdPerson=false;
+        auto settings=ZoomGetSettings();settings.removeScope=true;ZoomSetSettings(settings);
+        ScopedCrosshairCaptureCommand();
+        Check(ScopedCrosshairSuppressNativeScope(Address(pawn.data())),"first-person source valid before transition");
+        Change(which);
+        Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+            "source change preserves native scope instead of hiding without replacement");
+    }
+    Reset();thirdPerson=false;
+    auto settings=ZoomGetSettings();settings.removeScope=true;ZoomSetSettings(settings);
+    ScopedCrosshairCaptureCommand();ScopedCrosshairSuppressNativeScope(Address(pawn.data()));
+    clockValue=1251;
+    Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+        "expired first-person accuracy restores native scope");
+    Reset();thirdPerson=false;ZoomSetSettings(settings);
+    ScopedCrosshairCaptureCommand();ScopedCrosshairSuppressNativeScope(Address(pawn.data()));
+    thirdPerson=true;
+    Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+        "camera transition waits for fresh command capture");
+    ScopedCrosshairCaptureCommand();
+    Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && ScopedCrosshairCaptureForDraw().visible,
+        "existing third-person crosshair remains available without suppressing a native first-person paint");
+    Reset();thirdPerson=false;ZoomSetSettings(settings);
+    ScopedCrosshairCaptureCommand();ScopedCrosshairSuppressNativeScope(Address(pawn.data()));ScopedCrosshairStop();
+    Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())) && !ScopedCrosshairCaptureForDraw().visible,
+        "stop disarms scope replacement and crosshair together");
+}
 DWORD WINAPI CaptureThread(void*) { ScopedCrosshairCaptureCommand();return 0; }
 DWORD WINAPI StopThread(void*) { ScopedCrosshairStop();return 0; }
 void StopDrains() {
     Reset();nativeEntered=CreateEventW(nullptr,TRUE,FALSE,nullptr);nativeRelease=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    thirdPerson=false;auto settings=ZoomGetSettings();settings.removeScope=true;ZoomSetSettings(settings);
     HANDLE capture=CreateThread(nullptr,0,&CaptureThread,nullptr,0,nullptr);
     Check(WaitForSingleObject(nativeEntered,2000)==WAIT_OBJECT_0,"native command capture entered");
+    Check(!ScopedCrosshairSuppressNativeScope(Address(pawn.data())),"in-flight command capture preserves native scope without reentrant locking");
     HANDLE stop=CreateThread(nullptr,0,&StopThread,nullptr,0,nullptr);
     Check(WaitForSingleObject(stop,30)==WAIT_TIMEOUT,"cooperative stop waits for native read");
     SetEvent(nativeRelease);
@@ -180,7 +243,7 @@ int main() {
     if (!memory) return 2;
     client=Address(memory);
     Check(!ScopedCrosshairPrepare(),"unverified installation leaves capture inactive");
-    Positive();Reject();StopDrains();ScopedCrosshairStop();
+    Positive();Reject();FirstPersonReplacement();StopDrains();ScopedCrosshairStop();
     VirtualFree(memory,0,MEM_RELEASE);
     std::printf("scoped crosshair: %u checks, %u failures\n",checks,failures);
     return failures ? 1 : 0;

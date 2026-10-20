@@ -1,4 +1,37 @@
-# Scoped third-person crosshair — October 18, 2026
+# Custom scoped crosshair — October 18 and 20, 2026
+
+## First-person replacement extension — October 20
+
+The optional `ZoomSettings::removeScope` extends capture eligibility to a scoped
+first-person local pawn, independently of the magnification/sensitivity override.
+The existing third-person path remains automatic. A command sample records the
+camera mode and rejects a mode change around its native accuracy getters.
+
+First-person drawing additionally requires a successful native scope suppression
+publication for the exact same source, at most 250 ms old. The native module calls
+`ScopedCrosshairSuppressNativeScope(pawn)` for a live native sniper-scope output
+in its verified render caller, or `ScopedCrosshairSuppressNativeIronSight(weapon)`
+for the AUG/SG556 geometry/graph rendering predicates. These check the full current source,
+matching pawn argument, fresh copied accuracy, first-person camera and current
+remove-scope setting. It uses try-lock acquisition, preserving native output if
+capture currently owns the state. Native source and output details are in
+[scope overlay evidence](CS2_SCOPE_OVERLAY_EVIDENCE.md).
+
+Disabling removal, missing/stale accuracy, changed sources or camera modes and
+cooperative stop prevent first-person replacement. Capture failure clears the
+suppression publication. No native accuracy getter runs from the render producer
+or Present. The same drawing/layout code and source key remain in use. The native
+module changes one temporary output byte for sniper scopes or the transient
+rendering predicate result for iron sights; no pawn/weapon scope state is written.
+
+The extended state fixture exercises both scope stages/all supported source
+classes, matching native pawn, waiting for suppression before drawing, independent
+zoom/removal settings, immediate source/camera/setting invalidation, expiry and
+suppression during an in-flight command getter. Native suppression itself is
+limited to the sniper graphic flag and the two verified iron-sight geometry/graph
+callers. Other consumers of the native predicates retain their original behavior.
+
+## Original third-person implementation — October 18
 
 This is a client D3D11 overlay feature using the existing installed Windows
 AMD64 contracts. Installation:

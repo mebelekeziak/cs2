@@ -498,6 +498,8 @@ void DrawPublicMenu() {
                     zoomChanged |= slider("Zoom sensitivity", "##ZoomSensitivity", zoom.sensitivity, 0, 100, "%.0f%%");
                     ImGui::EndDisabled();
                     ImGui::TextWrapped("Zoom sensitivity: 0%% uses unscoped sensitivity, 100%% uses CS2 native scoped sensitivity. Values between blend the two.");
+                    zoomChanged |= FeatureCheckbox("Remove scope overlay", zoom.removeScope);
+                    ImGui::TextWrapped("Replaces the first-person scope overlay with the custom crosshair. Independent of zoom override.");
                     if (zoomChanged) ZoomSetSettings(zoom);
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }
