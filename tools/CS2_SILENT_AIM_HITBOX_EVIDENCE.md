@@ -1,5 +1,12 @@
 # Named animated aim landmarks
 
+**October 20 extension:** multi-selection now includes torso and bilateral limb
+capsules. Stomach uses the verified `spine_0` stomach region, replacing the
+historical `spine_2` landmark below. See
+[multi-hitgroup evidence](CS2_AIM_MULTIHITGROUP_EVIDENCE.md) for the current table,
+asset provenance and verification. The original single-selector investigation
+is preserved below as historical evidence.
+
 Installed Windows AMD64 client **1.41.9.1**, client/server **2000932**, Steam
 build **25947352**, inspected October 15, 2026. Client path:
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.

@@ -1,5 +1,10 @@
 # Authored capsule geometry and sampled hitchance
 
+The October 20 [multi-hitgroup extension](CS2_AIM_MULTIHITGROUP_EVIDENCE.md)
+reuses these resource/pose contracts for verified torso and bilateral limb
+names. The historical `spine_2` lower-torso landmark below is chest group 2;
+the current Stomach selection uses authored stomach `spine_0` instead.
+
 Inspected October 16, 2026, Windows AMD64 client 1.41.9.1. This is installed-file
 evidence and synthetic verification; no new live client run is claimed.
 

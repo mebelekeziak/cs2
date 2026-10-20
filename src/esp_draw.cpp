@@ -13,9 +13,9 @@
 namespace {
 EspSettings settings;
 EspLogCallback logger = nullptr;
-bool keysDown[7]{};
+bool keysDown[6]{};
 constexpr float nearW = 0.01f;
-constexpr int keys[7] = { VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7 };
+constexpr int keys[6] = { VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F7 };
 
 struct ClipPoint { float x, y, w; };
 
@@ -339,27 +339,28 @@ void EspDrawPreview(float width, float height) {
     draw->PopClipRect();
 }
 
+bool EspHandleHotkey(int virtualKey) noexcept {
+    switch (virtualKey) {
+    case VK_F1: settings.enabled = !settings.enabled; break;
+    case VK_F2: settings.names = !settings.names; break;
+    case VK_F3: settings.boxes = !settings.boxes; break;
+    case VK_F4: settings.distance = !settings.distance; break;
+    case VK_F5: settings.health = !settings.health; break;
+    case VK_F7: settings.armor = !settings.armor; break;
+    default: return false;
+    }
+    LogSettings();
+    return true;
+}
+
 void EspPollControls(bool foreground) noexcept {
-    bool changed = false;
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 6; ++i) {
         const bool down = (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
         // Record held keys even in the background so focus changes do not toggle settings.
         const bool pressed = foreground && down && !keysDown[i];
         keysDown[i] = down;
-        if (!pressed) continue;
-        changed = true;
-        switch (i) {
-        case 0: settings.enabled = !settings.enabled; break;
-        case 1: settings.names = !settings.names; break;
-        case 2: settings.boxes = !settings.boxes; break;
-        case 3: settings.distance = !settings.distance; break;
-        case 4: settings.health = !settings.health; break;
-        case 5: settings.teammates = !settings.teammates; break;
-        case 6: settings.armor = !settings.armor; break;
-        default: break;
-        }
+        if (pressed) EspHandleHotkey(keys[i]);
     }
-    if (changed) LogSettings();
 }
 
 EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {

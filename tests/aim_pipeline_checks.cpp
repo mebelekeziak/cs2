@@ -1,4 +1,5 @@
 #include "silent_aim.h"
+#include "menu_input.h"
 #include "silent_aim_command.h"
 #include "silent_aim_settings.h"
 #include "silent_aim_target.h"
@@ -39,6 +40,12 @@ unsigned traceCalls = 0;
 bool multipleTargets = false, reverseCandidates = false;
 int rejectedCandidate = 0; // 1 cover, 2 range/chance, 3 missing geometry.
 unsigned weaponReads = 0;
+bool multiHitgroups = false, reverseHitgroups = false;
+std::array<int, 2> groupDamage{90, 40}; // Head, chest.
+std::array<float, 2> groupRadius{4, 4};
+int coveredGroup = -1, unavailableGroup = -1;
+int targetHealth = 100;
+bool healthChangeDuringTrace = false;
 bool recorderSawNativePress = false, builderSawPrimary = false, checksumSawCancelledPrimary = false;
 std::vector<std::string> telemetry;
 std::vector<ShotLogMetadata> shotMetadata;
@@ -180,6 +187,9 @@ struct World {
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
+        multiHitgroups = reverseHitgroups = false; groupDamage = {90, 40}; groupRadius = {4, 4};
+        coveredGroup = unavailableGroup = -1;
+        targetHealth = 100; healthChangeDuringTrace = false;
         quickstopAvailable = true; wideFallback = false;
         damageAvailable = damageCurrent = true; damageChangeDuringTrace = false; predictedHp = 34;
         quickstopBrakes.clear(); quickstopCommands.clear();
@@ -534,7 +544,7 @@ void OcclusionChecks(World& world) {
     Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(manual);
-    Expect(traceCalls == 1 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1) &&
+    Expect(traceCalls == 3 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1) &&
         shotMetadata.size() == 1 && !shotMetadata[0].damageValid,
         "manual prediction observes cover without gating physical primary input or manual aiming");
 
@@ -591,9 +601,9 @@ void WideFovChecks(World& world) {
     Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(manual);
-    Expect(Equal(manual.History(), Desired()) && traceCalls == 1 && shotMetadata.size() == 1 && !shotMetadata[0].automatic &&
-        !shotMetadata[0].damageValid,
-        "manual primary keeps nearest-landmark behavior while its damage estimate observes cover");
+    Expect(Equal(manual.History(), AimAngles{0, 180, 0}) && traceCalls == 3 && shotMetadata.size() == 1 && !shotMetadata[0].automatic &&
+        shotMetadata[0].damageValid && shotMetadata[0].targetPawn == 0x8005,
+        "manual primary ranks clear modeled shots while preserving physical input");
 }
 
 void EnableQuickstop() {
@@ -742,37 +752,50 @@ void QuickstopChecks(World& world) {
 
 // Replace only engine-dependent snapshots and effects. The integrated suite
 // links the real runtime, real history/ownership code, settings and estimator.
-bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
+bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
     const AimBoneContext&, AimTarget& target, AimTargetDiagnostics* diagnostics,
     AimTargetFilter filter, void* filterContext) noexcept {
-    if (!selectAvailable) return false;
+    if (!selectAvailable || !hitgroups) return false;
+    const int capturedHealth = targetHealth;
     target = {};
     for (int i = 0; i < (multipleTargets ? 2 : 1); ++i) {
         const bool fallback = multipleTargets && (reverseCandidates ? i == 0 : i == 1);
+        for (int group = 0; group < (multiHitgroups ? 2 : 1); ++group) {
+        const int index = multiHitgroups ? (reverseHitgroups ? 1 - group : group) : 1;
+        const auto hitbox = index == 0 ? AimHitbox::Head : AimHitbox::Chest;
+        if (!(hitgroups & AimHitgroupBit(index == 0 ? AimHitgroup::Head : AimHitgroup::Chest))) continue;
         AimTarget candidate{};
         candidate.local.pawn = source.pawn;
         candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = localPawnHandle;
         candidate.enemy.pawn = fallback ? 0x556000 : 0x555000;
         candidate.enemy.pawnHandle = fallback ? 0x8005 : selectedPawnHandle;
+        candidate.enemy.health = capturedHealth;
         candidate.point = fallback ? AimVector{-100, 0, 0} : AimVector{100, 10, 0}; candidate.hitbox = hitbox;
+        if (multiHitgroups && index == 1) candidate.point.y = 20;
         candidate.solution = SilentAimSolve(candidate.eye, candidate.point, view, fov);
-        if (!candidate.solution.valid || (target.solution.valid && candidate.solution.separation >= target.solution.separation)) continue;
+        if (!candidate.solution.valid || (!filter && target.solution.valid && candidate.solution.separation >= target.solution.separation)) continue;
         if (filter && !filter(candidate, filterContext)) continue;
         target = candidate;
+        }
     }
     if (diagnostics) diagnostics->stage = target.solution.valid ? "selected" : "outside FOV";
-    return target.solution.valid;
+    return target.solution.valid && SilentAimTargetValid(source, target);
 }
-bool SilentAimTargetValid(const AimSource&, const AimTarget&) noexcept { return targetCurrent; }
+bool SilentAimTargetValid(const AimSource&, const AimTarget& target) noexcept {
+    return targetCurrent && target.enemy.health == targetHealth;
+}
 bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTargetVolume& volume,
     const char*& reason) noexcept {
-    if (!volumeAvailable || (rejectedCandidate == 3 && target.enemy.pawnHandle == 0x8004)) {
+    const int group = target.hitbox == AimHitbox::Head ? 0 : 1;
+    if (!volumeAvailable || (multiHitgroups && unavailableGroup == group) ||
+        (rejectedCandidate == 3 && target.enemy.pawnHandle == 0x8004)) {
         reason = "fixture geometry unavailable"; return false;
     }
     volume = {};
     volume.center = target.point;
     if (rejectedCandidate == 2 && target.enemy.pawnHandle == 0x8004) volume.center = {2000, 200, 0};
     volume.capsule = {{volume.center.x, volume.center.y, -2}, {volume.center.x, volume.center.y, 2}, 4};
+    if (multiHitgroups) volume.capsule.radius = groupRadius[group];
     if (wideFallback && target.enemy.pawnHandle == 0x8005) volume.capsule.radius = 80;
     volume.pawn = target.enemy.pawn; volume.valid = true;
     reason = "fixture authored capsule";
@@ -792,8 +815,9 @@ AimDamageResult AimDamageRead(const AimDamageContext&, const AimSource&, const A
     AimDamageResult result{};
     result.valid = damageAvailable;
     result.healthDamage = rejectedCandidate == 4 && target.enemy.pawnHandle == 0x8004 ? 10 : predictedHp;
+    if (multiHitgroups) result.healthDamage = groupDamage[target.hitbox == AimHitbox::Head ? 0 : 1];
     result.damage = static_cast<float>(result.healthDamage) + .75f;
-    result.input.hitgroup = 2;
+    result.input.hitgroup = target.hitbox == AimHitbox::Head ? 1 : 2;
     result.reason = damageAvailable ? "direct-bullet damage estimate" : "fixture damage unavailable";
     return result;
 }
@@ -804,7 +828,10 @@ AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource
     ++traceCalls;
     if (changeDuringTrace) weaponCurrent = false;
     if (damageChangeDuringTrace) damageCurrent = false;
-    const bool clear = pathClear && !(rejectedCandidate == 1 && target.enemy.pawnHandle == 0x8004);
+    if (healthChangeDuringTrace) targetHealth = 40;
+    const int group = target.hitbox == AimHitbox::Head ? 0 : 1;
+    const bool clear = pathClear && !(multiHitgroups && coveredGroup == group) &&
+        !(rejectedCandidate == 1 && target.enemy.pawnHandle == 0x8004);
     return {pathAvailable, pathAvailable && clear, clear ? 1.0f : 0.25f,
         !pathAvailable ? "occlusion trace unavailable" : clear ? "direct path clear" : "target occluded"};
 }
@@ -889,6 +916,139 @@ void DamageGateChecks(World& world) {
         "unknown damage remains unknown in manual metadata without suppressing manual aim");
 }
 
+void MultihitgroupChecks(World& world) {
+    const auto configure = [&] {
+        world.Reset(); multiHitgroups = true;
+        auto settings = SilentAimGetSettings();
+        settings.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest);
+        settings.hitchance = 0; settings.samples = 256;
+        SilentAimSetSettings(settings);
+    };
+    for (bool reversed : {false, true}) {
+        configure(); reverseHitgroups = reversed;
+        Command powerful;
+        world.Prepare(powerful); world.History(powerful);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1 && weaponReads == 1,
+            "higher expected head damage wins with one weapon sample; reversed=" + std::to_string(reversed));
+
+        configure(); reverseHitgroups = reversed; weapon.inaccuracy = .1f; groupRadius = {1, 8};
+        Command reliable;
+        world.Prepare(reliable); world.History(reliable);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+            "reliable chest outranks smaller high-damage head even at greater angle; reversed=" + std::to_string(reversed));
+
+        configure(); reverseHitgroups = reversed; groupDamage = {90, 10};
+        auto settings = SilentAimGetSettings(); settings.minDamage = 40; SilentAimSetSettings(settings);
+        Command minimum;
+        world.Prepare(minimum); world.History(minimum);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1,
+            "minimum damage excludes otherwise selected chest independently of order");
+
+        configure(); reverseHitgroups = reversed; weapon.inaccuracy = .1f; groupRadius = {1, 8};
+        settings = SilentAimGetSettings(); settings.hitchance = 50; settings.quickstop = true;
+        SilentAimSetSettings(settings);
+        Command ready;
+        world.Prepare(ready); world.History(ready);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2 && LastBrake(false),
+            "shootable chest takes priority over head needing quickstop");
+
+        for (int missing = 0; missing < 2; ++missing) {
+            configure(); reverseHitgroups = reversed;
+            if (missing == 0) coveredGroup = 0; else unavailableGroup = 0;
+            Command fallback;
+            world.Prepare(fallback); world.History(fallback);
+            Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+                "covered or unsupported head leaves chest selectable; case=" + std::to_string(missing));
+        }
+    }
+
+    configure(); weapon.inaccuracy = .1f; groupRadius = {5, 20}; groupDamage = {400, 100};
+    Command overkill;
+    world.Prepare(overkill); world.History(overkill);
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+        "expected effective damage caps overkill at current health and favors reliable lethal chest");
+
+    configure();
+    auto settings = SilentAimGetSettings(); settings.hitgroups = AimHitgroupBit(AimHitgroup::Chest);
+    SilentAimSetSettings(settings);
+    Command disabledHead;
+    world.Prepare(disabledHead); world.History(disabledHead);
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+        "disabled head never enters selection even when damage would rank higher");
+
+    configure();
+    Command changed;
+    world.Prepare(changed);
+    settings = SilentAimGetSettings(); settings.hitgroups = AimHitgroupBit(AimHitgroup::Chest);
+    SilentAimSetSettings(settings); world.History(changed);
+    Expect(checksumCalls == 1 && shotMetadata.empty() && Equal(changed.Buttons(), changed.originalButtons),
+        "mask change cancels pending automatic shot through owned checksum path");
+
+    configure();
+    settings = SilentAimGetSettings(); settings.hitgroups = 0; settings.quickstop = true;
+    SilentAimSetSettings(settings);
+    Command empty;
+    world.Prepare(empty);
+    Expect(recorderCalls == 0 && LastBrake(false) && std::strstr(SilentAimStatus(), "no hitgroups selected"),
+        "explicit empty mask neither aims nor starts quickstop or autofire");
+
+    configure();
+    settings = SilentAimGetSettings(); settings.autofire = false; settings.minDamage = 100;
+    settings.hitchance = 100; SilentAimSetSettings(settings);
+    groupRadius = {1, 8}; weapon.inaccuracy = .1f;
+    Command manual;
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(manual);
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].automatic && shotMetadata[0].predictedHitgroup == 2,
+        "manual multigroup aiming ranks expected damage without imposing automatic thresholds");
+
+    configure();
+    Command healthChanged;
+    world.Prepare(healthChanged); targetHealth = 40; world.History(healthChanged);
+    Expect(checksumCalls == 1 && shotMetadata.empty() && Equal(healthChanged.Buttons(), healthChanged.originalButtons),
+        "remaining health change invalidates ranked pending shot before publication");
+
+    configure(); healthChangeDuringTrace = true;
+    Command healthCallback;
+    world.Prepare(healthCallback);
+    Expect(recorderCalls == 0 && LastBrake(false),
+        "health change during native trace cannot publish an old health-cap ranking");
+
+    configure(); weapon.inaccuracy = .1f; groupRadius = {1, 8};
+    settings = SilentAimGetSettings(); settings.hitchance = 100; settings.quickstop = true;
+    SilentAimSetSettings(settings);
+    Command braking;
+    world.Prepare(braking);
+    Expect(recorderCalls == 0 && LastBrake(true) && !telemetry.empty() &&
+        telemetry.back().find("hitbox=1 ") != std::string::npos,
+        "all-below-hitchance candidates choose the best expected-damage clear quickstop fallback");
+}
+
+void MenuCaptureChecks(World& world) {
+    world.Reset();
+    menuInputCapturing.store(true, std::memory_order_release);
+    Command menuOpen;
+    world.Prepare(menuOpen); world.History(menuOpen);
+    Expect(recorderCalls == 0 && shotMetadata.empty() && LastBrake(false) &&
+        Equal(menuOpen.Buttons(), menuOpen.originalButtons),
+        "menu capture prevents new automatic attacks, quickstop and aimed publication");
+    menuInputCapturing.store(false, std::memory_order_release);
+    world.Reset();
+    Command pending;
+    world.Prepare(pending);
+    menuInputCapturing.store(true, std::memory_order_release);
+    world.History(pending);
+    Expect(checksumCalls == 1 && shotMetadata.empty() && pending.Index() == -1 &&
+        Equal(pending.Buttons(), pending.originalButtons) && Equal(pending.History(), Command::PhysicalView),
+        "opening menu cancels an already requested automatic attack through native checksum restoration");
+    menuInputCapturing.store(false, std::memory_order_release);
+    world.Reset();
+    Command resumed;
+    world.Prepare(resumed); world.History(resumed);
+    Expect(recorderCalls == 1 && shotMetadata.size() == 1,
+        "closing menu restores automatic command processing without changing feature settings");
+}
+
 int main() {
     World world;
     GateChecks(world);
@@ -900,6 +1060,8 @@ int main() {
     WideFovChecks(world);
     QuickstopChecks(world);
     DamageGateChecks(world);
+    MultihitgroupChecks(world);
+    MenuCaptureChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

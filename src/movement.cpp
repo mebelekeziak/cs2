@@ -1,4 +1,5 @@
 #include "movement.h"
+#include "menu_input.h"
 #include "anti_aim.h"
 #include "silent_aim.h"
 #include "scoped_crosshair.h"
@@ -601,6 +602,9 @@ void Process(void* input, void* commandPointer) noexcept {
     ++callbacks;
     QueryPerformanceCounter(&stageStart);
     airborneWork = false;
+    if (MenuInputCapturing()) {
+        Reset(); State("menu owns input"); return;
+    }
     if (reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) != client ||
         reinterpret_cast<std::uintptr_t>(input) != client + off::Input) {
         enabled.store(false, std::memory_order_release); Reset(); State("client/input identity changed; movement stopped"); return;

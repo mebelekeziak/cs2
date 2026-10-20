@@ -179,6 +179,7 @@ struct GeometryFixture {
         Put(scene+ent::CGameSceneNode::m_flAbsScale,1.0f);
         Put(pawn+silent_aim_target_offsets::ViewOffset,AimVector{0,0,64});
         AimActor result{};
+        result.health = 100;
         result.controller=controller; result.pawn=pawn; result.scene=scene; result.collision=Address(storage.collision);
         result.controllerHandle=controllerHandle; result.pawnHandle=pawnHandle; result.team=static_cast<std::uint8_t>(team);
         return result;
@@ -280,10 +281,43 @@ void GeometryChecks() {
     Put(pawnIdentity+ent::entity_layout::HandleOffset,std::uint32_t{0x10004});
     Expect(!fixture.Read(volume,reason) && !std::strcmp(reason,"stale target"),"recycled pawn handle cannot reuse previous geometry");
 }
+void LimbGeometryChecks() {
+    struct Landmark { AimHitbox hitbox; const char* name; };
+    constexpr Landmark landmarks[]{
+        {AimHitbox::LeftUpperArm,"arm_upper_l"}, {AimHitbox::RightUpperArm,"arm_upper_r"},
+        {AimHitbox::LeftForearm,"arm_lower_l"}, {AimHitbox::RightForearm,"arm_lower_r"},
+        {AimHitbox::LeftHand,"hand_l"}, {AimHitbox::RightHand,"hand_r"},
+        {AimHitbox::LeftThigh,"leg_upper_l"}, {AimHitbox::RightThigh,"leg_upper_r"},
+        {AimHitbox::LeftCalf,"leg_lower_l"}, {AimHitbox::RightCalf,"leg_lower_r"},
+        {AimHitbox::LeftFoot,"ankle_l"}, {AimHitbox::RightFoot,"ankle_r"},
+        {AimHitbox::LowerChest,"spine_1"}, {AimHitbox::MiddleChest,"spine_2"},
+        {AimHitbox::Stomach,"spine_0"}
+    };
+    for (const auto& landmark : landmarks) {
+        GeometryFixture fixture;
+        fixture.target.hitbox = landmark.hitbox;
+        strcpy_s(fixture.chestName.data(), fixture.chestName.size(), landmark.name);
+        const auto box = Address(fixture.boxes) + geom::BoxStride;
+        // Mirrored endpoint ordering is valid; no static limb radius is used.
+        Put(box + geom::Minimum, AimVector{0,0,0});
+        Put(box + geom::Maximum, AimVector{-10,0,0});
+        Put(box + geom::Radius, 2.3f);
+        AimTargetVolume volume{};
+        const char* reason = "";
+        Expect(fixture.Read(volume, reason) && volume.valid && Near(volume.center.x, 995) &&
+            Near(volume.capsule.radius, 2.3f) &&
+            SilentAimTargetVolumeValid(fixture.source, fixture.target, volume),
+            "selected limb/torso name copies and validates its own mirrored authored capsule");
+        fixture.chestName[0] = 'x';
+        Expect(!SilentAimTargetVolumeValid(fixture.source, fixture.target, volume),
+            "in-place limb bone-name mutation invalidates the copied capsule");
+    }
+}
+
 }
 
 int main() {
-    IntersectionChecks(); SamplingChecks(); GeometryChecks();
+    IntersectionChecks(); SamplingChecks(); GeometryChecks(); LimbGeometryChecks();
     std::printf("Hitchance checks: %d; failures: %d\n",checks,failures);
     return failures ? 1 : 0;
 }

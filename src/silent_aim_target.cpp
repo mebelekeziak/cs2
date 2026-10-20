@@ -42,7 +42,7 @@ bool Live(const AimActor& actor) noexcept {
     int health = 0;
     std::uint8_t life = 1, team = 0, dormant = 1;
     std::uintptr_t scene = 0, collision = 0;
-    return Read(actor.pawn + off::C_BaseEntity::m_iHealth, health) && health > 0 && health <= 1000 &&
+    return Read(actor.pawn + off::C_BaseEntity::m_iHealth, health) && health > 0 && health <= 1000 && health == actor.health &&
         Read(actor.pawn + off::C_BaseEntity::m_lifeState, life) && life == 0 &&
         Read(actor.pawn + off::C_BaseEntity::m_iTeamNum, team) && team == actor.team && (team == 2 || team == 3) &&
         Read(actor.pawn + off::C_BaseEntity::m_pGameSceneNode, scene) && scene && scene == actor.scene &&
@@ -77,7 +77,9 @@ bool Actor(std::uintptr_t system, std::uintptr_t controller, AimActor& actor,
     actor.controller = controller; actor.pawn = pawn.entity;
     actor.controllerHandle = owner.handle; actor.pawnHandle = handle;
     failure = "actor life/team/scene/collision";
-    if (!(Read(actor.pawn + off::C_BaseEntity::m_iTeamNum, actor.team) &&
+    if (!(Read(actor.pawn + off::C_BaseEntity::m_iHealth, actor.health) &&
+        actor.health > 0 && actor.health <= 1000 &&
+        Read(actor.pawn + off::C_BaseEntity::m_iTeamNum, actor.team) &&
         Read(actor.pawn + off::C_BaseEntity::m_pGameSceneNode, actor.scene) &&
         Read(actor.pawn + off::C_BaseEntity::m_pCollision, actor.collision) && Live(actor))) return false;
     failure = "none";
@@ -123,17 +125,35 @@ bool Lookup(const AimBoneContext& bones, std::uintptr_t pawn, const char* name, 
     __try { index = bones.lookup(reinterpret_cast<void*>(pawn), name); return index >= 0; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+const char* SelectedName(AimHitbox hitbox) noexcept {
+    namespace bone = silent_aim_hitbox_offsets;
+    switch (hitbox) {
+    case AimHitbox::Head: return bone::HeadName;
+    case AimHitbox::Chest: return bone::ChestName;
+    case AimHitbox::Stomach: return bone::StomachName;
+    case AimHitbox::Pelvis: return bone::PelvisName;
+    case AimHitbox::LowerChest: return bone::LowerChestName;
+    case AimHitbox::MiddleChest: return bone::MiddleChestName;
+    case AimHitbox::LeftUpperArm: return bone::LeftUpperArmName;
+    case AimHitbox::RightUpperArm: return bone::RightUpperArmName;
+    case AimHitbox::LeftForearm: return bone::LeftForearmName;
+    case AimHitbox::RightForearm: return bone::RightForearmName;
+    case AimHitbox::LeftHand: return bone::LeftHandName;
+    case AimHitbox::RightHand: return bone::RightHandName;
+    case AimHitbox::LeftThigh: return bone::LeftThighName;
+    case AimHitbox::RightThigh: return bone::RightThighName;
+    case AimHitbox::LeftCalf: return bone::LeftCalfName;
+    case AimHitbox::RightCalf: return bone::RightCalfName;
+    case AimHitbox::LeftFoot: return bone::LeftFootName;
+    case AimHitbox::RightFoot: return bone::RightFootName;
+    default: return nullptr;
+    }
+}
 bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, AimVector& point,
                AimTargetDiagnostics* diagnostics) noexcept {
     namespace bone = silent_aim_hitbox_offsets;
-    const char* name = nullptr;
-    switch (hitbox) {
-    case AimHitbox::Head: name = bone::HeadName; break;
-    case AimHitbox::Chest: name = bone::ChestName; break;
-    case AimHitbox::Stomach: name = bone::StomachName; break;
-    case AimHitbox::Pelvis: name = bone::PelvisName; break;
-    default: if (diagnostics) diagnostics->boneFailure = "invalid hitbox"; return false;
-    }
+    const char* name = SelectedName(hitbox);
+    if (!name) { if (diagnostics) diagnostics->boneFailure = "invalid hitbox"; return false; }
     std::uintptr_t vtable = 0, query = 0, handle = 0, model = 0, array = 0;
     int count = 0, index = -1;
     const auto fail = [&](const char* reason) noexcept {
@@ -174,11 +194,15 @@ bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, A
 }
 }
 
-bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
+static bool SelectTargetLandmarks(const AimSource& source, const AimAngles& view, float fov, std::uint32_t landmarks,
                            const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
                            AimTargetFilter filter, void* filterContext) noexcept {
     target = {};
     if (diagnostics) { *diagnostics = {}; diagnostics->stage = "local actor"; }
+    if (!landmarks) {
+        if (diagnostics) diagnostics->stage = "no hitgroups selected";
+        return false;
+    }
     AimActor local{};
     AimVector offset{}, eye{};
     const char* failure = "entity system unavailable";
@@ -224,29 +248,49 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
                 if (diagnostics) ++diagnostics->teammates;
                 continue;
             }
-            if (!BonePoint(enemy, hitbox, bones, point, diagnostics)) {
-                if (diagnostics) ++diagnostics->boneRejected;
-                continue;
+            for (unsigned landmark = 0; landmark < static_cast<unsigned>(AimHitbox::Count); ++landmark) {
+                if (!(landmarks & (1u << landmark))) continue;
+                const auto hitbox = static_cast<AimHitbox>(landmark);
+                AimActor landmarkEnemy = enemy;
+                if (!BonePoint(landmarkEnemy, hitbox, bones, point, diagnostics)) {
+                    if (diagnostics) ++diagnostics->boneRejected;
+                    continue;
+                }
+                const auto solution = SilentAimSolve(eye, point, view, fov);
+                if (!solution.valid) {
+                    if (diagnostics) ++diagnostics->outsideFov;
+                    continue;
+                }
+                if (!filter && target.solution.valid && solution.separation >= target.solution.separation) continue;
+                if (!Same(source.system, landmarkEnemy)) continue;
+                const AimTarget candidate{local, landmarkEnemy, solution, eye, point, hitbox};
+                if (filter && !filter(candidate, filterContext)) {
+                    if (diagnostics) ++diagnostics->eligibilityRejected;
+                    continue;
+                }
+                target = candidate;
             }
-            const auto solution = SilentAimSolve(eye, point, view, fov);
-            if (!solution.valid) {
-                if (diagnostics) ++diagnostics->outsideFov;
-                continue;
-            }
-            if (target.solution.valid && solution.separation >= target.solution.separation) continue;
-            if (!Same(source.system, enemy)) continue;
-            const AimTarget candidate{local, enemy, solution, eye, point, hitbox};
-            if (filter && !filter(candidate, filterContext)) {
-                if (diagnostics) ++diagnostics->eligibilityRejected;
-                continue;
-            }
-            target = candidate;
         }
     }
     if (diagnostics) diagnostics->stage = target.solution.valid ? "target revalidation" : "no candidate selected";
     const bool valid = target.solution.valid && SilentAimTargetValid(source, target);
     if (valid && diagnostics) diagnostics->stage = "selected";
     return valid;
+}
+bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
+                           const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
+                           AimTargetFilter filter, void* filterContext) noexcept {
+    std::uint32_t landmarks = 0;
+    for (unsigned i = 0; i < static_cast<unsigned>(AimHitbox::Count); ++i)
+        if (AimHitboxGroup(static_cast<AimHitbox>(i)) & hitgroups) landmarks |= 1u << i;
+    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext);
+}
+bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
+                           const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
+                           AimTargetFilter filter, void* filterContext) noexcept {
+    const auto index = static_cast<unsigned>(hitbox);
+    const auto landmarks = index < static_cast<unsigned>(AimHitbox::Count) ? 1u << index : 0u;
+    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext);
 }
 bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noexcept {
     AimVector offset{}, eye{}, point{};
@@ -263,16 +307,7 @@ bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noex
 
 namespace {
 namespace geometry = aim_geometry_offsets;
-const char* SelectedName(AimHitbox hitbox) noexcept {
-    namespace bone = silent_aim_hitbox_offsets;
-    switch (hitbox) {
-    case AimHitbox::Head: return bone::HeadName;
-    case AimHitbox::Chest: return bone::ChestName;
-    case AimHitbox::Stomach: return bone::StomachName;
-    case AimHitbox::Pelvis: return bone::PelvisName;
-    default: return nullptr;
-    }
-}
+
 bool Name(std::uintptr_t pointer, const char* expected) noexcept {
     if (!pointer || !expected) return false;
     // Read only the exact expected length plus terminator. Resource strings can

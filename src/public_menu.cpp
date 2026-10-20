@@ -285,13 +285,31 @@ void DrawPublicMenu() {
     if (ImGui::Begin("##PublicMenu", nullptr, flags)) {
         ImGui::SetWindowPos(ClampPosition(ImGui::GetWindowPos(), size, viewport));
 
-        // A dedicated slim strip keeps settings clicks from moving the panel.
-        ImGui::InvisibleButton("##DragMenu", { std::max(1.0f, ImGui::GetContentRegionAvail().x), 8 });
+        // The whole visible title bar, including its side/top padding, is a
+        // drag target. Controls below it keep their own mouse interaction.
+        constexpr float titleHeight = 28;
+        const ImVec2 windowOrigin = ImGui::GetWindowPos();
+        ImGui::PushClipRect(windowOrigin, { windowOrigin.x + size.x, windowOrigin.y + size.y }, false);
+        ImGui::SetCursorPos({ 0, 0 });
+        ImGui::InvisibleButton("##DragMenu", { size.x, titleHeight });
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             const ImVec2 position = ImGui::GetWindowPos();
             const ImVec2 delta = ImGui::GetIO().MouseDelta;
             ImGui::SetWindowPos(ClampPosition({ position.x + delta.x, position.y + delta.y }, size, viewport));
         }
+        const ImVec2 titleOrigin = ImGui::GetWindowPos();
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(titleOrigin, { titleOrigin.x + size.x, titleOrigin.y + titleHeight },
+                            ImGui::GetColorU32(ImGuiCol_FrameBg));
+        draw->AddText({ titleOrigin.x + ImGui::GetStyle().WindowPadding.x,
+                        titleOrigin.y + (titleHeight - ImGui::GetTextLineHeight()) * 0.5f },
+                      ImGui::GetColorU32(ImGuiCol_Text), "CS2");
+        draw->AddLine({ titleOrigin.x, titleOrigin.y + titleHeight },
+                      { titleOrigin.x + size.x, titleOrigin.y + titleHeight },
+                      ImGui::GetColorU32(ImGuiCol_Border));
+        ImGui::PopClipRect();
+        ImGui::SetCursorPos({ ImGui::GetStyle().WindowPadding.x,
+                             titleHeight + ImGui::GetStyle().ItemSpacing.y });
 
         // Store the selected category in this window's context-owned state.
         const ImGuiID tabId = ImGui::GetID("##SelectedCategory");
@@ -566,13 +584,21 @@ void DrawPublicMenu() {
             if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
                 ImGui::BeginDisabled(!settings.enabled);
-                ImGui::TextUnformatted("Hitbox");
-                constexpr const char* hitboxes[]{"Head", "Chest", "Stomach", "Pelvis"};
-                int hitbox = static_cast<int>(settings.hitbox);
-                ImGui::SetNextItemWidth(-1);
-                if (ImGui::Combo("##AimHitbox", &hitbox, hitboxes, 4)) {
-                    settings.hitbox = static_cast<AimHitbox>(hitbox); changed = true;
+                ImGui::TextUnformatted("Hitgroups");
+                constexpr const char* hitgroups[]{"Head", "Chest", "Stomach", "Pelvis", "Arms", "Hands", "Legs", "Feet"};
+                if (ImGui::BeginTable("##AimHitgroups", 2, ImGuiTableFlags_SizingStretchSame)) {
+                    for (unsigned index = 0; index < std::size(hitgroups); ++index) {
+                        ImGui::TableNextColumn();
+                        const auto bit = 1u << index;
+                        bool enabled = (settings.hitgroups & bit) != 0;
+                        if (ImGui::Checkbox(hitgroups[index], &enabled)) {
+                            settings.hitgroups = enabled ? settings.hitgroups | bit : settings.hitgroups & ~bit;
+                            changed = true;
+                        }
+                    }
+                    ImGui::EndTable();
                 }
+                if (!settings.hitgroups) ImGui::TextDisabled("Select at least one hitgroup to acquire a target.");
                 ImGui::TextUnformatted("Aim FOV");
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::SliderFloat("##AimFov", &settings.fov, 0.1f, 180, "%.1f degrees");
@@ -594,6 +620,7 @@ void DrawPublicMenu() {
                 ImGui::TextWrapped("Quickstop brakes ready shots below minimum hitchance and releases movement during weapon cooldown.");
                 ImGui::TextWrapped("Autofire requires a clear direct path, minimum hitchance and minimum predicted damage. Manual fire remains available.");
                 ImGui::TextWrapped("Damage estimates account for range, hitgroup and armor on unobstructed shots.");
+                ImGui::TextWrapped("Selected hitgroups compete using damage and hitchance after the configured minimums pass.");
                 ImGui::TextWrapped("Cover blocks autofire, including penetrable walls. Hitchance estimates spread; server timing can still prevent a hit.");
                 ImGui::TextDisabled("F10  Silent aim");
                 ImGui::Separator();

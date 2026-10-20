@@ -151,8 +151,11 @@ int FakeLookup(void*, const char* name) {
     if (missingBone) return -1;
     if (!std::strcmp(name, "head_0")) return 3;
     if (!std::strcmp(name, "spine_3")) return 1;
-    if (!std::strcmp(name, "spine_2")) return 2;
+    if (!std::strcmp(name, "spine_0")) return 2;
     if (!std::strcmp(name, "pelvis")) return 0;
+    constexpr const char* limbs[]{"arm_upper_l", "arm_upper_r", "arm_lower_l", "arm_lower_r", "hand_l", "hand_r",
+        "leg_upper_l", "leg_upper_r", "leg_lower_l", "leg_lower_r", "ankle_l", "ankle_r", "spine_1", "spine_2"};
+    for (unsigned i = 0; i < std::size(limbs); ++i) if (!std::strcmp(name, limbs[i])) return 4 + i;
     return -1;
 }
 struct ActorFixture {
@@ -161,7 +164,7 @@ struct ActorFixture {
     std::array<unsigned char, 0x500> scene{};
     std::array<unsigned char, 0x80> collision{};
     std::array<unsigned char, 0x200> model{};
-    std::array<unsigned char, 4 * bone::BoneStride> pose{};
+    std::array<unsigned char, 18 * bone::BoneStride> pose{};
     std::uintptr_t modelPointer = 0;
 };
 struct TargetFixture {
@@ -195,10 +198,10 @@ struct TargetFixture {
         Put(Address(actor.pawn) + silent_aim_target_offsets::ViewOffset, AimVector{0, 0, 64});
         actor.modelPointer = Address(actor.model);
         Put(Address(actor.scene) + bone::ModelState + bone::ModelHandle, Address(actor.modelPointer));
-        Put(Address(actor.model) + bone::BoneCount, 4);
+        Put(Address(actor.model) + bone::BoneCount, 18);
         Put(Address(actor.scene) + bone::BoneArray, Address(actor.pose));
-        for (unsigned i = 0; i < 4; ++i)
-            Put(Address(actor.pose) + i * bone::BoneStride, AimVector{1000, y, 40 + i * 8.0f});
+        for (unsigned i = 0; i < 18; ++i)
+            Put(Address(actor.pose) + i * bone::BoneStride, AimVector{1000, y, i < 4 ? 40 + i * 8.0f : 64.0f});
     }
     TargetFixture(bool playerSkeleton = false) {
         strcpy_s(controllerName.data(), controllerName.size(), "cs_player_controller");
@@ -262,8 +265,11 @@ void TargetChecks() {
     Put(Address(fixture.enemy.scene) + bone::BoneArray, Address(fixture.enemy.pose));
     Put(Address(fixture.enemy.model) + bone::BoneCount, 1);
     Expect(!fixture.Select(target), "bone index is checked against current model count");
-    Put(Address(fixture.enemy.model) + bone::BoneCount, 4);
+    Put(Address(fixture.enemy.model) + bone::BoneCount, 18);
     Expect(fixture.Select(target) && SilentAimTargetValid(fixture.source, target), "fresh target validates before command commit");
+    Put(Address(fixture.enemy.pawn) + ent::C_BaseEntity::m_iHealth, 40);
+    Expect(!SilentAimTargetValid(fixture.source, target), "health change invalidates copied health used for damage-cap ranking");
+    Put(Address(fixture.enemy.pawn) + ent::C_BaseEntity::m_iHealth, 100);
     const auto query = fixture.vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)];
     fixture.vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)] = 0;
     Expect(!SilentAimTargetValid(fixture.source, target), "changed skeleton type invalidates selected pose");
@@ -313,12 +319,48 @@ void FilteredTargetChecks() {
         "eligibility cannot admit candidates outside the configured FOV");
     context.rejectedPawn = 0; context.calls = 0;
     Expect(SilentAimSelectTarget(fixture.source, {}, 180, AimHitbox::Head, fixture.bones, target,
-        &diagnostics, &Eligible, &context) && target.enemy.pawn == Address(fixture.enemy.pawn) && context.calls == 1,
-        "farther candidates do not perform expensive eligibility checks after a nearer candidate qualifies");
+        &diagnostics, &Eligible, &context) && context.calls == 2 && target.enemy.pawn == Address(fixture.farther.pawn),
+        "eligibility sees farther candidates and owns ranking after an earlier candidate qualifies");
+}
+struct LandmarkRanking { unsigned calls = 0; AimHitbox chosen = AimHitbox::RightHand; };
+bool ChooseLandmark(const AimTarget& target, void* opaque) noexcept {
+    auto& ranking = *static_cast<LandmarkRanking*>(opaque);
+    ++ranking.calls;
+    return target.hitbox == ranking.chosen;
+}
+void MultiHitgroupChecks() {
+    TargetFixture fixture;
+    AimTarget target{};
+    AimTargetDiagnostics diagnostics{};
+    const auto hands = AimHitgroupBit(AimHitgroup::Hands);
+    Expect(!SilentAimSelectTarget(fixture.source, {}, 180, 0u, fixture.bones, target, &diagnostics) &&
+        diagnostics.controllers == 0 && !target.solution.valid, "empty group mask selects no target");
+    Expect(!SilentAimSelectTarget(fixture.source, {}, 180, 0x100u, fixture.bones, target),
+        "unknown group bits cannot select a landmark");
+    Put(Address(fixture.enemy.pose) + 8 * bone::BoneStride, AimVector{1000, 0, 64});
+    Put(Address(fixture.enemy.pose) + 9 * bone::BoneStride, AimVector{1000, 100, 64});
+    LandmarkRanking ranking{};
+    Expect(SilentAimSelectTarget(fixture.source, {}, 180, hands, fixture.bones, target, &diagnostics,
+        &ChooseLandmark, &ranking) && target.hitbox == AimHitbox::RightHand && ranking.calls == 4 &&
+        target.enemy.boneIndex == 9, "both hands on each enemy reach eligibility despite an earlier closer landmark");
+    Expect(target.enemy.health == 100, "candidate copies target health for expected damage ranking");
+    Put(Address(fixture.enemy.pose) + 8 * bone::BoneStride, AimVector{-1000, 0, 64});
+    Put(Address(fixture.farther.pose) + 8 * bone::BoneStride, AimVector{-1000, 0, 64});
+    Expect(SilentAimSelectTarget(fixture.source, {}, 10, hands, fixture.bones, target) &&
+        target.hitbox == AimHitbox::RightHand, "off-FOV left hand does not exclude independent right-hand selection");
+    for (unsigned i = 0; i < static_cast<unsigned>(AimHitbox::Count); ++i) {
+        const auto hitbox = static_cast<AimHitbox>(i);
+        Expect(AimHitboxGroup(hitbox) != 0 && fixture.Select(target, hitbox, 180) && target.hitbox == hitbox,
+            "every supported landmark has a group and independent named-bone selection");
+    }
+    ranking.calls = 0; ranking.chosen = AimHitbox::Chest;
+    Expect(SilentAimSelectTarget(fixture.source, {}, 180, AimHitgroupBit(AimHitgroup::Chest), fixture.bones,
+        target, &diagnostics, &ChooseLandmark, &ranking) && ranking.calls == 6,
+        "chest group evaluates upper, middle and lower authored torso landmarks per enemy");
 }
 }
 int main() {
-    MathChecks(); CommandChecks(); TargetChecks(); FilteredTargetChecks();
+    MathChecks(); CommandChecks(); TargetChecks(); FilteredTargetChecks(); MultiHitgroupChecks();
     std::printf("Silent aim failures: %d\n", failures);
     return failures ? 1 : 0;
 }

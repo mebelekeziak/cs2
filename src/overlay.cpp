@@ -31,6 +31,7 @@
 #include "shot_logging.h"
 #include "anti_aim.h"
 #include "third_person.h"
+#include "third_person_settings.h"
 #include "scoped_crosshair.h"
 #include "scoped_crosshair_draw.h"
 #include "zoom.h"
@@ -47,6 +48,7 @@
 #include "world_environment_lighting.h"
 #if !CS2_DIAGNOSTIC_UI
 #include "public_menu.h"
+#include "menu_input.h"
 #endif
 
 #ifndef CS2_WORKSPACE_ROOT
@@ -98,6 +100,13 @@ UINT targetWidth = 0, targetHeight = 0;
 DWORD callbackTls = TLS_OUT_OF_INDEXES;
 bool InCallback() { return TlsGetValue(callbackTls) != nullptr; }
 void SetInCallback(bool active) { TlsSetValue(callbackTls, active ? reinterpret_cast<void*>(1) : nullptr); }
+
+void RequestStop() {
+    stopRequested.store(true, std::memory_order_release);
+#if !CS2_DIAGNOSTIC_UI
+    MenuInputStop();
+#endif
+}
 
 void Log(const char* format, ...) {
     if (logFile == INVALID_HANDLE_VALUE) return;
@@ -227,6 +236,7 @@ void ReleaseRendererOnOwner(const char* reason) {
     PlayerReaderInvalidate(reason);
     WorldPostprocessRelease();
 #if !CS2_DIAGNOSTIC_UI
+    MenuInputRequest(selectedWindow, false);
     menuMouseActive = false;
     menuMouseArmed = false;
     menuKeyboardActive = false;
@@ -250,6 +260,9 @@ void ReleaseRendererOnOwner(const char* reason) {
 }
 
 void CleanupOnRenderThread(const char* reason) {
+#if !CS2_DIAGNOSTIC_UI
+    MenuInputStop();
+#endif
     ScopedCrosshairStop();
     ScopedCrosshairReset();
     MovementStop(reason);
@@ -294,7 +307,7 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
     HRESULT result = chain->GetDevice(IID_PPV_ARGS(&device));
     if (FAILED(result)) {
         Log("Real chain GetDevice(ID3D11Device) failed hr=0x%08lx; stop requested", result);
-        stopRequested.store(true); return false;
+        RequestStop(); return false;
     }
     device->GetImmediateContext(&context);
     ComPtr<IDXGIDevice> dxgiDevice;
@@ -325,7 +338,7 @@ bool InitializeOnRenderThread(IDXGISwapChain* chain) {
     QueryPerformanceCounter(&previousCounter);
     if (!objects || !CreateRenderTarget(chain)) {
         Log("Renderer initialization incomplete; cooperative stop requested");
-        stopRequested.store(true); return false;
+        RequestStop(); return false;
     }
     return true;
 }
@@ -427,6 +440,11 @@ void PollMenuMouse(bool foreground) {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
     io.AddMouseButtonEvent(0, active && menuMouseArmed && down);
+    float horizontal = 0, vertical = 0;
+    MenuInputDrainWheel(horizontal, vertical);
+    if (active) io.AddMouseWheelEvent(horizontal, vertical);
+    // SDL shows the native cursor on its event owner; avoid a second software cursor.
+    io.MouseDrawCursor = false;
     menuMouseActive = active;
 }
 
@@ -498,11 +516,11 @@ void DrawFrame(IDXGISwapChain* chain) {
     if (deviceObjectsDirty) {
         ImGui_ImplDX11_InvalidateDeviceObjects();
         if (!ImGui_ImplDX11_CreateDeviceObjects()) {
-            Log("Device object recreation failed; stop requested"); stopRequested.store(true); return;
+            Log("Device object recreation failed; stop requested"); RequestStop(); return;
         }
         deviceObjectsDirty = false;
     }
-    if (!renderTarget && !CreateRenderTarget(chain)) { stopRequested.store(true); return; }
+    if (!renderTarget && !CreateRenderTarget(chain)) { RequestStop(); return; }
     const bool foreground = GetForegroundWindow() == selectedWindow;
     EspPollControls(foreground);
     MovementPollControls(foreground);
@@ -511,8 +529,11 @@ void DrawFrame(IDXGISwapChain* chain) {
     const bool insertNow = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
     const bool endNow = (GetAsyncKeyState(VK_END) & 0x8000) != 0;
     if (foreground && insertNow && !insertDown) { visible = !visible; Log("Overlay visibility=%s", visible ? "shown" : "hidden"); }
-    if (foreground && endNow && !endDown) { stopRequested.store(true); Log("End requested cooperative shutdown"); }
+    if (foreground && endNow && !endDown) { RequestStop(); Log("End requested cooperative shutdown"); }
     insertDown = insertNow; endDown = endNow;
+#if !CS2_DIAGNOSTIC_UI
+    MenuInputRequest(selectedWindow, visible && foreground && !stopRequested.load());
+#endif
     if (stopRequested.load()) return;
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
@@ -568,7 +589,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("F1 ESP: %s | range: unlimited", settings.enabled ? "ON" : "OFF");
         ImGui::Text("F2 names: %s | F3 boxes: %s", settings.names ? "ON" : "OFF", settings.boxes ? "ON" : "OFF");
         ImGui::Text("F4 distance: %s | F5 health: %s", settings.distance ? "ON" : "OFF", settings.health ? "ON" : "OFF");
-        ImGui::Text("F6 teammates: %s | F7 armor: %s", settings.teammates ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
+        ImGui::Text("F6 third person: %s | F7 armor: %s", ThirdPersonGetSettings().enabled ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
         const auto movement = MovementGetSettings();
         ImGui::Text("F8 bunnyhop: %s | F9 autostrafe: %s | hold Space", movement.bunnyhop ? "ON" : "OFF", movement.autostrafe ? "ON" : "OFF");
         if (!players.distanceAvailable) ImGui::TextUnformatted("Distance unavailable: awaiting local live pawn.");
@@ -624,14 +645,14 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
                     selectedChain = chain;
                     InitializeOnRenderThread(chain);
                 } else {
-                    stopRequested.store(true);
+                    RequestStop();
                     Log("Replacement swapchain arrived on tid=%lu owner=%lu; stop pending original thread", GetCurrentThreadId(), renderThread);
                 }
             }
         }
         if (selectedChain == chain && !stopped.load()) {
             if (renderThread != GetCurrentThreadId()) {
-                stopRequested.store(true);
+                RequestStop();
                 if (!threadChangeLogged) {
                     Log("Render ownership changed old=%lu current=%lu; rendering halted. Cleanup awaits original render thread; DLL resident.",
                         renderThread, GetCurrentThreadId());
@@ -643,7 +664,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
                 if (FAILED(chain->GetDesc(&currentDesc)) || currentDesc.OutputWindow != selectedWindow ||
                     !IsWindow(selectedWindow) || FAILED(chain->GetDevice(IID_PPV_ARGS(&currentDevice)))) {
                     Log("Selected swapchain/window lifecycle no longer valid; stop requested");
-                    stopRequested.store(true);
+                    RequestStop();
                 } else if (device && currentDevice.Get() != device.Get()) {
                     Log("Device identity changed for chain=%p old=%p new=%p; rebuilding on owner thread", chain, device.Get(), currentDevice.Get());
                     ReleaseRendererOnOwner("device replacement/address reuse");
@@ -690,7 +711,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
         if (chain == selectedChain && !stopped.load()) {
             Log("Present device loss hr=0x%08lx removal_reason=0x%08lx; stop requested", result,
                 device ? device->GetDeviceRemovedReason() : result);
-            stopRequested.store(true);
+            RequestStop();
             if (GetCurrentThreadId() == renderThread) CleanupOnRenderThread("device loss");
         }
     }
@@ -715,7 +736,7 @@ HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* chain, UINT count, UINT wid
         result = originalResize(chain, count, width, height, format, flags);
         if (chain == selectedChain) {
             Log("ResizeBuffers result=0x%08lx; target recreation deferred to next Present", result);
-            if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) stopRequested.store(true);
+            if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) RequestStop();
         }
     }
     SetInCallback(false);
@@ -749,6 +770,11 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_CreateHook(resize, reinterpret_cast<LPVOID>(&HookResize), reinterpret_cast<LPVOID*>(&originalResize));
     if (status != MH_OK) { Log("MH_CreateHook failed=%s; no enabled hooks, resident allocations retained", MH_StatusToString(status)); startState.store(-1); return 5; }
     const bool movementPrepared = MovementPrepare(&EspLog);
+#if !CS2_DIAGNOSTIC_UI
+    const bool menuInputPrepared = MenuInputPrepare(&EspLog);
+    EspLog(menuInputPrepared ? "MENU_INPUT_READY cursor/input capture queued on SDL event owner" :
+        "MENU_INPUT_UNAVAILABLE native cursor/input hooks could not be prepared");
+#endif
     const bool consoleControlsPrepared = aimConsole && ConsoleControlPrepare();
     const bool aimPrepared = SilentAimPrepare(&EspLog);
     const bool shotLoggingPrepared = ShotLoggingPrepare(&EspLog);
@@ -769,6 +795,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (status == MH_OK) status = MH_QueueEnableHook(resize);
     if (status == MH_OK) status = MH_ApplyQueued();
     if (status != MH_OK) {
+#if !CS2_DIAGNOSTIC_UI
+        MenuInputStop();
+#endif
         ConsoleControlStop();
         MovementStop("partial hook activation failure");
         SilentAimStop("partial hook activation failure");
@@ -784,7 +813,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         WorldLightingSwitchesStop("partial hook activation failure");
         WorldLightingStop("partial hook activation failure");
         WorldEnvironmentLightingStop("partial hook activation failure");
-        stopRequested.store(true);
+        RequestStop();
         Log("Hook activation failed=%s; stop requested; retain all code/trampolines (partial activation possible)", MH_StatusToString(status));
         startState.store(-1); return 6;
     }
@@ -810,7 +839,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 }
 
 extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
-    stopRequested.store(true, std::memory_order_release);
+    RequestStop();
     ConsoleControlStop();
     MovementStop("explicit overlay stop request");
     SilentAimStop("explicit overlay stop request");

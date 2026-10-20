@@ -64,15 +64,7 @@ ImVec2 OptionPosition(int row) {
     position.y += static_cast<float>(row) * ImGui::GetFrameHeightWithSpacing();
     return position;
 }
-ImVec2 TabPosition(int index) {
-    const ImVec2 start = Menu()->DC.CursorStartPos;
-    const ImGuiStyle& style = ImGui::GetStyle();
-    const float contentWidth = Menu()->Size.x - style.WindowPadding.x * 2;
-    const float tabWidth = std::fmin(100.0f, std::fmax(1.0f,
-        (contentWidth - style.ItemSpacing.x * 5) / 6));
-    return { start.x + tabWidth * 0.5f + static_cast<float>(index) * (tabWidth + style.ItemSpacing.x),
-             start.y + 8 + style.ItemSpacing.y + 12.5f };
-}
+ImVec2 TabPosition(int index);
 ImVec2 MovementPosition(int row) {
     ImVec2 position = EnablePosition();
     position.y += static_cast<float>(row) * ImGui::GetFrameHeightWithSpacing();
@@ -95,6 +87,10 @@ ImRect ControlRect(const char* label, ImGuiWindow* window = nullptr, ImGuiID ite
         bounds.Add(outline->VtxBuffer[outline->IdxBuffer[index]].pos);
     return bounds;
 }
+ImVec2 TabPosition(int index) {
+    constexpr const char* labels[]{"Visuals", "Movement", "World", "Lighting", "Aim", "Configs"};
+    return ControlRect(labels[index], Menu()).GetCenter();
+}
 void ClickControl(const char* label, float fraction = 0.5f, ImGuiWindow* window = nullptr, ImGuiID itemId = 0) {
     if (!window) window = Body();
     ImRect rect = ControlRect(label, window, itemId);
@@ -108,6 +104,10 @@ void ClickControl(const char* label, float fraction = 0.5f, ImGuiWindow* window 
         rect = ControlRect(label, window, itemId);
     }
     Click({ rect.Min.x + rect.GetWidth() * fraction, rect.GetCenter().y });
+}
+void ClickHitgroup(const char* label) {
+    const auto table = Body()->GetID("##AimHitgroups");
+    ClickControl(label, 0.5f, Body(), ImHashStr(label, 0, table));
 }
 void SelectDirectionalMode(const char* label) {
     ClickControl("##DirectionalLightmaps");
@@ -680,9 +680,11 @@ int main() {
     ClickControl("##AimSamples", 0.9f);
     ClickControl("##AimMinDamage", 0.9f);
     ClickControl("Quickstop");
+    ClickHitgroup("Head");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256 &&
-           !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
-           "disabled aim master blocks autofire, quickstop, damage and hitchance edits");
+           !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1 &&
+           SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest),
+           "disabled aim master blocks autofire, quickstop, damage, hitchance and hitgroup edits");
     ClickControl("##AimFov", 0.8f);
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
@@ -691,12 +693,21 @@ int main() {
            "silent aim master and FOV respond to mouse input");
     ClickControl("##AimFov", 0.99f);
     Expect(SilentAimGetSettings().fov == 180, "silent aim FOV slider reaches 180 degrees");
-    for (const auto hitbox : { AimHitbox::Head, AimHitbox::Stomach, AimHitbox::Pelvis, AimHitbox::Chest }) {
-        const char* name = hitbox == AimHitbox::Head ? "Head" : hitbox == AimHitbox::Stomach ? "Stomach" :
-            hitbox == AimHitbox::Pelvis ? "Pelvis" : "Chest";
-        SelectEspCombo("##AimHitbox", name, static_cast<int>(hitbox));
-        Expect(SilentAimGetSettings().hitbox == hitbox, "hitbox selector publishes selected body region");
+    Expect(SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest), "hitgroup selection starts with chest only");
+    constexpr const char* hitgroupNames[]{"Head", "Chest", "Stomach", "Pelvis", "Arms", "Hands", "Legs", "Feet"};
+    std::uint32_t expectedHitgroups = AimHitgroupBit(AimHitgroup::Chest);
+    for (unsigned index = 0; index < std::size(hitgroupNames); ++index) {
+        ClickHitgroup(hitgroupNames[index]);
+        expectedHitgroups ^= 1u << index;
+        Expect(SilentAimGetSettings().hitgroups == expectedHitgroups, "hitgroup checkbox toggles independently and preserves other groups");
     }
+    ClickHitgroup("Chest");
+    Expect(SilentAimGetSettings().hitgroups == AimAllHitgroups, "every hitgroup can be enabled simultaneously");
+    for (const char* name : hitgroupNames) ClickHitgroup(name);
+    Expect(SilentAimGetSettings().hitgroups == 0, "all hitgroups can be deselected without re-enabling a fallback");
+    ClickHitgroup("Head");
+    ClickHitgroup("Chest");
+    Expect(SilentAimGetSettings().hitgroups == 3, "head and chest remain selected together after empty selection");
     ClickControl("Quickstop");
     Expect(!SilentAimGetSettings().quickstop, "quickstop checkbox waits for enabled autofire");
     ClickControl("##AimMinDamage", 0.9f);
@@ -969,15 +980,53 @@ int main() {
     Click(TabPosition(0));
     Frame();
 
-    const ImVec2 origin = Menu()->Pos;
-    Move({ origin.x + 35, origin.y + 14 });
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
-    Frame();
-    Move({ origin.x + 115, origin.y + 84 });
-    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
-    Frame();
-    Expect(Menu()->Pos.x > origin.x && Menu()->Pos.y > origin.y,
-           "drag strip moves the menu through real mouse events");
+    const auto beforeDragging = EspGetSettings();
+    // Exercise corners, side padding, center and the lower edge of the bar.
+    constexpr ImVec2 dragPoints[]{ {1, 1}, {0.5f, 0.5f}, {-1, 1}, {1, -1}, {-1, -1} };
+    for (const auto point : dragPoints) {
+        const ImVec2 origin = Menu()->Pos;
+        const ImRect bar = ControlRect("##DragMenu", Menu());
+        const ImVec2 start {
+            // DebugLocateItem outlines expand by four pixels around the item.
+            point.x == 0.5f ? bar.GetCenter().x : point.x < 0 ? bar.Max.x - 6 : bar.Min.x + 6,
+            point.y == 0.5f ? bar.GetCenter().y : point.y < 0 ? bar.Max.y - 6 : bar.Min.y + 6
+        };
+        Move(start);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        Frame();
+        Move({ start.x + 24, start.y + 16 });
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        Frame();
+        Expect(Menu()->Pos.x == origin.x + 24 && Menu()->Pos.y == origin.y + 16,
+               "every part of the title bar drags through real mouse events");
+    }
+    Expect(EspGetSettings() == beforeDragging, "title bar dragging preserves settings");
+
+    io.DisplaySize = { 1000, 300 };
+    Frame(); Frame();
+    for (const int category : { 0, 2, 3, 4, 5 }) {
+        Click(TabPosition(category));
+        ImGui::SetScrollY(Body(), 0);
+        Frame(); Frame();
+        Expect(Body()->ScrollMax.y > 0 && Body()->ScrollbarY,
+               "overflowing settings expose a vertical scrollbar");
+        Move(Body()->InnerRect.GetCenter());
+        io.AddMouseWheelEvent(0, -2);
+        Frame(); Frame();
+        Expect(Body()->Scroll.y > 0, "mouse wheel scrolls each overflowing settings category");
+        io.AddMouseWheelEvent(0, 100);
+        Frame(); Frame();
+        Expect(Body()->Scroll.y == 0, "mouse wheel returns each settings category to the top");
+        const ImRect scrollbar = ImGui::GetWindowScrollbarRect(Body(), ImGuiAxis_Y);
+        Move({ scrollbar.GetCenter().x, scrollbar.Min.y + 6 });
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        Frame();
+        Move({ scrollbar.GetCenter().x, scrollbar.Max.y - 6 });
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        Frame(); Frame();
+        Expect(Body()->Scroll.y > 0, "scrollbar dragging reaches lower settings");
+    }
+    Click(TabPosition(0));
 
     io.DisplaySize = { 180, 150 };
     Frame();

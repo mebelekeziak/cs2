@@ -1,5 +1,6 @@
 #include "esp_draw.h"
 #include <imgui.h>
+#include <Windows.h>
 
 #include <cmath>
 #include <algorithm>
@@ -15,6 +16,33 @@ int failures = 0;
 void Expect(bool result, const char* label) {
     std::printf("%s %s\n", result ? "PASS" : "FAIL", label);
     failures += !result;
+}
+
+void HotkeyChecks() {
+    const EspSettings original = EspGetSettings();
+    for (bool teammates : {false, true}) {
+        EspSettings configured = original;
+        configured.teammates = teammates;
+        EspSetSettings(configured);
+        const auto before = EspGetSettings();
+        Expect(!EspHandleHotkey(VK_F6) && EspGetSettings() == before,
+               "third-person F6 never changes teammate visibility or any ESP setting");
+    }
+    const struct { int key; bool EspSettings::*field; } assignments[]{
+        {VK_F1, &EspSettings::enabled}, {VK_F2, &EspSettings::names},
+        {VK_F3, &EspSettings::boxes}, {VK_F4, &EspSettings::distance},
+        {VK_F5, &EspSettings::health}, {VK_F7, &EspSettings::armor}
+    };
+    for (const auto& assignment : assignments) {
+        const auto before = EspGetSettings();
+        auto expected = before;
+        expected.*assignment.field = !(expected.*assignment.field);
+        Expect(EspHandleHotkey(assignment.key) && EspGetSettings() == expected,
+               "remaining ESP hotkey changes only its assigned option");
+        Expect(EspHandleHotkey(assignment.key) && EspGetSettings() == before,
+               "second ESP hotkey press restores its assigned option");
+    }
+    EspSetSettings(original);
 }
 
 void SetBounds(EspVec3 (&corners)[8], float offset = 0) {
@@ -191,6 +219,7 @@ void SettingsBounds() {
 } // namespace
 
 int main() {
+    HotkeyChecks();
     SettingsBounds();
     EspMatrix4x4 matrix{};
     for (int i = 0; i < 4; ++i) matrix.m[i][i] = 1;

@@ -12,6 +12,8 @@ import struct
 
 from inspect_cs2 import VERIFIED_CLIENT_SHA256
 from inspect_silent_aim_targets import CLIENT
+from inspect_surface_tint import extract
+from inspect_aim_geometry import ASSET, ASSET_SHA256
 from verify_sky_draw import mapped, primary_vtable, require_bytes
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -36,8 +38,24 @@ SCHEMA = {
 NAMES = {
     "HeadName": (0x1BA2648, "head_0"),
     "ChestName": (0x1BA2638, "spine_3"),
-    "StomachName": (0x1BA2630, "spine_2"),
+    "StomachName": (0x1BA2620, "spine_0"),
     "PelvisName": (0x1BA2614, "pelvis"),
+    "LowerChestName": (0x1BA2628, "spine_1"),
+    "MiddleChestName": (0x1BA2630, "spine_2"),
+    "LeftUpperArmName": (0x1C8CD10, "arm_upper_l"),
+    "RightUpperArmName": (0x1C8CD20, "arm_upper_r"),
+    "LeftForearmName": (0x1C8CD30, "arm_lower_l"),
+    "RightForearmName": (0x1C8CD40, "arm_lower_r"),
+    "LeftHandName": (0x1C8CD4C, "hand_l"),
+    "RightHandName": (0x1C8CD54, "hand_r"),
+    # Upper-leg names are established by the hash-matched authored SAS resource,
+    # not a standalone client string. See CS2_AIM_MULTIHITGROUP_EVIDENCE.md.
+    "LeftThighName": (None, "leg_upper_l"),
+    "RightThighName": (None, "leg_upper_r"),
+    "LeftCalfName": (0x1C8CD70, "leg_lower_l"),
+    "RightCalfName": (0x1C8CD80, "leg_lower_r"),
+    "LeftFootName": (0x1C8CD90, "ankle_l"),
+    "RightFootName": (0x1C8CD98, "ankle_r"),
 }
 
 
@@ -101,7 +119,7 @@ def evidence(image, base):
     if model_member != values["m_modelState"] + values["m_hModel"]:
         raise SystemExit("Named schema model member and native handle consumer disagree")
     for label, (rva, name) in NAMES.items():
-        if string(rva) != name:
+        if rva is not None and string(rva) != name:
             raise SystemExit(f"Changed native bone name: {label}")
     return {
         "LookupBone": 0x952940, "SkeletonVtable": table, "PlayerSkeletonVtable": player_table,
@@ -135,11 +153,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client", type=pathlib.Path, default=CLIENT)
     parser.add_argument("--header", type=pathlib.Path, default=ROOT / "include/silent_aim_hitbox_offsets.h")
+    parser.add_argument("--vpk", type=pathlib.Path, default=CLIENT.parents[2] / "pak01_dir.vpk")
     args = parser.parse_args()
     raw, image, base, pe = mapped(args.client)
     digest = hashlib.sha256(raw).hexdigest()
     if digest != VERIFIED_CLIENT_SHA256:
         raise SystemExit("Installed client changed: independently reverify animated aim landmarks")
+    asset_hash = hashlib.sha256(extract(args.vpk, ASSET)).hexdigest()
+    if asset_hash != ASSET_SHA256:
+        raise SystemExit("Installed authored landmark example changed: repeat asset inspection")
     constants = evidence(image, base)
     verify_header(args.header, constants)
     print(json.dumps({
@@ -147,6 +169,7 @@ def main():
         "pe_timestamp": hex(struct.unpack_from("<I", raw, pe + 8)[0]),
         "size_of_image": hex(len(image)), "verified_header": str(args.header),
         "constants": {name: hex(value) for name, value in constants.items()},
+        "authored_asset": ASSET, "authored_asset_sha256": asset_hash,
         "bone_names": {name: value for name, (_, value) in NAMES.items()},
         "verified_code": list(CHECKS), "live_observation": False,
         "scope": "dynamic named cached animated bone landmarks; no authored hitbox volume center claims",

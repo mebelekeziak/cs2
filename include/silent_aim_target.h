@@ -13,6 +13,7 @@ struct AimActor {
     std::uint32_t controllerHandle = UINT32_MAX, pawnHandle = UINT32_MAX;
     std::uint8_t team = 0;
     int boneIndex = -1;
+    int health = 0;
 };
 struct AimTarget {
     AimActor local{}, enemy{};
@@ -46,9 +47,29 @@ struct AimTargetDiagnostics {
 };
 
 // Command-owner only; no shared ESP snapshots or retained engine pointers.
-// An optional eligibility filter lets rejected candidates leave selection open
-// for another enemy. Ranking among accepted candidates stays angular.
+constexpr std::uint32_t AimHitboxGroup(AimHitbox hitbox) noexcept {
+    switch (hitbox) {
+    case AimHitbox::Head: return AimHitgroupBit(AimHitgroup::Head);
+    case AimHitbox::Chest: case AimHitbox::LowerChest: case AimHitbox::MiddleChest:
+        return AimHitgroupBit(AimHitgroup::Chest);
+    case AimHitbox::Stomach: return AimHitgroupBit(AimHitgroup::Stomach);
+    case AimHitbox::Pelvis: return AimHitgroupBit(AimHitgroup::Pelvis);
+    case AimHitbox::LeftUpperArm: case AimHitbox::RightUpperArm:
+    case AimHitbox::LeftForearm: case AimHitbox::RightForearm: return AimHitgroupBit(AimHitgroup::Arms);
+    case AimHitbox::LeftHand: case AimHitbox::RightHand: return AimHitgroupBit(AimHitgroup::Hands);
+    case AimHitbox::LeftThigh: case AimHitbox::RightThigh:
+    case AimHitbox::LeftCalf: case AimHitbox::RightCalf: return AimHitgroupBit(AimHitgroup::Legs);
+    case AimHitbox::LeftFoot: case AimHitbox::RightFoot: return AimHitgroupBit(AimHitgroup::Feet);
+    default: return 0;
+    }
+}
+// With a filter, every in-FOV landmark is offered: returning true replaces the
+// current best. The callback owns ranking. Without a filter, ranking is angular.
 using AimTargetFilter = bool (*)(const AimTarget&, void*) noexcept;
+bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
+                           const AimBoneContext& bones, AimTarget& target,
+                           AimTargetDiagnostics* diagnostics = nullptr,
+                           AimTargetFilter filter = nullptr, void* filterContext = nullptr) noexcept;
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
                            const AimBoneContext& bones, AimTarget& target,
                            AimTargetDiagnostics* diagnostics = nullptr,

@@ -34,12 +34,32 @@ int main() {
         SilentAimSetSettings(value);
         check(SilentAimGetSettings() == value, "every minimum damage value preserves neighboring packed settings");
     }
-    SilentAimSetSettings(first);
+    for (std::uint32_t mask = 0; mask <= AimAllHitgroups; ++mask) {
+        auto value = maximumFov;
+        value.hitgroups = mask;
+        SilentAimSetSettings(value);
+        check(SilentAimGetSettings() == value, "all hitgroup combinations including empty preserve every neighboring setting");
+    }
+    auto invalidMask = maximumFov;
+    invalidMask.hitgroups = UINT32_MAX;
+    SilentAimSetSettings(invalidMask);
+    invalidMask.hitgroups = AimAllHitgroups;
+    check(SilentAimGetSettings() == invalidMask, "unknown hitgroup mask bits are stripped without touching valid groups");
+    auto emptyMask = maximumFov;
+    emptyMask.hitgroups = 0x100u;
+    SilentAimSetSettings(emptyMask);
+    emptyMask.hitgroups = 0;
+    check(SilentAimGetSettings() == emptyMask, "unknown-only mask stays empty instead of enabling another region");
+    auto multiFirst = first;
+    multiFirst.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Hands);
+    auto multiSecond = second;
+    multiSecond.hitgroups = AimHitgroupBit(AimHitgroup::Legs) | AimHitgroupBit(AimHitgroup::Feet);
+    SilentAimSetSettings(multiFirst);
     std::atomic<bool> torn{false};
-    std::thread writer([&] { for (int i = 0; i < 100000; ++i) SilentAimSetSettings((i & 1) ? first : second); });
+    std::thread writer([&] { for (int i = 0; i < 100000; ++i) SilentAimSetSettings((i & 1) ? multiFirst : multiSecond); });
     for (int i = 0; i < 100000; ++i) {
         const auto snapshot = SilentAimGetSettings();
-        if (!(snapshot == first) && !(snapshot == second)) torn.store(true);
+        if (!(snapshot == multiFirst) && !(snapshot == multiSecond)) torn.store(true);
     }
     writer.join();
     check(!torn.load(), "command reader sees one coherent snapshot during concurrent publication");

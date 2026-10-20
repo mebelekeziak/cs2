@@ -105,6 +105,9 @@ void EspConfigureFonts();
 bool EspFontAvailable(int font) noexcept;
 // Reserve and draw a synthetic player using the same renderer as live ESP.
 void EspDrawPreview(float width, float height);
+// Returns false for keys not assigned to ESP (including the camera's F6).
+// Call on the render owner thread for a newly pressed Windows virtual key.
+bool EspHandleHotkey(int virtualKey) noexcept;
 void EspPollControls(bool foreground) noexcept;
 // Call between ImGui::NewFrame and ImGui::Render, regardless of menu visibility.
 EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height);

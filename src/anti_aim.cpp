@@ -1,4 +1,5 @@
 #include "anti_aim.h"
+#include "menu_input.h"
 #include "anti_aim_command.h"
 #include "anti_aim_math.h"
 #include "anti_aim_view.h"
@@ -94,6 +95,7 @@ bool ReadSource(Source& current, bool walking) noexcept {
         Read(current.pawn + movement_offsets::pawn::WaterLevel, water) && std::isfinite(water) && water >= 0 && water < 0.5f);
 }
 bool Foreground() noexcept {
+    if (MenuInputCapturing()) return false;
     DWORD pid = 0; const auto window = GetForegroundWindow();
     GetWindowThreadProcessId(window, &pid);
     return window && pid == GetCurrentProcessId() && !IsIconic(window);

@@ -289,7 +289,8 @@ partially applying settings. The diagnostic interface has no config controls.
 
 The name field supports typing, Shift/Caps Lock, Ctrl+A, cursor keys,
 Backspace and Delete. Held character keys enter once per press. Input is polled
-while the visible menu has focus; keyboard input can also reach the game.
+while the visible menu has focus. The public menu captures gameplay input while
+open; closing it restores the client's cursor/input mode.
 
 **Verification, October 16, 2026:** public and diagnostic x64 Release builds
 succeed, with all **18/18 CTest suites passing in each**. Tests cover every
@@ -710,12 +711,50 @@ launched; live deceleration, recovery timing and movement feel remain unobserved
 
 ## Silent aim, hitchance and autofire
 
-The **Aim** tab has an **Enable silent aim** checkbox, a **Hitbox** selector
-(**Head**, **Chest**, **Stomach**, **Pelvis**) and an angular **Aim FOV** slider
+The **Aim** tab has an **Enable silent aim** checkbox, independent **Hitgroups**
+checkboxes (**Head**, **Chest**, **Stomach**, **Pelvis**, **Arms**, **Hands**,
+**Legs**, **Feet**) and an angular **Aim FOV** slider
 (0.1–180 degrees from the current view direction). At 180 degrees, targets
 directly behind are within the angular limit. It starts **disabled**, with Chest and 5 degrees selected.
 **F10** toggles it while the client is foreground. Menu visibility and ESP
 settings do not control aim acquisition.
+
+Select any combination. Chest scans all three authored chest capsules; Arms
+scans both upper arms and forearms; Legs scans both thighs and calves; Hands
+and Feet each scan both sides. Stomach uses the authored stomach bone
+`spine_0`, correcting the previous `spine_2` chest landmark. The mask saves in
+local configs, and older presets migrate their single selection. Clearing all
+eight groups leaves aim acquisition, autofire and quickstop inactive.
+
+Every enabled landmark within FOV is evaluated independently using its current
+authored capsule, the same command's weapon snapshot, estimated hitchance and
+native direct-ray damage. Automatic candidates must pass minimum damage and
+hitchance. Among passing shots, selection maximizes **hitchance × damage capped
+at remaining target health**; equal scores prefer higher hitchance, then smaller
+angle, then stable entity/landmark order. This avoids valuing excess overkill
+above a more reliable lethal shot. Immediately shootable regions take priority
+over regions needing quickstop; only clear, ready regions passing minimum
+damage can become quickstop fallbacks. Selection considers enabled regions on
+all enemies in FOV, without pruning farther candidates before evaluation.
+
+Manual fire uses the same expected-damage ranking when estimates are available,
+without imposing automatic thresholds. If every estimate is unavailable or
+blocked, it retains nearest enabled landmark aiming and physical fire input.
+These are estimated selected-capsule probabilities and central-ray damage;
+ranking does not guarantee actual hit registration. Existing build/load commands
+apply; restart CS2 normally before loading a rebuilt DLL if older code remains
+resident. Stopped and resident is not physically unloaded.
+
+**Multihitgroup verification, October 20, 2026:** public and diagnostic x64
+Release builds each pass **49/49 CTest suites**, including **202 integrated aim
+pipeline checks** and **173 hitchance/geometry checks**. All **23 installed-file
+compatibility components** pass in
+`logs/compatibility/20261020T132158578600Z/`; all 18 deliberately incorrect
+landmark name literals are rejected. Normal and 320×520 Aim menu previews were
+inspected. Both DLLs retain zero static TLS and delay imports. Health changes
+invalidate the copied ranking state before publication. No CS2 client/server
+was launched; live shot selection and hit registration remain unobserved.
+See [multihitgroup evidence](tools/CS2_AIM_MULTIHITGROUP_EVIDENCE.md).
 
 **Autofire** starts off. Enable it to request primary fire when the current
 estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
@@ -888,12 +927,14 @@ cancel the owned automatic attack and regenerate its native CRC. Source, target,
 geometry, weapon and settings are revalidated after tracing. No clear-path result
 is cached across callbacks. Manual primary input remains available.
 
-Autofire selects the angular-nearest **eligible** enemy within Aim FOV. A nearer
+Before multihitgroup selection, autofire selected the angular-nearest **eligible** enemy within Aim FOV. A nearer
 enemy with unavailable geometry, insufficient hitchance or a blocked path does
 not prevent another eligible enemy from being selected. At 180 degrees, this
 includes enemies behind the current view. Candidates share one current weapon
 snapshot; the selected path is traced again immediately before requesting fire
-and at history publication. Manual fire retains nearest-landmark targeting.
+and at history publication. The multihitgroup ranking described above now
+chooses among all enabled regions; nearest-landmark targeting remains the
+manual fallback when modeled shots are unavailable.
 The minimum hitchance still applies regardless of FOV, including when scoped
 weapon accuracy is low. `AIM_HITCHANCE` now records angular `separation`, outgoing
 `aim` and `eligibility_rejected` to distinguish selection from firing gates.
@@ -1151,18 +1192,18 @@ checks; no new live client appearance observation is claimed.
 | F3 | Toggle boxes |
 | F4 | Toggle distance labels |
 | F5 | Toggle health bars and HP text |
-| F6 | Include/exclude teammates |
+| F6 | Toggle first/third-person camera |
 | F7 | Toggle armor text |
 | F8 | Toggle auto bunnyhop |
 | F9 | Toggle aggressive autostrafe |
 | F10 | Toggle silent aim |
-| Insert | Toggle the selected menu; ESP and acquisition keep running |
+| Insert | Toggle the selected menu; the public menu takes over gameplay input while open |
 | End | Cooperative stop |
 
-Keys are polled while the game window is foreground. They are not consumed, so
-the game can also respond to overlapping bindings. The public menu additionally
-supports left-click controls with the client's available cursor. Settings are
-shared between the menu and hotkeys, and last for the current run.
+Keys are polled while the game window is foreground. With the public menu
+closed, the game can also respond to overlapping bindings. F6 only changes the
+camera; teammate visibility is controlled by **Show teammates** in Visuals.
+Settings are shared between the menu and hotkeys, and last for the current run.
 
 ## Movement assistance
 
@@ -1569,20 +1610,38 @@ distance labels, teammates, and armor text; Movement includes the two independen
 movement toggles. Only implemented features appear. ESP has
 unlimited range; there is no range slider or +/- range hotkey. Insert shows or
 hides the menu; End cooperatively stops the overlay. Player graphics render
-behind the menu. The menu can be dragged from its top strip and stays within
-the viewport after a resize.
+behind the menu. Drag anywhere across the full **CS2** title bar, including its
+edges and padding. The menu stays within the viewport after a resize. Scroll
+overflowing settings with the mouse wheel or drag the section's scrollbar.
 
 The public menu reads the installed Windows Segoe UI font for its typography,
 with an ImGui default-font fallback. No system font file is copied or bundled.
 
-The public menu polls the Windows cursor, left mouse button and config-name keys on the render
-thread and scales client coordinates to the back buffer. Use the cursor at the
-disconnected main menu or in an offline pause menu. Gameplay may lock/recenter
-the cursor. Mouse clicks also reach the game, so choose a clear area of the
-underlying menu; no engine input API or window-procedure interception is added.
-Held clicks when showing/refocusing the menu are ignored until released.
-Hotkeys remain available while the menu is hidden. Telemetry still writes to
-workspace logs but does not appear in the public menu.
+Opening the public menu releases and shows the mouse during gameplay; pressing
+Esc to pause first is no longer needed. Mouse/keyboard gameplay input is
+captured while the focused menu is open. Movement assistance, quickstop,
+automatic firing and aim edits wait while the menu owns input. Closing the menu,
+losing focus or requesting cooperative stop restores the native cursor mode on
+the SDL event owner callback. If that callback stops running, restoration stays
+pending; stopped code remains resident until process exit.
+
+The render thread polls cursor/buttons and config-name keys, scales client
+coordinates to the back buffer and consumes queued wheel events. Held clicks
+when showing/refocusing the menu are ignored until released. Overlay hotkeys
+remain available. Telemetry still writes to workspace logs but does not appear
+in the public menu. See [menu input evidence](tools/CS2_MENU_INPUT_EVIDENCE.md)
+for the installed SDL contracts and verification limits.
+
+**Menu QoL verification, October 20, 2026:** public and diagnostic x64 Release
+builds each pass **50/50 CTest suites**. Checks cover dragging across the whole
+title bar, wheel/scrollbar interaction, cursor capture/restoration, focus and
+owner changes, fractional wheel deltas, F6 preserving teammate visibility and
+cancelling pending automatic shots on menu opening. All 23 existing installed-file
+compatibility components pass. Both payloads retain zero static TLS and delay
+imports. Standalone normal/narrow menu previews were inspected. No CS2
+client/server was launched; live gameplay cursor feel remains unobserved.
+Restart CS2 normally before using **Load Overlay.cmd** with the rebuilt DLL if
+an older copy remains resident.
 
 `CS2_DIAGNOSTIC_UI` selects the interface independently of compiler optimization.
 Keep both builds in separate directories. The original crude panel retains its

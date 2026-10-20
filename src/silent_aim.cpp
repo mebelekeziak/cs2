@@ -1,4 +1,5 @@
 #include "silent_aim.h"
+#include "menu_input.h"
 #include "silent_aim_command.h"
 #include "silent_aim_target.h"
 #include "silent_aim_settings.h"
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 namespace {
 namespace off = silent_aim_offsets;
@@ -102,6 +104,7 @@ bool ClientCurrent() noexcept {
     return reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) == client;
 }
 bool Foreground() noexcept {
+    if (MenuInputCapturing()) return false;
 #ifdef CS2_AIM_PIPELINE_CHECKS
     if (testRuntime) return testForeground;
 #endif
@@ -116,7 +119,7 @@ bool Usable(void* input) noexcept {
         active.store(false, std::memory_order_release);
         stopped = true; Status("client/input changed; silent aim stopped"); return false;
     }
-    if (!Foreground()) { Status("game unfocused"); return false; }
+    if (!Foreground()) { Status(MenuInputCapturing() ? "menu owns input" : "game unfocused"); return false; }
     if (
 #ifdef CS2_AIM_PIPELINE_CHECKS
         !testRuntime &&
@@ -178,19 +181,40 @@ struct AutofireSelection {
     AimAngles view{};
     WeaponSample weapon{};
     float rejectedSeparation = 181;
+    bool automatic = true;
 };
+float ExpectedDamage(const Decision& decision) noexcept {
+    const int health = decision.target.enemy.health;
+    const float damage = std::min(decision.damage.damage, static_cast<float>(health));
+    return damage * decision.chance.percent * .01f;
+}
+bool BetterShot(const Decision& candidate, const Decision& current) noexcept {
+    if (!current.selected) return true;
+    const float score = ExpectedDamage(candidate), previous = ExpectedDamage(current);
+    if (score != previous) return score > previous;
+    if (candidate.chance.percent != current.chance.percent) return candidate.chance.percent > current.chance.percent;
+    if (candidate.target.solution.separation != current.target.solution.separation)
+        return candidate.target.solution.separation < current.target.solution.separation;
+    if (candidate.target.enemy.pawnHandle != current.target.enemy.pawnHandle)
+        return candidate.target.enemy.pawnHandle < current.target.enemy.pawnHandle;
+    return candidate.target.hitbox < current.target.hitbox;
+}
 bool EligibleTarget(const AimTarget& target, void* context) noexcept {
     auto& selection = *static_cast<AutofireSelection*>(context);
     auto candidate = selection.prototype;
     candidate.target = target;
     candidate.selected = true;
     candidate = EvaluateTarget(candidate, selection.view, selection.weapon);
-    if (candidate.chance.valid && candidate.weapon.ready &&
-        (candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) && Reachable(candidate)) {
-        if (candidate.chance.percent >= candidate.settings.hitchance) {
-            candidate.automaticEligible = true;
-            selection.accepted = candidate;
-            return true;
+    if (candidate.chance.valid && (!selection.automatic || candidate.weapon.ready) &&
+        (!selection.automatic || candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) &&
+        Reachable(candidate, selection.automatic)) {
+        if (!selection.automatic || candidate.chance.percent >= candidate.settings.hitchance) {
+            candidate.automaticEligible = selection.automatic;
+            if (BetterShot(candidate, selection.accepted)) {
+                selection.accepted = candidate;
+                return true;
+            }
+            return false;
         }
         // Preserve a clear, ready fallback while continuing the search for an
         // immediately shootable enemy. A covered nearer enemy cannot own stop.
@@ -199,7 +223,7 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
         const auto dz = candidate.volume.center.z - candidate.target.eye.z;
         const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (distance <= candidate.weapon.range &&
-            (!selection.brake.selected || candidate.target.solution.separation < selection.brake.target.solution.separation)) {
+            BetterShot(candidate, selection.brake)) {
             candidate.quickstopEligible = true;
             selection.brake = candidate;
         }
@@ -222,19 +246,15 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
     AutofireSelection selection{};
     selection.prototype = result;
     selection.view = view;
-    const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitbox, bones,
-        result.target, &targetDiagnostics, selectEligible ? &EligibleTarget : nullptr, &selection);
-    if (selectEligible && found) { ++selected; return selection.accepted; }
-    if (selectEligible && selection.brake.selected) { ++selected; return selection.brake; }
-    if (selectEligible && selection.rejected.selected) { ++selected; return selection.rejected; }
-    if (!found) {
-        result.reason = std::strcmp(targetDiagnostics.localFailure, "none") ?
-            "local actor unavailable" : "no enemy in aim FOV";
-        return result;
-    }
-    result.selected = true; ++selected;
-    WeaponSample weapon{};
-    return EvaluateTarget(result, view, weapon);
+    selection.automatic = selectEligible;
+    const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitgroups, bones,
+        result.target, &targetDiagnostics, &EligibleTarget, &selection);
+    if (found) { ++selected; return selection.accepted; }
+    if (selection.brake.selected) { ++selected; return selection.brake; }
+    if (selection.rejected.selected) { ++selected; return selection.rejected; }
+    result.reason = std::strcmp(targetDiagnostics.localFailure, "none") ?
+        "local actor unavailable" : settings.hitgroups ? "no enemy in aim FOV" : "no hitgroups selected";
+    return result;
 }
 bool SameStopCycle(const Decision& decision) noexcept {
     return stopping && decision.settings == stopCycle.settings &&
@@ -262,7 +282,7 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     char message[1536]{};
     std::snprintf(message, sizeof(message),
         "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; direct-bullet estimate; no penetration",
-        handle, static_cast<int>(decision.settings.hitbox), decision.chance.valid,
+        handle, static_cast<int>(decision.target.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
         decision.weapon.spread, decision.weapon.inaccuracy, decision.weapon.recoilIndex,
@@ -434,7 +454,7 @@ void Process(void* input, void* command) noexcept {
         char message[512]{};
         std::snprintf(message, sizeof(message),
             "AIM_HISTORY callbacks=%llu edited=%llu target=0x%08x history_index=%d entries=%d hitbox=%d separation=%.3f pitch=%.3f yaw=%.3f owner=%lu; base/camera/buttons unchanged; history edit is not observed hit registration",
-            callbacks, edited, target.enemy.pawnHandle, shot.index, shot.count, static_cast<int>(settings.hitbox), target.solution.separation,
+            callbacks, edited, target.enemy.pawnHandle, shot.index, shot.count, static_cast<int>(target.hitbox), target.solution.separation,
             target.solution.angles.pitch, target.solution.angles.yaw, GetCurrentThreadId());
         MovementTelemetryPush(message);
     }
@@ -602,9 +622,9 @@ void SilentAimFlushTelemetry() noexcept {
     const auto& command = commandDiagnostics;
     const auto& target = targetDiagnostics;
     std::snprintf(message, sizeof(message),
-        "AIM_DIAGNOSTICS hook_calls=%llu callbacks=%llu active=%u enabled=%u hitbox=%d fov=%.2f status=\"%s\" shots=%llu selected=%llu edited=%llu source_rejected=%llu write_rejected=%llu command_reason=%s history=%d/%d allocated=%d attack_index=%d buttons=0x%llx command_presence=0x%x entry=%d entry_presence=0x%x angle_presence=0x%x angles=0x%llx base_angles=0x%llx target_stage=%s local_failure=%s controllers=%u actor_rejected=%u teammates=%u bone_rejected=%u outside_fov=%u bone_failure=%s scene_vtable=0x%llx model_handle=0x%llx model=0x%llx pose=0x%llx bone_count=%d bone_index=%d",
+        "AIM_DIAGNOSTICS hook_calls=%llu callbacks=%llu active=%u enabled=%u hitgroups=0x%02x fov=%.2f status=\"%s\" shots=%llu selected=%llu edited=%llu source_rejected=%llu write_rejected=%llu command_reason=%s history=%d/%d allocated=%d attack_index=%d buttons=0x%llx command_presence=0x%x entry=%d entry_presence=0x%x angle_presence=0x%x angles=0x%llx base_angles=0x%llx target_stage=%s local_failure=%s controllers=%u actor_rejected=%u teammates=%u bone_rejected=%u outside_fov=%u bone_failure=%s scene_vtable=0x%llx model_handle=0x%llx model=0x%llx pose=0x%llx bone_count=%d bone_index=%d",
         historyCalls.load(std::memory_order_relaxed), callbacks, active.load(std::memory_order_acquire), settings.enabled,
-        static_cast<int>(settings.hitbox), settings.fov, SilentAimStatus(), shots, selected, edited, sourceRejected, writeRejected,
+        settings.hitgroups, settings.fov, SilentAimStatus(), shots, selected, edited, sourceRejected, writeRejected,
         command.reason, command.size, command.capacity, command.allocated, command.index,
         command.buttons, command.presence, command.entry, command.entryPresence, command.anglePresence,
         static_cast<unsigned long long>(command.angles), static_cast<unsigned long long>(command.baseAngles),

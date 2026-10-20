@@ -55,7 +55,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(world, disableLocalLights); COLOR(world, localLightTint); FIELD(world, localLightBrightness);
     COLOR(world, sunLightTint); FIELD(world, sunLightBrightness); FIELD(world, ambientLightEnabled);
     COLOR(world, ambientLightTint); FIELD(world, ambientLightBrightness); FIELD(world, directionalLightmapsMode);
-    FIELD(aim, enabled); FIELD(aim, fov); FIELD(aim, hitbox);
+    FIELD(aim, enabled); FIELD(aim, fov); FIELD(aim, hitbox); FIELD(aim, hitgroups);
     FIELD(aim, autofire); FIELD(aim, hitchance); FIELD(aim, samples); FIELD(aim, quickstop);
     visit("aim.min_damage", s.aim.minDamage);
     FIELD(anti_aim, enabled); FIELD(anti_aim, yawMode); FIELD(anti_aim, yawBase);
@@ -232,6 +232,10 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
         if (!valid) { error = "Invalid config value: " + key; return false; }
     }
     if (file.bad() || !versionFound) { error = file.bad() ? "Cannot read config." : "Missing config version."; return false; }
+    // Older presets stored one of four landmarks. An explicit new mask wins,
+    // regardless of key order, and zero intentionally leaves no region enabled.
+    if (!seen.contains("aim.hitgroups") && seen.contains("aim.hitbox"))
+        snapshot.aim.hitgroups = 1u << std::clamp(static_cast<int>(snapshot.aim.hitbox), 0, 3);
     // Publish only after the entire file parses, through the existing bounded setters.
     EspSetSettings(snapshot.esp);
     MovementSetSettings(snapshot.movement);

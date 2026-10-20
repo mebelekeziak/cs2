@@ -143,7 +143,8 @@ int main() {
     for (unsigned c = 0; c < std::size(worldColors); ++c)
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
-    const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67};
+    const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67,
+        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs)};
     SilentAimSetSettings(expectedAim);
     const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
         -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
@@ -178,8 +179,9 @@ int main() {
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
-    Expect(SilentAimGetSettings() == expectedAim && custom.find("aim.min_damage=67\n") != std::string::npos,
-        "aim, autofire, hitchance, sample count and minimum damage roundtrip");
+    Expect(SilentAimGetSettings() == expectedAim && custom.find("aim.min_damage=67\n") != std::string::npos &&
+        custom.find("aim.hitgroups=67\n") != std::string::npos,
+        "aim, autofire, hitchance, sample count, minimum damage and independent hitgroups roundtrip");
     Expect(AntiAimGetSettings() == expectedAntiAim, "all anti aim modes, interval and fractional angle controls roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\n") != std::string::npos,
@@ -223,6 +225,9 @@ int main() {
         "version=2\n", "esp.enabled=1\n", "version=1\nversion=1\n", "version=1\nesp.enabled=true\n",
         "version=1\nesp.boxThickness=nan\n", "version=1\nworld.tint.1=0.5junk\n",
         "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n",
+        "version=1\naim.hitgroups=-1\n", "version=1\naim.hitgroups=1.5\n",
+        "version=1\naim.hitgroups=nan\n", "version=1\naim.hitgroups=4294967296\n",
+        "version=1\naim.hitgroups=1\naim.hitgroups=2\n",
         "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
         "version=1\naim.quickstop=2\n", "version=1\naim.quickstop=true\n",
         "version=1\naim.quickstop=0\naim.quickstop=1\n",
@@ -280,6 +285,27 @@ int main() {
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
+    for (int legacy = 0; legacy < 4; ++legacy) {
+        Write(badPath, "version=1\naim.hitbox=" + std::to_string(legacy) + "\n");
+        Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == (1u << legacy),
+            "legacy single hitbox migrates to exactly the previously selected group");
+    }
+    for (const auto& content : {"version=1\naim.hitbox=0\naim.hitgroups=192\n",
+                                "version=1\naim.hitgroups=192\naim.hitbox=0\n"}) {
+        Write(badPath, content);
+        Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == 192,
+            "explicit multi-hitgroup mask wins over legacy field independently of key order");
+    }
+    Write(badPath, "version=1\naim.hitbox=0\naim.hitgroups=0\n");
+    Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == 0 &&
+        LocalConfigSave(bad, error) && LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == 0,
+        "empty hitgroup selection survives saving and loading without legacy fallback");
+    Write(badPath, "version=1\naim.hitgroups=4294967295\n");
+    Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == AimAllHitgroups,
+        "preset mask strips unknown high bits and retains all supported groups");
+    Write(badPath, "version=1\n");
+    Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest),
+        "presets with no targeting fields preserve the default chest selection");
     Write(badPath, "version=1\naim.min_damage=-999\n");
     Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().minDamage == 1,
         "config bounds minimum damage to 1 HP without enabling aim");
