@@ -9,6 +9,7 @@
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
+#include "grenade_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
@@ -33,6 +34,7 @@ struct Snapshot {
     ShotLogSettings shot_log;
     ModelSwapSettings model_swap;
     PlayerChamsSettings player_chams;
+    GrenadeSettings grenades;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -69,6 +71,9 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(player_chams, enabled); FIELD(player_chams, teammates); FIELD(player_chams, localPlayer);
     FIELD(player_chams, style); COLOR(player_chams, color); COLOR(player_chams, iridescentColor);
     FIELD(player_chams, throughWalls);
+    FIELD(grenades, removeSmoke); FIELD(grenades, removeFlash);
+    FIELD(grenades, smokeAura); FIELD(grenades, molotovAura);
+    COLOR(grenades, smokeColor); COLOR(grenades, molotovColor); FIELD(grenades, auraWidth);
 #undef COLOR
 #undef FIELD
 }
@@ -165,7 +170,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
@@ -247,6 +252,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     ShotLogSetSettings(snapshot.shot_log);
     ModelSwapSetSettings(snapshot.model_swap);
     PlayerChamsSetSettings(snapshot.player_chams);
+    GrenadeSetSettings(snapshot.grenades);
     return true;
 }
 

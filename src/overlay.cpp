@@ -23,6 +23,8 @@
 #include <cfloat>
 #include "esp_draw.h"
 #include "player_reader.h"
+#include "grenade_visuals.h"
+#include "grenade_effects.h"
 #include "movement.h"
 #include "silent_aim.h"
 #include "aim_console.h"
@@ -272,6 +274,8 @@ void CleanupOnRenderThread(const char* reason) {
     ThirdPersonStop(reason);
     ZoomStop(reason);
     ModelSwapStop(reason);
+    GrenadeEffectsStop();
+    GrenadeVisualsStop();
     WorldSkyStop(reason);
     WorldMaterialsStop(reason);
     PlayerChamsStop(reason);
@@ -555,6 +559,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     const int beforeEsp = espList->VtxBuffer.Size;
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
+    GrenadeVisualsDraw(players.worldToClip, players.matrixValid, io.DisplaySize.x, io.DisplaySize.y);
     const auto crosshair = ScopedCrosshairCaptureForDraw();
     ScopedCrosshairDraw({foreground && crosshair.visible, crosshair.spread, crosshair.inaccuracy, crosshair.sourceKey},
         io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);
@@ -576,6 +581,8 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Scoped zoom: %s", ZoomStatus());
         ImGui::Text("Player model: %s", ModelSwapRuntimeStatus().data());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
+        ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
+        ImGui::Text("Grenade borders: %s", GrenadeVisualsStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
         ImGui::Text("Player chams: %s", PlayerChamsStatus());
@@ -686,6 +693,8 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ScopedCrosshairStop();
             ZoomStop("stopped before selecting render chain");
             ModelSwapStop("stopped before selecting render chain");
+            GrenadeEffectsStop();
+            GrenadeVisualsStop();
             WorldSkyStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
             PlayerChamsStop("stopped before selecting render chain");
@@ -785,6 +794,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     EspLog(crosshairPrepared ? "SCOPED_CROSSHAIR_READY scoped third-person views only; copied native accuracy cone" :
         "SCOPED_CROSSHAIR_UNAVAILABLE accuracy/scope contract verification failed");
     const bool modelSwapPrepared = ModelSwapPrepare(&EspLog);
+    const bool grenadeEffectsPrepared = GrenadeEffectsPrepare(&EspLog);
+    const bool grenadeVisualsPrepared = GrenadeVisualsPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     const bool playerChamsPrepared = PlayerChamsPrepare(&EspLog);
@@ -807,6 +818,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ScopedCrosshairStop();
         ZoomStop("partial hook activation failure");
         ModelSwapStop("partial hook activation failure");
+        GrenadeEffectsStop();
+        GrenadeVisualsStop();
         WorldSkyStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
         PlayerChamsStop("partial hook activation failure");
@@ -827,6 +840,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (thirdPersonPrepared) ThirdPersonActivate();
     if (zoomPrepared) ZoomActivate();
     if (modelSwapPrepared) ModelSwapActivate();
+    if (grenadeEffectsPrepared) GrenadeEffectsActivate();
+    if (grenadeVisualsPrepared) GrenadeVisualsActivate();
     if (skyPrepared) WorldSkyActivate();
     if (materialsPrepared) WorldMaterialsActivate();
     if (playerChamsPrepared) PlayerChamsActivate();
@@ -849,6 +864,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ScopedCrosshairStop();
     ZoomStop("explicit overlay stop request");
     ModelSwapStop("explicit overlay stop request");
+    GrenadeEffectsStop();
+    GrenadeVisualsStop();
     WorldSkyStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
     PlayerChamsStop("explicit overlay stop request");

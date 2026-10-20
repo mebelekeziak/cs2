@@ -8,6 +8,7 @@
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
+#include "grenade_settings.h"
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
@@ -417,6 +418,41 @@ void PlayerChamsControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void GrenadeControls() {
+    const auto savedEsp = EspGetSettings();
+    auto disabledEsp = savedEsp;
+    disabledEsp.enabled = false;
+    EspSetSettings(disabledEsp);
+    ClickControl("Grenades");
+    Expect(GrenadeGetSettings() == GrenadeSettings{}, "grenade section starts with every effect disabled");
+    ClickControl("##GrenadeAuraWidth", 0.9f);
+    Expect(GrenadeGetSettings() == GrenadeSettings{}, "aura width stays disabled without an active aura");
+    ClickControl("Remove smoke");
+    Expect(GrenadeGetSettings().removeSmoke && !GrenadeGetSettings().removeFlash && !GrenadeGetSettings().smokeAura &&
+        !GrenadeGetSettings().molotovAura && !EspGetSettings().enabled, "smoke removal toggles independently of ESP and auras");
+    ClickControl("Remove flash");
+    ClickControl("Smoke border aura");
+    ClickControl("Molotov border aura");
+    ClickControl("##GrenadeAuraWidth", 0.75f);
+    const auto edited = GrenadeGetSettings();
+    Expect(edited.removeSmoke && edited.removeFlash && edited.smokeAura && edited.molotovAura &&
+        edited.auraWidth > 4 && edited.auraWidth < 6, "grenade removal and aura switches publish independently with editable width");
+    const auto labels = SubmittedMenuText();
+    Expect(labels.find("Smoke aura color") != std::string::npos && labels.find("Molotov aura color") != std::string::npos &&
+        labels.find("Borders appear after smoke deploys or a molotov ignites.") != std::string::npos,
+        "grenades expose separate aura colors and describe post-landing timing");
+    ClickControl("Remove smoke");
+    Expect(!GrenadeGetSettings().removeSmoke && GrenadeGetSettings().removeFlash && GrenadeGetSettings().smokeAura &&
+        GrenadeGetSettings().molotovAura, "smoke aura remains enabled when smoke removal is disabled");
+    ClickControl("Reset grenades");
+    Expect(GrenadeGetSettings() == GrenadeSettings{} && EspGetSettings() == disabledEsp,
+        "grenade reset restores defaults independently of disabled ESP");
+    ClickControl("Grenades");
+    GrenadeSetSettings(edited);
+    EspSetSettings(savedEsp);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void ZoomControls() {
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
@@ -591,6 +627,7 @@ int main() {
     ZoomResetSettings();
     ShotLogSetSettings({});
     PlayerChamsResetSettings();
+    GrenadeResetSettings();
     Frame();
     Frame(); // Establish normal item hover state after initial window creation.
     Expect(Menu() && Body(), "public menu and visuals panel created");
@@ -620,6 +657,7 @@ int main() {
     ZoomControls();
     PlayerModelControls();
     PlayerChamsControls();
+    GrenadeControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -957,6 +995,7 @@ int main() {
     const auto savedShotLog=ShotLogGetSettings();
     const auto savedModel=ModelSwapGetSettings();
     const auto savedChams=PlayerChamsGetSettings();
+    const auto savedGrenades=GrenadeGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -969,11 +1008,12 @@ int main() {
     ShotLogSetSettings({});
     ModelSwapResetSettings();
     PlayerChamsResetSettings();
+    GrenadeResetSettings();
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings() == savedAntiAim && ThirdPersonGetSettings() == savedCamera &&
            ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
-           ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams,
-           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging, player model and chams settings");
+           ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams && GrenadeGetSettings() == savedGrenades,
+           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging, player model, chams and grenades settings");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);

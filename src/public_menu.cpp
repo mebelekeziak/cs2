@@ -8,6 +8,7 @@
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
+#include "grenade_settings.h"
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
@@ -501,6 +502,26 @@ void DrawPublicMenu() {
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }
                 DrawPlayerModel();
+                if (ImGui::CollapsingHeader("Grenades", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    auto grenades = GrenadeGetSettings();
+                    bool grenadesChanged = FeatureCheckbox("Remove smoke", grenades.removeSmoke);
+                    grenadesChanged |= FeatureCheckbox("Remove flash", grenades.removeFlash);
+                    ImGui::Separator();
+                    grenadesChanged |= FeatureCheckbox("Smoke border aura", grenades.smokeAura);
+                    ImGui::BeginDisabled(!grenades.smokeAura);
+                    grenadesChanged |= color("Smoke aura color", "##SmokeAuraColor", grenades.smokeColor);
+                    ImGui::EndDisabled();
+                    grenadesChanged |= FeatureCheckbox("Molotov border aura", grenades.molotovAura);
+                    ImGui::BeginDisabled(!grenades.molotovAura);
+                    grenadesChanged |= color("Molotov aura color", "##MolotovAuraColor", grenades.molotovColor);
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!grenades.smokeAura && !grenades.molotovAura);
+                    grenadesChanged |= slider("Aura width", "##GrenadeAuraWidth", grenades.auraWidth, 1, 6, "%.1f px");
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Borders appear after smoke deploys or a molotov ignites.");
+                    if (grenadesChanged) GrenadeSetSettings(grenades);
+                    if (ImGui::Button("Reset grenades", { -1, 0 })) GrenadeResetSettings();
+                }
             }
             ImGui::EndChild();
             if (reset) EspResetStyle();

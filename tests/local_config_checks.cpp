@@ -9,6 +9,7 @@
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
+#include "grenade_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -43,6 +44,31 @@ int main() {
     const auto secondPath = directory / (second + ".cfg");
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
+    const GrenadeSettings grenadeDefaults;
+    Expect(GrenadeGetSettings() == grenadeDefaults, "grenade removals and auras start disabled independently");
+    auto invalidGrenades = grenadeDefaults;
+    invalidGrenades.removeSmoke = true;
+    invalidGrenades.removeFlash = true;
+    invalidGrenades.smokeAura = true;
+    invalidGrenades.molotovAura = true;
+    invalidGrenades.smokeColor[0] = -1;
+    invalidGrenades.smokeColor[1] = 2;
+    invalidGrenades.smokeColor[2] = std::numeric_limits<float>::quiet_NaN();
+    invalidGrenades.molotovColor[3] = std::numeric_limits<float>::infinity();
+    invalidGrenades.auraWidth = 99;
+    GrenadeSetSettings(invalidGrenades);
+    const auto boundedGrenades = GrenadeGetSettings();
+    Expect(boundedGrenades.removeSmoke && boundedGrenades.removeFlash && boundedGrenades.smokeAura && boundedGrenades.molotovAura &&
+        boundedGrenades.smokeColor[0] == 0 && boundedGrenades.smokeColor[1] == 1 &&
+        boundedGrenades.smokeColor[2] == grenadeDefaults.smokeColor[2] &&
+        boundedGrenades.molotovColor[3] == grenadeDefaults.molotovColor[3] && boundedGrenades.auraWidth == 6,
+        "grenade settings clamp RGBA and width while preserving independent toggles");
+    invalidGrenades.auraWidth = std::numeric_limits<float>::quiet_NaN();
+    Expect(GrenadeSanitizeSettings(invalidGrenades).auraWidth == 2 &&
+        GrenadeSanitizeSettings(GrenadeSettings{.auraWidth = -1}).auraWidth == 1,
+        "grenade width defaults for nonfinite input and clamps to one pixel");
+    GrenadeResetSettings();
+    Expect(GrenadeGetSettings() == grenadeDefaults, "grenade reset restores all toggles, colors and width");
     const PlayerChamsSettings chamsDefaults;
     Expect(PlayerChamsGetSettings() == chamsDefaults && chamsDefaults.throughWalls,
         "player chams start disabled with flat material, independent target toggles and through-walls rendering selected");
@@ -103,6 +129,10 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
+    Expect(defaults.find("grenades.removeSmoke=0\ngrenades.removeFlash=0\ngrenades.smokeAura=0\ngrenades.molotovAura=0\n") != std::string::npos &&
+        defaults.find("grenades.smokeColor.3=1\n") != std::string::npos &&
+        defaults.find("grenades.molotovColor.3=1\n") != std::string::npos && defaults.find("grenades.auraWidth=2\n") != std::string::npos,
+        "default preset saves independent grenade toggles, RGBA channels and width");
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
     Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\naim.quickstop=0\naim.min_damage=1\n") != std::string::npos,
         "default preset saves autofire and quickstop off, hitchance controls and minimum damage");
@@ -166,16 +196,25 @@ int main() {
         expectedChams.iridescentColor[channel] = (channel + 4) / 8.0f;
     }
     PlayerChamsSetSettings(expectedChams);
+    GrenadeSettings expectedGrenades{true, true, true, true};
+    expectedGrenades.auraWidth = 4.25f;
+    for (int channel = 0; channel < 4; ++channel) {
+        expectedGrenades.smokeColor[channel] = (channel + 1) / 8.0f;
+        expectedGrenades.molotovColor[channel] = (channel + 4) / 8.0f;
+    }
+    GrenadeSetSettings(expectedGrenades);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
+    Expect(custom.find("grenades.removeSmoke=1\ngrenades.removeFlash=1\ngrenades.smokeAura=1\ngrenades.molotovAura=1\n") != std::string::npos,
+        "custom preset saves all four independent grenade toggles");
     Expect(custom != defaults, "separate presets retain different options");
     Expect(custom.find("anti_aim.enabled=1\n") != std::string::npos, "custom preset saves enabled anti aim");
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
         ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{} &&
-        PlayerChamsGetSettings() == chamsDefaults,
+        PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
@@ -187,6 +226,7 @@ int main() {
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\n") != std::string::npos,
         "scoped zoom master, no zoom, fractional second level and blended sensitivity roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
+    Expect(GrenadeGetSettings() == expectedGrenades, "grenade removals, aura toggles, both RGBA colors and width roundtrip");
     Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos,
         "player chams master, teammate and local targets, iridescent style, RGBA and disabled through-walls selection roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
@@ -266,6 +306,11 @@ int main() {
         "version=1\nplayer_chams.throughWalls=2\n", "version=1\nplayer_chams.throughWalls=true\n",
         "version=1\nplayer_chams.throughWalls=0\nplayer_chams.throughWalls=1\n",
         "version=1\naim.enabled=0\nplayer_chams.enabled=0\nplayer_chams.color.0=nan\n",
+        "version=1\ngrenades.removeSmoke=2\n", "version=1\ngrenades.removeFlash=true\n",
+        "version=1\ngrenades.smokeAura=2\n", "version=1\ngrenades.molotovAura=invalid\n",
+        "version=1\ngrenades.smokeColor.0=nan\n", "version=1\ngrenades.molotovColor.3=inf\n",
+        "version=1\ngrenades.auraWidth=nan\n", "version=1\ngrenades.auraWidth=4oops\n",
+        "version=1\ngrenades.removeSmoke=0\ngrenades.removeSmoke=1\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -285,6 +330,7 @@ int main() {
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
+    Expect(GrenadeGetSettings() == grenadeDefaults, "older presets without grenades restore disabled removals and auras");
     for (int legacy = 0; legacy < 4; ++legacy) {
         Write(badPath, "version=1\naim.hitbox=" + std::to_string(legacy) + "\n");
         Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == (1u << legacy),

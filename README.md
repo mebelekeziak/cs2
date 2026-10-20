@@ -3,13 +3,63 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-three
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-five
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Smoke, flash and grenade border auras
+
+Under **Visuals → Grenades**, enable **Remove smoke**, **Remove flash**,
+**Smoke border aura** and **Molotov border aura** independently. Each starts
+disabled and saves with local configs. Both auras have separate RGBA colors;
+**Aura width** controls their glowing border from 1–6 pixels. **Reset grenades**
+restores defaults. Older presets use disabled grenade settings.
+
+Borders appear only after smoke deploys or fire ignites. Smoke follows live,
+positive-density voxel columns projected onto the detonation plane. Molotov
+and incendiary fire follow the union of active flame patches using their native
+visual half-width, retaining gaps and separate islands. These are footprint
+outlines, rather than exact animated silhouettes or guaranteed damage boundaries.
+The overlay draws them through scene geometry. Smoke aura remains available
+with smoke removal enabled; all four settings work independently of player ESP.
+
+Smoke removal suppresses native volume/mask draws and the inside-smoke opacity
+result, preserving simulation data. Existing inside haze may briefly decay
+through native interpolation when enabling it. Flash removal suppresses the
+white overlay and afterimage shader alpha inputs while native timers and sound
+continue. Neither feature writes persistent grenade/pawn state or game files.
+Area snapshots update at most every 30 ms, expire after 250 ms, and clear on
+disable, source replacement or cooperative stop. Scanning and geometry work
+use a separate lock from the short render publication.
+
+Use the existing build and **Load Overlay.cmd** workflow. Restart CS2 normally
+before loading a rebuilt DLL if an older copy remains resident: **stopped and
+resident is not physically unloaded**. Static contracts are recorded in
+[area evidence](tools/CS2_GRENADE_AREAS_EVIDENCE.md) and
+[removal evidence](tools/CS2_GRENADE_EFFECTS_EVIDENCE.md), with both verifiers
+included in the combined compatibility command. Standalone software D3D11
+previews, without launching CS2:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\grenades-menu.bmp 15 100000
+.\build\Release\public_menu_preview.exe .\logs\grenades-aura.bmp 16 0 1000 600
+```
+
+The second preview uses synthetic copied footprints; it verifies drawing only.
+No live grenade appearance check is claimed.
+
+**Verification, October 20, 2026:** public and diagnostic x64 Release builds
+succeed without project warnings, with **53/53 CTest suites passing in each**.
+The native area fixture passes 53 acquisition/lifecycle checks; removal checks
+cover both flash alpha parameters, native bookkeeping and unchanged input data.
+Both software D3D11 previews were inspected. All **25/25 installed-file
+compatibility checks** pass; 28 incorrect area-header contracts and 17 incorrect
+removal contracts are rejected. Both payloads retain zero static TLS and delay
+imports. No CS2 client/server was launched.
 
 ## Player chams
 

@@ -39,6 +39,27 @@ Source-header `--header` options select a header to check, never an output to
 generate. Scope identities per subsystem: sky's client identity alone does not
 certify ESP or movement.
 
+## Landed grenade footprints and removal: client.dll
+
+Added October 20, 2026 against the installed client identity listed above.
+`include/grenade_area_offsets.h` owns the smoke/inferno class vtables and
+geometry fields; `include/grenade_effect_offsets.h` owns native smoke rendering,
+inside opacity and flash shader-parameter contracts. Run
+`python tools/inspect_grenade_areas.py` and
+`python tools/inspect_grenade_effects.py`, or the combined compatibility command.
+
+| Contract | Rediscovery/evidence |
+| --- | --- |
+| `C_Inferno`, `C_SmokeGrenadeProjectile` primary vtables and fields | MSVC RTTI plus exact static schema registrations; [area evidence](../tools/CS2_GRENADE_AREAS_EVIDENCE.md) |
+| Smoke simulation embedded in the projectile, voxel owner and ping-pong buffers | Native initialization/render iteration and coordinate conversion; occupancy uses current buffer, density uses the other buffer |
+| Active fire world positions and visual half-width | Native burning-cell selection, world-coordinate copies and visual bounds; half-width is not a proven damage radius |
+| Smoke volume draw and inside opacity | Native descriptor RTTI/dispatch and exact opacity callsite; [removal evidence](../tools/CS2_GRENADE_EFFECTS_EVIDENCE.md) |
+| Flash white/afterimage alpha | Native `FlashbangOverlay` producer, exact parameter keys and writer return sites; transient float4 inputs, no persistent pawn writes |
+
+The existing shared stage-8 owner captures copied world edges. Smoke is an XY
+voxel-column projection; fire uses a union of live visual patch disks. Rendering
+does not call engine methods. No live grenade appearance observation is claimed.
+
 ## Entity acquisition and ESP: client.dll
 
 Header: [cs2_offsets.h](../include/cs2_offsets.h), namespace `cs2_offsets`.

@@ -47,6 +47,8 @@ def component_commands(game):
     client = str(game / "csgo/bin/win64/client.dll")
     return (
         ("esp", "inspect_cs2.py", ["--client", client]),
+        ("grenade_areas", "inspect_grenade_areas.py", ["--game", str(game)]),
+        ("grenade_effects", "inspect_grenade_effects.py", ["--client", client]),
         ("movement", "inspect_movement.py", ["--client", client]),
         ("silent_aim", "inspect_silent_aim.py", ["--client", client]),
         ("anti_aim", "inspect_anti_aim.py", ["--client", client]),

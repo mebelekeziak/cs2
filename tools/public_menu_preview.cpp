@@ -19,6 +19,8 @@
 #include "anti_aim_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
+#include "grenade_settings.h"
+#include "grenade_draw.h"
 #include "model_catalog.h"
 #include "scoped_crosshair_draw.h"
 #include <cstdio>
@@ -26,6 +28,7 @@
 #include <cstring>
 #include <cstdint>
 #include <fstream>
+#include <array>
 
 using Microsoft::WRL::ComPtr;
 
@@ -73,13 +76,13 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 14 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 14.\n");
+    if (selectedTab < 0 || selectedTab > 16 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 16.\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -136,6 +139,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50});
+    if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
     if (selectedTab == 13 || selectedTab == 14) {
         PlayerChamsSettings chams;
         chams.enabled = true;
@@ -160,7 +164,25 @@ int wmain(int argc, wchar_t** argv) {
         if (selectedTab == 11 || selectedTab == 12)
             ScopedCrosshairDraw({true, .0005f, selectedTab == 12 ? .04f : .001f, 1},
                 io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);
-        else DrawPublicMenu();
+        else if (selectedTab == 16) {
+            // Synthetic copied footprints, rendered by the production aura path.
+            // This checks drawing only, without claiming native gameplay output.
+            std::array<bool,1024> columns{};
+            for (int y=10;y<23;++y) for (int x=10;x<23;++x)
+                columns[x+32*y]=(x-16)*(x-16)+(y-16)*(y-16)<42 && !(x>18 && y<15);
+            std::array<GrenadeArea,2> areas;
+            areas[0].edges=GrenadeSmokeBoundary(columns,{-240,0,0},20);
+            areas[1].kind=GrenadeAreaKind::Molotov;
+            GrenadeDisk disks[]{{{170,0,0},65},{{230,35,0},65},{{280,-15,0},65},{{170,-70,0},50}};
+            areas[1].edges=GrenadeDiskBoundary(disks);
+            EspMatrix4x4 matrix{};
+            matrix.m[0][0]=1.0f/500; matrix.m[1][1]=1.0f/300; matrix.m[3][3]=1;
+            auto* draw=ImGui::GetBackgroundDrawList();
+            draw->AddText({24,24},IM_COL32(225,230,240,255),"GRENADE BORDER AURAS / SYNTHETIC FOOTPRINT PREVIEW");
+            draw->AddText({24,48},IM_COL32(150,165,180,255),"Smoke voxel columns (blue) and active flame patches (orange)");
+            GrenadeSettings settings; settings.smokeAura=settings.molotovAura=true;
+            GrenadeDraw(areas,matrix,io.DisplaySize.x,io.DisplaySize.y,settings);
+        } else DrawPublicMenu();
         ImGui::Render();
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
@@ -168,7 +190,7 @@ int wmain(int argc, wchar_t** argv) {
                 menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 13 ? 0 : selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
                 if (((selectedTab >= 6 && selectedTab <= 8) || selectedTab >= 13) && !menu->DC.ChildWindows.empty()) {
                     auto* child = menu->DC.ChildWindows[0];
-                    child->StateStorage.SetInt(child->GetID(selectedTab >= 13 ? "Player chams" : selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
+                    child->StateStorage.SetInt(child->GetID(selectedTab == 15 ? "Grenades" : selectedTab >= 13 ? "Player chams" : selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
                     child->StateStorage.SetInt(child->GetID("Live preview"), 0);
                 }
             }
