@@ -82,8 +82,12 @@ rejection, every named landmark, three chest levels and callback ownership.
 capsules, mirrored endpoints and in-place bone-name invalidation. These are
 synthetic tests; no observed live hit registration is claimed.
 
-The command runtime ranks qualifying shots by geometric hitchance multiplied
-by predicted direct-ray damage capped to copied enemy health. Equal scores
+The command runtime first prefers qualifying lethal shots over nonlethal shots.
+Lethality compares the conservative whole-HP direct-ray estimate to copied enemy
+health; it never bypasses automatic eligibility gates. Among lethal shots,
+higher geometric hitchance wins, with no extra priority for overkill. Remaining
+candidates rank by geometric hitchance multiplied by predicted direct-ray
+damage capped to copied enemy health. Equal scores
 prefer higher hitchance, smaller centered angle, then pawn handle and landmark
 enum order. All automatic thresholds remain eligibility gates. Immediately
 shootable candidates outrank quickstop fallbacks; the latter use the same score
@@ -105,3 +109,25 @@ mask/health changes. Both DLLs retain zero static TLS and delay imports. All 23
 installed-file components pass in
 `logs/compatibility/20261020T132158578600Z/`. All 18 wrong name mutations are
 rejected; normal and narrow software-D3D11 menu previews were inspected.
+
+## Full-health lethal-shot correction
+
+The reported body preference exposed a policy limitation: the original score
+could rank a 90-damage shot at 100% above a lethal headshot at 70–89% against
+100 HP. A 70-HP minimum alone only makes shots eligible. The new comparator
+gives qualifying one-bullet kills priority before expected nonlethal damage.
+It still prefers the more reliable body region when both shots are lethal,
+or when the head fails the configured minimum hitchance.
+
+The runtime regression models a 100-HP enemy, head damage 300, body damage 90,
+head hitchance between 70% and 90%, body hitchance 100%, and both minimums at
+70. Both candidate orders and both quickstop settings choose head. Raising
+minimum hitchance to 100% excludes head and retains body. No native contract
+or client lifecycle changes are part of this correction.
+
+Both Release payloads rebuild successfully; public and diagnostic CTest runs
+each pass 53/53 suites, including 213 integrated pipeline checks. Logs are
+`logs/lethal-ranking-ctest-public.txt` and
+`logs/lethal-ranking-ctest-diagnostic.txt`. Both payloads retain zero static
+TLS and delay imports. No game was launched for this correction, and no live
+behavior of the new comparator is claimed.

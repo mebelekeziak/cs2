@@ -190,6 +190,15 @@ float ExpectedDamage(const Decision& decision) noexcept {
 }
 bool BetterShot(const Decision& candidate, const Decision& current) noexcept {
     if (!current.selected) return true;
+    // Once the configured gates pass, a one-bullet kill takes priority over
+    // nonlethal chip damage. Overkill does not outweigh a more reliable kill.
+    const bool lethal = candidate.target.enemy.health > 0 &&
+        candidate.damage.healthDamage >= candidate.target.enemy.health;
+    const bool previousLethal = current.target.enemy.health > 0 &&
+        current.damage.healthDamage >= current.target.enemy.health;
+    if (lethal != previousLethal) return lethal;
+    if (lethal && candidate.chance.percent != current.chance.percent)
+        return candidate.chance.percent > current.chance.percent;
     const float score = ExpectedDamage(candidate), previous = ExpectedDamage(current);
     if (score != previous) return score > previous;
     if (candidate.chance.percent != current.chance.percent) return candidate.chance.percent > current.chance.percent;

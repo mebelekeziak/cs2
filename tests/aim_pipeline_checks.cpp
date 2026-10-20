@@ -925,6 +925,30 @@ void MultihitgroupChecks(World& world) {
         SilentAimSetSettings(settings);
     };
     for (bool reversed : {false, true}) {
+        for (bool quickstop : {false, true}) {
+            configure(); reverseHitgroups = reversed; weapon.inaccuracy = .1f;
+            groupRadius = {7, 20}; groupDamage = {300, 90};
+            auto lethalSettings = SilentAimGetSettings();
+            lethalSettings.minDamage = 70; lethalSettings.hitchance = 70; lethalSettings.quickstop = quickstop;
+            SilentAimSetSettings(lethalSettings);
+            Command kill;
+            world.Prepare(kill); world.History(kill);
+            Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1 &&
+                shotMetadata[0].hitchance >= 70 && shotMetadata[0].hitchance < 90 && LastBrake(false),
+                "full-HP lethal head passing 70/70 outranks 90-damage certain body; reversed=" +
+                std::to_string(reversed) + " quickstop=" + std::to_string(quickstop));
+
+            configure(); reverseHitgroups = reversed; weapon.inaccuracy = .1f;
+            groupRadius = {7, 20}; groupDamage = {300, 90};
+            lethalSettings = SilentAimGetSettings();
+            lethalSettings.minDamage = 70; lethalSettings.hitchance = 100;
+            SilentAimSetSettings(lethalSettings);
+            Command belowThreshold;
+            world.Prepare(belowThreshold); world.History(belowThreshold);
+            Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+                "lethal head below hitchance cannot displace eligible nonlethal body");
+        }
+
         configure(); reverseHitgroups = reversed;
         Command powerful;
         world.Prepare(powerful); world.History(powerful);

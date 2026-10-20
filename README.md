@@ -779,15 +779,19 @@ eight groups leaves aim acquisition, autofire and quickstop inactive.
 Every enabled landmark within FOV is evaluated independently using its current
 authored capsule, the same command's weapon snapshot, estimated hitchance and
 native direct-ray damage. Automatic candidates must pass minimum damage and
-hitchance. Among passing shots, selection maximizes **hitchance × damage capped
-at remaining target health**; equal scores prefer higher hitchance, then smaller
-angle, then stable entity/landmark order. This avoids valuing excess overkill
-above a more reliable lethal shot. Immediately shootable regions take priority
+hitchance. Among passing shots, **a lethal shot takes priority over a nonlethal
+shot**. Lethality uses the conservative whole-HP damage estimate versus current
+target health. When several shots are lethal, higher hitchance wins; excess
+overkill adds no priority. Otherwise selection maximizes **hitchance × damage
+capped at remaining target health**. Equal scores prefer higher hitchance, then
+smaller angle, then stable entity/landmark order. A qualifying lethal headshot
+therefore beats a certain 90-damage body shot against 100 HP. Headshots below
+the configured hitchance remain ineligible. Immediately shootable regions take priority
 over regions needing quickstop; only clear, ready regions passing minimum
 damage can become quickstop fallbacks. Selection considers enabled regions on
 all enemies in FOV, without pruning farther candidates before evaluation.
 
-Manual fire uses the same expected-damage ranking when estimates are available,
+Manual fire uses the same lethal-first ranking when estimates are available,
 without imposing automatic thresholds. If every estimate is unavailable or
 blocked, it retains nearest enabled landmark aiming and physical fire input.
 These are estimated selected-capsule probabilities and central-ray damage;
@@ -805,6 +809,19 @@ inspected. Both DLLs retain zero static TLS and delay imports. Health changes
 invalidate the copied ranking state before publication. No CS2 client/server
 was launched; live shot selection and hit registration remain unobserved.
 See [multihitgroup evidence](tools/CS2_AIM_MULTIHITGROUP_EVIDENCE.md).
+
+**Lethal-shot ranking correction, October 20, 2026:** the original expected-HP
+score could favor a nonlethal 90-damage body shot at 100% over a lethal headshot
+at 70–89% against a full-health enemy. Lethal-first ranking now resolves this
+after the existing minimum gates. The integrated regression exercises both
+candidate orders and quickstop settings with 70 minimum damage and 70%
+hitchance, and verifies that a below-threshold head remains excluded. The
+minimum-damage slider is still an eligibility gate; it grants no bypass for
+lethal shots. Restart CS2 normally before loading this rebuilt DLL.
+Public and diagnostic Release payloads rebuild successfully and each pass
+**53/53 CTest suites**, including **213 integrated aim pipeline checks**.
+Both retain zero static TLS and delay imports. No client/server was launched
+for this correction; live behavior of the new ranking remains unobserved.
 
 **Autofire** starts off. Enable it to request primary fire when the current
 estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
