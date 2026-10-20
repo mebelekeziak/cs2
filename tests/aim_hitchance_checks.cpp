@@ -1,4 +1,5 @@
 #include "aim_hitchance.h"
+#include "aim_hitchance_reference.h"
 #include "silent_aim_target.h"
 #include "aim_geometry_offsets.h"
 #include "silent_aim_hitbox_offsets.h"
@@ -136,6 +137,102 @@ void SamplingChecks() {
     input.spread = .01f; input.recoilIndex = -1; Expect(!AimEstimateHitchance(input).valid, "negative recoil index is unavailable");
     input.recoilIndex = 0; input.angles.pitch = std::numeric_limits<float>::infinity();
     Expect(!AimEstimateHitchance(input).valid, "nonfinite combined shot angles are unavailable");
+}
+
+void PreparedSamplingChecks() {
+    const auto equivalent = [](const AimHitchanceInput& input, const AimSpreadPattern& pattern) {
+        const auto reference = aim_hitchance_reference::AimEstimateHitchance(input);
+        const auto scalar = AimEstimateHitchance(input);
+        const auto prepared = AimEstimateHitchance(input, pattern);
+        const auto same = [&](const AimHitchanceResult& value) {
+            return value.valid == reference.valid && value.hits == reference.hits &&
+                value.samples == reference.samples && value.percent == reference.percent &&
+                std::strcmp(value.reason, reference.reason) == 0;
+        };
+        Expect(same(scalar) && same(prepared), "optimized and prepared estimates exactly match frozen scalar reference");
+    };
+    AimSpreadPattern pattern{};
+    for (int variant = 0; variant < 160; ++variant) {
+        AimHitchanceInput input{};
+        input.eye = {static_cast<float>((variant % 11 - 5) * 125), static_cast<float>((variant % 13 - 6) * 71),
+            static_cast<float>((variant % 5 - 2) * 27)};
+        input.angles = {static_cast<float>((variant % 9 - 4) * 9), static_cast<float>((variant % 17 - 8) * 18),
+            static_cast<float>((variant % 7 - 3) * 8)};
+        const double pitch = input.angles.pitch * .01745329251994329577;
+        const double yaw = input.angles.yaw * .01745329251994329577;
+        const float distance = 100.0f + 47.0f * (variant % 60);
+        const AimVector center{input.eye.x + distance * static_cast<float>(std::cos(pitch) * std::cos(yaw)),
+            input.eye.y + distance * static_cast<float>(std::cos(pitch) * std::sin(yaw)),
+            input.eye.z - distance * static_cast<float>(std::sin(pitch))};
+        const float axis = static_cast<float>(variant % 7);
+        input.capsule = {{center.x - axis, center.y + axis, center.z - 2 * axis},
+            {center.x + axis, center.y - axis, center.z + 2 * axis}, .25f + (variant % 31) * .41f};
+        input.range = distance * (variant % 6 == 0 ? .8f : 2.0f);
+        input.inaccuracy = variant % 9 == 0 ? 0 : .002f * (variant % 20);
+        input.spread = variant % 7 == 0 ? 0 : .001f * (variant % 30);
+        input.recoilIndex = (variant % 9) * .5f;
+        input.negev = (variant & 1) != 0;
+        input.forceMaxRadius = (variant & 2) != 0;
+        input.fixedSpreadAngle = (variant & 4) != 0;
+        for (unsigned samples : {1u, 64u, 127u, 256u, 1024u, 1025u}) {
+            input.samples = samples;
+            Expect(AimPrepareSpreadPattern(input, pattern) == (samples <= AimSpreadPattern::Capacity),
+                "prepared pattern is bounded to runtime capacity without limiting standalone samples");
+            equivalent(input, pattern);
+        }
+        // An angle or geometry change can reuse spread. Model changes cannot.
+        input.samples = 256;
+        AimPrepareSpreadPattern(input, pattern);
+        input.angles.roll += .25f;
+        input.capsule.start.z -= .75f;
+        equivalent(input, pattern);
+        input.inaccuracy += .0005f;
+        equivalent(input, pattern);
+        input.spread += .0005f;
+        equivalent(input, pattern);
+        input.recoilIndex += .25f;
+        equivalent(input, pattern);
+        input.negev = !input.negev;
+        equivalent(input, pattern);
+        input.forceMaxRadius = !input.forceMaxRadius;
+        equivalent(input, pattern);
+        input.fixedSpreadAngle = !input.fixedSpreadAngle;
+        equivalent(input, pattern);
+        input.samples = 64;
+        equivalent(input, pattern);
+    }
+    AimHitchanceInput input{};
+    input.capsule = {{1000, 0, -4}, {1000, 0, 4}, 5}; input.range = 2000;
+    input.inaccuracy = .01f; input.spread = .01f; input.samples = 65536;
+    Expect(!AimPrepareSpreadPattern(input, pattern), "large standalone sample count uses scalar fallback");
+    equivalent(input, pattern);
+    input.samples = 256;
+    AimPrepareSpreadPattern(input, pattern);
+    for (unsigned bad = 0; bad < 11; ++bad) {
+        auto invalid = input;
+        switch (bad) {
+        case 0: invalid.eye.x = INFINITY; break;
+        case 1: invalid.capsule.radius = 0; break;
+        case 2: invalid.inaccuracy = -1; break;
+        case 3: invalid.spread = NAN; break;
+        case 4: invalid.range = 0; break;
+        case 5: invalid.range = INFINITY; break;
+        case 6: invalid.recoilIndex = NAN; break;
+        case 7: invalid.angles.yaw = NAN; break;
+        case 8: invalid.angles.roll = 361; break;
+        case 9: invalid.samples = 0; break;
+        case 10: invalid.samples = 65537; break;
+        }
+        equivalent(invalid, pattern);
+    }
+    input.inaccuracy = input.spread = 0;
+    input.samples = 1024;
+    AimPrepareSpreadPattern(input, pattern);
+    equivalent(input, pattern);
+    input.angles.yaw = 90;
+    equivalent(input, pattern);
+    input.spread = -0.0f;
+    equivalent(input, pattern);
 }
 
 namespace ent = cs2_offsets;
@@ -317,7 +414,7 @@ void LimbGeometryChecks() {
 }
 
 int main() {
-    IntersectionChecks(); SamplingChecks(); GeometryChecks(); LimbGeometryChecks();
+    IntersectionChecks(); SamplingChecks(); PreparedSamplingChecks(); GeometryChecks(); LimbGeometryChecks();
     std::printf("Hitchance checks: %d; failures: %d\n",checks,failures);
     return failures ? 1 : 0;
 }

@@ -65,6 +65,7 @@ struct Decision {
     bool selected = false;
     bool automaticEligible = false;
     bool quickstopEligible = false;
+    bool cannotImprove = false;
 };
 struct Pending {
     AimAutofirePatch patch{};
@@ -83,6 +84,22 @@ std::uint32_t lastDecisionTarget = UINT32_MAX;
 ULONGLONG lastDecisionReport = 0;
 ULONGLONG lastEventReport = 0;
 const char* lastObservedAction = "not evaluated";
+struct AimPerformance {
+    std::uint64_t evaluations = 0, candidates = 0, estimates = 0, traces = 0, bounded = 0, boundedEstimates = 0, cooldownSkips = 0, patterns = 0;
+    double lastUs = 0, totalUs = 0, peakUs = 0;
+} performance{};
+struct MeasureEvaluation {
+    LARGE_INTEGER start{};
+    MeasureEvaluation() noexcept { QueryPerformanceCounter(&start); }
+    ~MeasureEvaluation() noexcept {
+        LARGE_INTEGER end{}, frequency{};
+        if (!QueryPerformanceCounter(&end) || !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return;
+        performance.lastUs = 1000000.0 * static_cast<double>(end.QuadPart - start.QuadPart) / static_cast<double>(frequency.QuadPart);
+        performance.totalUs += performance.lastUs;
+        performance.peakUs = std::max(performance.peakUs, performance.lastUs);
+        ++performance.evaluations;
+    }
+};
 
 template<class T> bool Read(std::uintptr_t address, T& value) noexcept {
     return MovementCopy(address, &value, sizeof(value));
@@ -138,9 +155,12 @@ Pending* Request(std::uintptr_t command) noexcept {
 struct WeaponSample {
     AimWeaponSnapshot value{};
     bool read = false, valid = false;
+    AimSpreadPattern pattern{};
+    bool patternAttempted = false;
 };
 bool Reachable(Decision& decision, bool enforceMinimum = true) noexcept;
-Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon) noexcept {
+bool BetterShot(const Decision& candidate, const Decision& current) noexcept;
+Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon, const Decision& best) noexcept {
     const auto& settings = result.settings;
     const char* geometryReason = "geometry unavailable";
     const bool geometry = SilentAimReadTargetVolume(result.source, result.target, result.volume, geometryReason);
@@ -159,6 +179,19 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
         result.reason = weaponPrepared ? result.weapon.reason : "weapon model verification unavailable"; return result;
     }
     if (!geometry) { result.reason = geometryReason; return result; }
+    // Even a perfect lethal estimate cannot improve this candidate's rank.
+    // Use the copied capsule center for angle ties before applying this bound.
+    if (best.selected) {
+        auto optimistic = result;
+        optimistic.chance.percent = 100;
+        optimistic.damage.damage = static_cast<float>(result.target.enemy.health);
+        optimistic.damage.healthDamage = result.target.enemy.health;
+        if (!BetterShot(optimistic, best)) {
+            result.cannotImprove = true; result.reason = "candidate cannot improve winning shot";
+            ++performance.boundedEstimates;
+            return result;
+        }
+    }
     AimHitchanceInput cone{};
     cone.eye = result.target.eye;
     cone.angles = {result.target.solution.angles.pitch + result.weapon.aimPunch.pitch,
@@ -169,7 +202,12 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
     cone.range = result.weapon.range; cone.recoilIndex = result.weapon.recoilIndex;
     cone.samples = static_cast<unsigned>(settings.samples); cone.negev = result.weapon.negev;
     cone.forceMaxRadius = result.weapon.forceMaxRadius; cone.fixedSpreadAngle = result.weapon.fixedSpreadAngle;
-    result.chance = AimEstimateHitchance(cone);
+    if (!weapon.patternAttempted) {
+        weapon.patternAttempted = true;
+        if (AimPrepareSpreadPattern(cone, weapon.pattern)) ++performance.patterns;
+    }
+    ++performance.estimates;
+    result.chance = AimEstimateHitchance(cone, weapon.pattern);
     if (!result.chance.valid) result.reason = result.chance.reason;
     else if (result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
     else if (!result.weapon.ready) result.reason = result.weapon.reason;
@@ -209,11 +247,22 @@ bool BetterShot(const Decision& candidate, const Decision& current) noexcept {
     return candidate.target.hitbox < current.target.hitbox;
 }
 bool EligibleTarget(const AimTarget& target, void* context) noexcept {
+    ++performance.candidates;
     auto& selection = *static_cast<AutofireSelection*>(context);
     auto candidate = selection.prototype;
     candidate.target = target;
     candidate.selected = true;
-    candidate = EvaluateTarget(candidate, selection.view, selection.weapon);
+    candidate = EvaluateTarget(candidate, selection.view, selection.weapon, selection.accepted);
+    if (candidate.cannotImprove) return false;
+    // A candidate cannot do better than a lethal hit at its measured chance.
+    // This bound preserves the complete ranking, including health/angle ties.
+    // It skips only native path/damage work, never sampling or final validation.
+    if (candidate.chance.valid && selection.accepted.selected) {
+        auto optimistic = candidate;
+        optimistic.damage.damage = static_cast<float>(candidate.target.enemy.health);
+        optimistic.damage.healthDamage = candidate.target.enemy.health;
+        if (!BetterShot(optimistic, selection.accepted)) { ++performance.bounded; return false; }
+    }
     if (candidate.chance.valid && (!selection.automatic || candidate.weapon.ready) &&
         (!selection.automatic || candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) &&
         Reachable(candidate, selection.automatic)) {
@@ -246,16 +295,33 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
     return false;
 }
 Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool selectEligible = false) noexcept {
+    MeasureEvaluation measure;
     Decision result{};
     result.settings = settings;
     ++decisions;
     if (!Source(result.source)) {
         ++sourceRejected; result.reason = "local source unavailable"; return result;
     }
+    // Automatic scans cannot request a shot or brake during cooldown. Observe
+    // the current weapon once before enumerating any actors/capsules. Manual
+    // shot history retains its independent aiming path, including cooldown.
+    AimWeaponSnapshot readyWeapon{};
+    bool readyRead = false;
+    if (selectEligible) {
+        readyRead = weaponPrepared && AimWeaponRead(weaponContext, result.source, readyWeapon);
+        if (!readyRead || !readyWeapon.ready) {
+            result.weapon = readyWeapon;
+            result.reason = weaponPrepared ? readyWeapon.reason : "weapon model verification unavailable";
+            ++performance.cooldownSkips;
+            targetDiagnostics = {}; targetDiagnostics.stage = "weapon not ready; target scan skipped";
+            return result;
+        }
+    }
     AutofireSelection selection{};
     selection.prototype = result;
     selection.view = view;
     selection.automatic = selectEligible;
+    if (selectEligible) { selection.weapon.value = readyWeapon; selection.weapon.read = true; selection.weapon.valid = readyRead; }
     const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitgroups, bones,
         result.target, &targetDiagnostics, &EligibleTarget, &selection);
     if (found) { ++selected; return selection.accepted; }
@@ -304,7 +370,8 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
-    return SameSource(decision.source) && SilentAimTargetValid(decision.source, decision.target) &&
+    // Volume validation includes current target ownership, health and pose.
+    return SameSource(decision.source) &&
         SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
         AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) &&
         (!decision.damage.valid || AimDamageStillCurrent(damageContext, decision.source, decision.target,
@@ -312,6 +379,7 @@ bool Current(const Decision& decision) noexcept {
 }
 bool Reachable(Decision& decision, bool enforceMinimum) noexcept {
     if (!Current(decision)) { decision.reason = "target or weapon changed before occlusion check"; return false; }
+    ++performance.traces;
     decision.occlusion = AimOcclusionCheck(occlusionContext, decision.source, decision.target, decision.volume);
     if (!decision.occlusion.valid || !decision.occlusion.clear) {
         ++occlusionRejected;
@@ -564,6 +632,7 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
         const auto settings = SilentAimGetSettings();
         AimAngles view{};
         if (!settings.enabled) { prepareStage = "disabled"; Status("disabled"); }
+        else if (!settings.autofire) { prepareStage = "manual_history_only"; Status("manual mode awaiting primary-fire history"); }
         else if (!SilentAimReadView(address, view, &viewDiagnostics)) {
             ++viewRejected; prepareStage = viewDiagnostics.reason; Status("native physical view unavailable");
         }
@@ -666,6 +735,16 @@ void SilentAimFlushTelemetry() noexcept {
         viewDiagnostics.values.pitch, viewDiagnostics.values.yaw, viewDiagnostics.values.roll);
     ReleaseSRWLockShared(&mutationLock);
     logger(prepareMessage);
+    char performanceMessage[512]{};
+    AcquireSRWLockShared(&mutationLock);
+    std::snprintf(performanceMessage, sizeof(performanceMessage),
+        "AIM_PERFORMANCE evaluations=%llu last_us=%.1f mean_us=%.1f peak_us=%.1f candidates=%llu estimates=%llu spread_patterns=%llu traces=%llu bounded_estimates=%llu bounded_traces=%llu weapon_scan_skips=%llu; cumulative command-owner counters; no per-candidate sink I/O",
+        performance.evaluations, performance.lastUs,
+        performance.evaluations ? performance.totalUs / static_cast<double>(performance.evaluations) : 0.0,
+        performance.peakUs, performance.candidates, performance.estimates, performance.patterns,
+        performance.traces, performance.boundedEstimates, performance.bounded, performance.cooldownSkips);
+    ReleaseSRWLockShared(&mutationLock);
+    logger(performanceMessage);
 }
 
 #ifdef CS2_AIM_PIPELINE_CHECKS
@@ -681,6 +760,7 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     occlusionContext = {base, true};
     callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
     decisions = requested = fired = cancelled = chanceRejected = occlusionRejected = damageRejected = 0;
+    performance = {};
     commandDiagnostics = {}; targetDiagnostics = {}; fireDiagnostics = {};
     viewDiagnostics = {}; prepareCalls = prepareEvaluated = viewRejected = prepareBlocked = 0;
     prepareStage = "not_called"; logger = callback; lastSummary = 0;

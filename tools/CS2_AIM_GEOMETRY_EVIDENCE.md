@@ -102,7 +102,7 @@ game asset or research-only dependency was added to the runtime or build.
 
 ## Probability model and scope
 
-`AimEstimateHitchance` evaluates every requested sample against the copied
+`AimEstimateHitchance` accounts for every requested sample against the copied
 selected capsule and current finite weapon range. It uses four deterministic
 Halton dimensions (bases 2, 3, 5 and 7) to integrate two independent uniform
 radii and two independent uniform angles. There is no `sqrt(U)` radial

@@ -1,6 +1,8 @@
 #include "aim_hitchance.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 
 namespace {
 struct Vector { double x, y, z; };
@@ -21,14 +23,28 @@ double Clamp(double value) noexcept { return std::clamp(value, 0.0, 1.0); }
 
 // Minimize |w + s*u - t*v|^2 over the unit square. Its minimum lies at the
 // stationary point or on one of four edges, including zero-length segments.
-double DistanceSquared(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
-    const double directionLength = std::sqrt(Dot(direction, direction));
+struct CapsuleBasis {
+    Vector v{}, w{};
+    double c = 0, e = 0, minimum = 0, threshold = 0;
+};
+CapsuleBasis PrepareCapsule(Vector origin, const AimCapsule& capsule) noexcept {
+    CapsuleBasis basis{};
+    basis.v = Sub(Copy(capsule.end), Copy(capsule.start));
+    basis.w = Sub(origin, Copy(capsule.start));
+    basis.c = Dot(basis.v, basis.v);
+    basis.e = Dot(basis.v, basis.w);
+    basis.minimum = Dot(basis.w, basis.w);
+    const double radiusSquared = static_cast<double>(capsule.radius) * capsule.radius;
+    basis.threshold = radiusSquared + std::max(1e-12, radiusSquared * 1e-10);
+    return basis;
+}
+double DistanceSquared(Vector direction, double range, double directionLength, const CapsuleBasis& basis) noexcept {
     if (!std::isfinite(directionLength) || directionLength < 1e-15) return INFINITY;
     const Vector u = Mul(direction, range / directionLength);
-    const Vector v = Sub(Copy(capsule.end), Copy(capsule.start));
-    const Vector w = Sub(origin, Copy(capsule.start));
-    const double a = Dot(u, u), b = Dot(u, v), c = Dot(v, v), d = Dot(u, w), e = Dot(v, w);
-    double minimum = Dot(w, w);
+    const auto& v = basis.v;
+    const auto& w = basis.w;
+    const double a = Dot(u, u), b = Dot(u, v), c = basis.c, d = Dot(u, w), e = basis.e;
+    double minimum = basis.minimum;
     const auto consider = [&](double s, double t) noexcept {
         const Vector delta = Sub(Add(w, Mul(u, s)), Mul(v, t));
         minimum = std::min(minimum, Dot(delta, delta));
@@ -44,6 +60,9 @@ double DistanceSquared(Vector origin, Vector direction, double range, const AimC
         if (s >= 0 && s <= 1 && t >= 0 && t <= 1) consider(s, t);
     }
     return minimum;
+}
+double DistanceSquared(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
+    return DistanceSquared(direction, range, std::sqrt(Dot(direction, direction)), PrepareCapsule(origin, capsule));
 }
 bool Intersects(Vector origin, Vector direction, double range, const AimCapsule& capsule) noexcept {
     const double radiusSquared = static_cast<double>(capsule.radius) * capsule.radius;
@@ -67,6 +86,41 @@ double Radius(double uniform, const AimHitchanceInput& input) noexcept {
     }
     return uniform;
 }
+bool SpreadModel(const AimHitchanceInput& input) noexcept {
+    return std::isfinite(input.inaccuracy) && input.inaccuracy >= 0 && input.inaccuracy <= 1 &&
+        std::isfinite(input.spread) && input.spread >= 0 && input.spread <= 1 &&
+        std::isfinite(input.recoilIndex) && input.recoilIndex >= 0;
+}
+std::array<double, 2> SpreadOffset(unsigned index, const AimHitchanceInput& input) noexcept {
+    constexpr double circle = 6.2831853071795864769;
+    const double radiusA = Radius(RadicalInverse(index, 2), input) * input.inaccuracy;
+    const double radiusB = Radius(RadicalInverse(index, 5), input) * input.spread;
+    const double angleA = input.fixedSpreadAngle ? circle * .25 : circle * RadicalInverse(index, 3);
+    const double angleB = input.fixedSpreadAngle ? circle * .25 : circle * RadicalInverse(index, 7);
+    return {std::cos(angleA) * radiusA + std::cos(angleB) * radiusB,
+            std::sin(angleA) * radiusA + std::sin(angleB) * radiusB};
+}
+bool SameFloat(float left, float right) noexcept {
+    return std::bit_cast<std::uint32_t>(left) == std::bit_cast<std::uint32_t>(right);
+}
+bool Matches(const AimHitchanceInput& input, const AimSpreadPattern& pattern) noexcept {
+    return pattern.valid && input.samples <= AimSpreadPattern::Capacity && pattern.samples == input.samples &&
+        SameFloat(pattern.inaccuracy, input.inaccuracy) && SameFloat(pattern.spread, input.spread) &&
+        SameFloat(pattern.recoilIndex, input.recoilIndex) && pattern.negev == input.negev &&
+        pattern.forceMaxRadius == input.forceMaxRadius && pattern.fixedSpreadAngle == input.fixedSpreadAngle;
+}
+}
+
+bool AimPrepareSpreadPattern(const AimHitchanceInput& input, AimSpreadPattern& pattern) noexcept {
+    pattern.valid = false;
+    if (!SpreadModel(input) || !input.samples || input.samples > AimSpreadPattern::Capacity) return false;
+    pattern.inaccuracy = input.inaccuracy; pattern.spread = input.spread; pattern.recoilIndex = input.recoilIndex;
+    pattern.samples = input.samples; pattern.negev = input.negev;
+    pattern.forceMaxRadius = input.forceMaxRadius; pattern.fixedSpreadAngle = input.fixedSpreadAngle;
+    if (input.inaccuracy == 0 && input.spread == 0) pattern.offsets[0] = SpreadOffset(1, input);
+    else for (unsigned index = 1; index <= input.samples; ++index) pattern.offsets[index - 1] = SpreadOffset(index, input);
+    pattern.valid = true;
+    return true;
 }
 
 bool AimRayIntersectsCapsule(const AimVector& origin, const AimVector& direction,
@@ -83,15 +137,14 @@ float AimRayCapsuleMissDistance(const AimVector& origin, const AimVector& direct
     return std::isfinite(squared) ? static_cast<float>(std::max(0.0, std::sqrt(squared) - capsule.radius)) : -1;
 }
 
-AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept {
+namespace {
+AimHitchanceResult Estimate(const AimHitchanceInput& input, const AimSpreadPattern* pattern) noexcept {
     AimHitchanceResult result{};
     result.reason = "invalid geometry";
     if (!Finite(input.eye) || !Capsule(input.capsule)) return result;
     result.reason = "invalid spread model";
-    if (!std::isfinite(input.inaccuracy) || input.inaccuracy < 0 || input.inaccuracy > 1 ||
-        !std::isfinite(input.spread) || input.spread < 0 || input.spread > 1 ||
-        !std::isfinite(input.range) || input.range <= 0 || input.range > 1000000 ||
-        !std::isfinite(input.recoilIndex) || input.recoilIndex < 0) return result;
+    if (!SpreadModel(input) ||
+        !std::isfinite(input.range) || input.range <= 0 || input.range > 1000000) return result;
     result.reason = "invalid aim angles";
     // Native recoil may carry the eventual shot direction beyond view limits.
     if (!std::isfinite(input.angles.pitch) || std::abs(input.angles.pitch) > 360 ||
@@ -99,7 +152,7 @@ AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept
         !std::isfinite(input.angles.roll) || std::abs(input.angles.roll) > 360) return result;
     result.reason = "invalid sample count";
     if (!input.samples || input.samples > 65536) return result;
-    constexpr double radians = 0.01745329251994329577, circle = 6.2831853071795864769;
+    constexpr double radians = 0.01745329251994329577;
     const double cp = std::cos(input.angles.pitch * radians), sp = std::sin(input.angles.pitch * radians);
     const double cy = std::cos(input.angles.yaw * radians), sy = std::sin(input.angles.yaw * radians);
     const double cr = std::cos(input.angles.roll * radians), sr = std::sin(input.angles.roll * radians);
@@ -107,24 +160,32 @@ AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept
     const Vector right{-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp};
     const Vector up{cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp};
     const Vector eye = Copy(input.eye);
-    for (unsigned index = 1; index <= input.samples; ++index) {
+    const auto capsule = PrepareCapsule(eye, input.capsule);
+    const bool prepared = pattern && Matches(input, *pattern);
+    const bool identical = input.inaccuracy == 0 && input.spread == 0;
+    const unsigned count = identical ? 1 : input.samples;
+    for (unsigned index = 1; index <= count; ++index) {
         // Native primary fire draws both radii uniformly, rather than sqrt(U).
-        const double radiusA = Radius(RadicalInverse(index, 2), input) * input.inaccuracy;
-        const double radiusB = Radius(RadicalInverse(index, 5), input) * input.spread;
-        const double angleA = input.fixedSpreadAngle ? circle * .25 : circle * RadicalInverse(index, 3);
-        const double angleB = input.fixedSpreadAngle ? circle * .25 : circle * RadicalInverse(index, 7);
-        const double x = std::cos(angleA) * radiusA + std::cos(angleB) * radiusB;
-        const double y = std::sin(angleA) * radiusA + std::sin(angleB) * radiusB;
+        const auto offset = prepared ? pattern->offsets[index - 1] : SpreadOffset(index, input);
+        const double x = offset[0], y = offset[1];
         const Vector direction = Add(forward, Add(Mul(right, x), Mul(up, y)));
         // The native consumer multiplies this raw basis sum by weapon range.
         // Intersects accepts world segment length, so retain the native endpoint
         // while normalizing its direction for the geometric distance solver.
         const double length = std::sqrt(Dot(direction, direction));
-        result.hits += Intersects(eye, direction, input.range * length, input.capsule);
+        result.hits += DistanceSquared(direction, input.range * length, length, capsule) <= capsule.threshold;
     }
+    if (identical && result.hits) result.hits = input.samples;
     result.samples = input.samples;
     result.percent = 100.0f * static_cast<float>(result.hits) / static_cast<float>(result.samples);
     result.valid = true;
     result.reason = "selected capsule geometry";
     return result;
+}
+}
+AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input) noexcept {
+    return Estimate(input, nullptr);
+}
+AimHitchanceResult AimEstimateHitchance(const AimHitchanceInput& input, const AimSpreadPattern& pattern) noexcept {
+    return Estimate(input, &pattern);
 }

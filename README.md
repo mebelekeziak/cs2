@@ -776,7 +776,7 @@ and Feet each scan both sides. Stomach uses the authored stomach bone
 local configs, and older presets migrate their single selection. Clearing all
 eight groups leaves aim acquisition, autofire and quickstop inactive.
 
-Every enabled landmark within FOV is evaluated independently using its current
+Enabled landmarks within FOV compete independently using their current
 authored capsule, the same command's weapon snapshot, estimated hitchance and
 native direct-ray damage. Automatic candidates must pass minimum damage and
 hitchance. Among passing shots, **a lethal shot takes priority over a nonlethal
@@ -871,9 +871,56 @@ pose, and aims at its center. It samples both native spread components with
 independent uniform radii and angles, including the Negev's early-recoil radial
 law and the installed debug spread modes. A deterministic four-dimensional
 low-discrepancy sequence avoids changing the game's RNG and gives stable results
-for unchanged inputs. Every requested sample runs; the logged percentage is
+for unchanged inputs. Estimates retain the complete requested sample count;
+when both spread components are zero, all rays are identical and one geometric
+intersection gives exactly the same count. The logged percentage is
 `hits / samples * 100`, including finite weapon range. This estimates intersection
 with the selected capsule, rather than any capsule on the enemy.
+
+**Multihitgroup performance correction, October 20, 2026:** spread offsets are
+prepared once per decision and shared across enemy capsules. Capsule invariants
+are computed once per estimate. Automatic preparation samples weapon readiness
+first and skips target scans during cooldown, reload or other firing blocks;
+quickstop releases and selection resumes on the next ready command. With
+Autofire off, acquisition runs when real manual shot history arrives rather
+than during every idle preparation callback.
+
+An exact upper bound skips work only when a candidate cannot improve the
+current winner, even with a lethal hit at 100% hitchance. After actual sampling,
+the same bound can avoid a native trace if a lethal hit at that measured chance
+still cannot win. Both bounds retain health, centered angle and stable tie
+rules; they add no enemy cap, sample reduction, cross-command pointer cache or
+selection delay. Winning targets still receive fresh path/state checks before
+request and publication. Repeated nested target validation at the same boundary
+was removed; the volume validator already performs it.
+
+The synthetic five-enemy/six-capsule benchmark at 1,024 samples measures
+**5.183 ms → 1.801 ms** median for copied-geometry sampling, including shared
+pattern preparation. At 256 samples it measures **1.147 ms → 0.445 ms**.
+These timings exclude native acquisition/tracing and are not live FPS results.
+`AIM_PERFORMANCE` in the existing log reports decision microseconds and cumulative
+candidate, estimate, shared-pattern, trace, bound and weapon-scan-skip counts.
+Build and run the standalone benchmark without launching CS2:
+
+```powershell
+cmake --build build --config Release --target aim_hitchance_benchmark --parallel
+.\build\Release\aim_hitchance_benchmark.exe
+```
+
+Restart CS2 normally before loading the rebuilt DLL through **Load Overlay.cmd**.
+Stopped and resident is not physically unloaded.
+
+Performance verification: both public and diagnostic Release builds pass
+**53/53 CTest suites**, including **226 integrated pipeline checks** and
+**3,389 hitchance/geometry checks**. The estimator matches the frozen scalar
+reference exactly for the tested counts, models, flags and geometry. The
+five-enemy regression verifies 30 competing capsules share one spread pattern;
+with a perfect lethal winner, only one candidate needs sampling and native
+selection tracing, followed by fresh request/publication traces. All **25
+installed-file compatibility components** pass in
+`logs/compatibility/20261020T141705084077Z/`. Both payloads retain zero static
+TLS and delay imports. No client/server was launched for this correction;
+live FPS remains unmeasured.
 
 Spread, inaccuracy, range and current predicted aim punch come from the current
 weapon's verified native model. Punch shifts the sampled cone; outgoing aim is

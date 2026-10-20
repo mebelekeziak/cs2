@@ -131,3 +131,64 @@ each pass 53/53 suites, including 213 integrated pipeline checks. Logs are
 `logs/lethal-ranking-ctest-diagnostic.txt`. Both payloads retain zero static
 TLS and delay imports. No game was launched for this correction, and no live
 behavior of the new comparator is claimed.
+
+## Enemy-count performance correction
+
+The original path regenerated four Halton dimensions and four trigonometric
+values per spread sample per capsule. Five enemies with Head/Chest/Stomach/
+Pelvis means 30 capsules; at 1,024 samples this is 122,880 per-sample trig calls
+per scan, before native lookup/tracing. It also scanned while automatic fire
+was blocked by weapon readiness and while manual mode had no shot history.
+Guarded scalar reads already used SEH memcpy, not VirtualQuery.
+
+`AimSpreadPattern` now copies at most 1,024 spread offsets once per decision,
+and shares them across capsule angles. No native pointers, native RNG or
+cross-command state are cached. A bit-exact spread-key comparison falls back
+to scalar generation on mismatch; standalone counts through 65,536 remain
+supported. Capsule constants are hoisted and duplicate normalization square
+roots removed. Exactly zero spread has identical rays; one intersection reports
+the same full hit/sample count. Frozen reference comparisons cover 160 variants,
+Negev/recoil/debug modes, invalid data, mismatches and large-count fallback.
+
+Automatic readiness is read once before actor enumeration; unavailable or
+not-ready weapons skip the scan and release quickstop. Manual preparation
+restores command ownership/releases movement without acquisition; real shot
+history still ranks fresh targets. A centered candidate's optimistic lethal
+100%-chance result is compared with the current winner before sampling. If it
+cannot win, sampling/tracing is skipped. A second bound after sampling assumes
+lethal damage at measured chance to avoid unnecessary traces. Both bounds use
+the complete comparator, including cross-target health, angle, identity and
+landmark ties. They do not cut candidate counts or lower sample budgets.
+Final live validity and path checks remain before request and publication.
+
+Redundant explicit TargetValid calls immediately before VolumeValid were
+removed in Current and damage Sample; real VolumeValid already invokes them.
+Mocks were corrected to match that contract, with stale-state regressions kept.
+
+Synthetic benchmark output is `logs/aim-hitchance-performance.csv`, generated
+by `build/Release/aim_hitchance_benchmark.exe`. For five enemies/six capsules
+each, nonzero spread at 1,024 samples changes median copied-geometry time from
+5.1826 ms to 1.8014 ms (2.88x); p95 changes 6.4153 to 2.0068 ms. At 256 samples,
+median changes 1.1472 to 0.4451 ms. Preparation is included. Native acquisition,
+traces, runtime ranking bounds and cooldown skips are outside this benchmark;
+it establishes neither live FPS nor complete command time.
+
+`AIM_PERFORMANCE` is emitted through the existing throttled diagnostic flush.
+Its timing covers Evaluate/selection, while cumulative trace counts also
+include request/publication rechecks. It logs copied counters only, with no
+per-candidate sink I/O. The integrated five-enemy fixture verifies 30 candidates
+share one pattern and weapon read; for a perfect lethal winner only one needs
+sampling and eligibility tracing (29 exact bounds), with two fresh firing
+traces retained. Cooldown, immediate readiness recovery, manual history and
+equal-chance ties have operation-count regressions.
+
+Both public and diagnostic Release builds pass 53/53 CTest suites, including
+226 pipeline checks and 3,389 hitchance/geometry checks. Logs are
+`logs/aim-performance-ctest-public.txt` and
+`logs/aim-performance-ctest-diagnostic.txt`. All 25 installed-file components
+pass in `logs/compatibility/20261020T141705084077Z/`. Both payloads retain zero
+static TLS and delay imports. No game was launched; live FPS remains unobserved.
+
+The user subsequently reported substantially improved performance after testing
+the rebuilt payload. This is qualitative user observation; no numerical FPS
+comparison or independent live timing capture was supplied.

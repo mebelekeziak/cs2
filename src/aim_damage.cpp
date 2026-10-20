@@ -32,8 +32,10 @@ bool Scale(std::uintptr_t client, std::ptrdiff_t wrapper, float& value) noexcept
 bool Sample(const AimDamageContext& context, const AimSource& source, const AimTarget& target,
     const AimTargetVolume& volume, const AimWeaponSnapshot& weapon, AimDamageResult& result) noexcept {
     result.reason = "damage source/geometry unavailable";
+    // Volume validation includes target identity, health and pose validation.
+    // Keep one complete check at this boundary instead of nesting it twice.
     if (!context.prepared || !CurrentClient(context.client) || !weapon.weapon || !weapon.data ||
-        !SilentAimTargetValid(source, target) || !SilentAimTargetVolumeValid(source, target, volume)) return false;
+        !SilentAimTargetVolumeValid(source, target, volume)) return false;
     std::uintptr_t pawn = 0, controller = 0, system = 0, data = 0, table = 0, owner = 0, storage = 0;
     std::uint8_t immune = 0, helmet = 0, team = 0, headshotOnly = 0;
     float sourceBoost = 0, targetBoost = 0;

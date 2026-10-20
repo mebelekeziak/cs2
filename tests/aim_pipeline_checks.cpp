@@ -40,6 +40,8 @@ unsigned traceCalls = 0;
 bool multipleTargets = false, reverseCandidates = false;
 int rejectedCandidate = 0; // 1 cover, 2 range/chance, 3 missing geometry.
 unsigned weaponReads = 0;
+unsigned selectionCalls = 0, volumeReads = 0;
+unsigned performanceEnemies = 0;
 bool multiHitgroups = false, reverseHitgroups = false;
 std::array<int, 2> groupDamage{90, 40}; // Head, chest.
 std::array<float, 2> groupRadius{4, 4};
@@ -187,6 +189,8 @@ struct World {
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
+        selectionCalls = volumeReads = 0;
+        performanceEnemies = 0;
         multiHitgroups = reverseHitgroups = false; groupDamage = {90, 40}; groupRadius = {4, 4};
         coveredGroup = unavailableGroup = -1;
         targetHealth = 100; healthChangeDuringTrace = false;
@@ -544,7 +548,7 @@ void OcclusionChecks(World& world) {
     Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(manual);
-    Expect(traceCalls == 3 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1) &&
+    Expect(traceCalls == 2 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1) &&
         shotMetadata.size() == 1 && !shotMetadata[0].damageValid,
         "manual prediction observes cover without gating physical primary input or manual aiming");
 
@@ -755,15 +759,19 @@ void QuickstopChecks(World& world) {
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
     const AimBoneContext&, AimTarget& target, AimTargetDiagnostics* diagnostics,
     AimTargetFilter filter, void* filterContext) noexcept {
+    ++selectionCalls;
     if (!selectAvailable || !hitgroups) return false;
     const int capturedHealth = targetHealth;
     target = {};
-    for (int i = 0; i < (multipleTargets ? 2 : 1); ++i) {
+    constexpr AimHitbox torso[]{AimHitbox::Head, AimHitbox::Chest, AimHitbox::Stomach,
+        AimHitbox::Pelvis, AimHitbox::LowerChest, AimHitbox::MiddleChest};
+    const int enemyCount = performanceEnemies ? static_cast<int>(performanceEnemies) : multipleTargets ? 2 : 1;
+    for (int i = 0; i < enemyCount; ++i) {
         const bool fallback = multipleTargets && (reverseCandidates ? i == 0 : i == 1);
-        for (int group = 0; group < (multiHitgroups ? 2 : 1); ++group) {
+        for (int group = 0; group < (performanceEnemies ? 6 : multiHitgroups ? 2 : 1); ++group) {
         const int index = multiHitgroups ? (reverseHitgroups ? 1 - group : group) : 1;
-        const auto hitbox = index == 0 ? AimHitbox::Head : AimHitbox::Chest;
-        if (!(hitgroups & AimHitgroupBit(index == 0 ? AimHitgroup::Head : AimHitgroup::Chest))) continue;
+        const auto hitbox = performanceEnemies ? torso[group] : index == 0 ? AimHitbox::Head : AimHitbox::Chest;
+        if (!(hitgroups & AimHitboxGroup(hitbox))) continue;
         AimTarget candidate{};
         candidate.local.pawn = source.pawn;
         candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = localPawnHandle;
@@ -772,6 +780,11 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
         candidate.enemy.health = capturedHealth;
         candidate.point = fallback ? AimVector{-100, 0, 0} : AimVector{100, 10, 0}; candidate.hitbox = hitbox;
         if (multiHitgroups && index == 1) candidate.point.y = 20;
+        if (performanceEnemies) {
+            candidate.enemy.pawn = 0x555000 + i * 0x1000;
+            candidate.enemy.pawnHandle = 0x8004 + i;
+            candidate.point = {100, 10.0f + i * 10.0f + group * 2.0f, 0};
+        }
         candidate.solution = SilentAimSolve(candidate.eye, candidate.point, view, fov);
         if (!candidate.solution.valid || (!filter && target.solution.valid && candidate.solution.separation >= target.solution.separation)) continue;
         if (filter && !filter(candidate, filterContext)) continue;
@@ -786,6 +799,7 @@ bool SilentAimTargetValid(const AimSource&, const AimTarget& target) noexcept {
 }
 bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTargetVolume& volume,
     const char*& reason) noexcept {
+    ++volumeReads;
     const int group = target.hitbox == AimHitbox::Head ? 0 : 1;
     if (!volumeAvailable || (multiHitgroups && unavailableGroup == group) ||
         (rejectedCandidate == 3 && target.enemy.pawnHandle == 0x8004)) {
@@ -801,7 +815,9 @@ bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTar
     reason = "fixture authored capsule";
     return true;
 }
-bool SilentAimTargetVolumeValid(const AimSource&, const AimTarget&, const AimTargetVolume&) noexcept { return volumeCurrent; }
+bool SilentAimTargetVolumeValid(const AimSource& source, const AimTarget& target, const AimTargetVolume&) noexcept {
+    return volumeCurrent && SilentAimTargetValid(source, target);
+}
 bool AimWeaponPrepare(std::uintptr_t client, AimWeaponContext& context) noexcept { context.client = client; return true; }
 bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot& out) noexcept {
     ++weaponReads;
@@ -1048,6 +1064,89 @@ void MultihitgroupChecks(World& world) {
         "all-below-hitchance candidates choose the best expected-damage clear quickstop fallback");
 }
 
+void PerformanceChecks(World& world) {
+    for (bool quickstop : {false, true}) {
+        world.Reset(); multipleTargets = multiHitgroups = true;
+        auto settings = SilentAimGetSettings(); settings.quickstop = quickstop;
+        settings.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest);
+        SilentAimSetSettings(settings); weapon.ready = false; weapon.reason = "primary cooldown";
+        Command cooldown;
+        world.Prepare(cooldown);
+        Expect(weaponReads == 1 && selectionCalls == 0 && volumeReads == 0 && traceCalls == 0 &&
+            recorderCalls == 0 && LastBrake(false),
+            "cooldown reads weapon once and skips all target/capsule/trace work, releasing quickstop");
+        weapon.ready = true; weapon.reason = "ready";
+        Command resumed(38);
+        world.Prepare(resumed); world.History(resumed);
+        Expect(selectionCalls == 1 && volumeReads > 0 && recorderCalls == 1 && shotMetadata.size() == 1,
+            "weapon readiness resumes fresh selection immediately without a polling delay");
+    }
+    world.Reset();
+    auto settings = SilentAimGetSettings(); settings.autofire = false; SilentAimSetSettings(settings);
+    Command quiet;
+    world.Prepare(quiet);
+    Expect(selectionCalls == 0 && volumeReads == 0 && traceCalls == 0 && weaponReads == 0 && LastBrake(false),
+        "manual mode performs no scans or weapon-model work until real shot history arrives");
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(quiet);
+    Expect(selectionCalls == 1 && weaponReads == 1 && shotMetadata.size() == 1 &&
+        Equal(quiet.History(), Desired()), "manual history still receives fresh target ranking and aim");
+
+    for (bool reversed : {false, true}) {
+        world.Reset(); multiHitgroups = true; reverseHitgroups = reversed;
+        groupDamage = {300, 120};
+        settings = SilentAimGetSettings();
+        settings.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest);
+        SilentAimSetSettings(settings);
+        Command exactBound;
+        world.Prepare(exactBound); world.History(exactBound);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1 &&
+            traceCalls == (reversed ? 4u : 3u),
+            "optimistic lethal bound skips only candidates unable to win, preserving equal-chance angle ties");
+    }
+
+    world.Reset(); multiHitgroups = true; groupDamage = {90, 95};
+    settings = SilentAimGetSettings(); settings.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest);
+    SilentAimSetSettings(settings);
+    Command nonlethal;
+    world.Prepare(nonlethal); world.History(nonlethal);
+    Expect(traceCalls == 4 && shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 2,
+        "nonlethal winner cannot prune a potentially lethal or higher-damage alternative");
+
+    world.Reset();
+    SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+    Command measured;
+    world.Prepare(measured);
+    SilentAimFlushTelemetry();
+    bool measuredPerformance = false;
+    for (const auto& message : telemetry) if (message.find("AIM_PERFORMANCE") != std::string::npos &&
+        message.find("spread_patterns=1") != std::string::npos && message.find("last_us=") != std::string::npos)
+        measuredPerformance = true;
+    Expect(measuredPerformance, "bounded diagnostic flush exposes decision time and spread reuse counters");
+
+    for (bool perfect : {false, true}) {
+        world.Reset(); performanceEnemies = 5; multiHitgroups = true;
+        groupDamage = {300, 120};
+        settings = SilentAimGetSettings(); settings.hitgroups = 0x0f; settings.samples = 1024; settings.fov = 180;
+        settings.hitchance = 0; SilentAimSetSettings(settings);
+        if (!perfect) weapon.inaccuracy = .1f;
+        SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+        Command fiveEnemies;
+        world.Prepare(fiveEnemies); world.History(fiveEnemies); SilentAimFlushTelemetry();
+        bool shared = false, bounded = false;
+        for (const auto& message : telemetry) if (message.find("AIM_PERFORMANCE") != std::string::npos) {
+            shared = message.find("candidates=30 ") != std::string::npos &&
+                message.find("spread_patterns=1 ") != std::string::npos;
+            bounded = message.find("estimates=1 ") != std::string::npos &&
+                message.find("bounded_estimates=29 ") != std::string::npos;
+        }
+        Expect(shared && shotMetadata.size() == 1 && weaponReads == 1 && volumeReads == 30,
+            "five enemies and six torso capsules share exactly one 1024-sample pattern and weapon snapshot");
+        if (perfect) Expect(bounded && traceCalls == 3,
+            "perfect lethal winner leaves one sampled/traced candidate plus fresh request/publication traces");
+    }
+}
+
 void MenuCaptureChecks(World& world) {
     world.Reset();
     menuInputCapturing.store(true, std::memory_order_release);
@@ -1085,6 +1184,7 @@ int main() {
     QuickstopChecks(world);
     DamageGateChecks(world);
     MultihitgroupChecks(world);
+    PerformanceChecks(world);
     MenuCaptureChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);

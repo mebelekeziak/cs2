@@ -344,7 +344,11 @@ bool SilentAimTargetValid(const AimSource&, const AimTarget&) noexcept {
     if (mutateOnRecheck && targetValidCalls == 2) Put(enemy.data(), off::ArmorValue, 1);
     return targetValid;
 }
-bool SilentAimTargetVolumeValid(const AimSource&, const AimTarget&, const AimTargetVolume&) noexcept { return volumeValid; }
+bool SilentAimTargetVolumeValid(const AimSource& candidateSource, const AimTarget& candidateTarget, const AimTargetVolume&) noexcept {
+    // Match the real validator's contract: invalid targets cannot have current
+    // volumes, and retained damage must revalidate both at the same boundary.
+    return volumeValid && SilentAimTargetValid(candidateSource, candidateTarget);
+}
 
 int main() {
     MathChecks();
