@@ -73,6 +73,7 @@ ShotLogMetadata Metadata(std::uint64_t receipt = 1000, int sequence = 42) {
     result.hitchance = 75; result.hits = 192; result.samples = 256;
     result.spread = 0.01f; result.inaccuracy = 0.02f; result.range = 8192;
     result.automatic = result.chanceValid = result.capsuleValid = true;
+    result.damageValid = true; result.predictedDamage = 42.25f; result.minDamage = 35; result.predictedHitgroup = 1;
     return result;
 }
 ShotNativeEvent Fire(std::uint64_t at = 1010, std::uint64_t delivery = 1, const char* weapon = "ak47") {
@@ -175,6 +176,10 @@ void TestActualShotAndMetadata() {
         "full file detail retains handles, weapon model, impact count and damage count");
     Expect(Count("AIM_SHOT_DAMAGE") == 1 && Has("hitgroup=1 damage=40 hp=60 receipt_delay_ms=20"),
         "file damage detail preserves each copied hitgroup, damage, remaining health and receipt delay");
+    Expect(Has("| predicted 42.2 (target) | actual 40 (target)") &&
+        Has("predicted_valid=1 predicted_damage=42.250 min_damage=35 predicted_hitgroup=1") &&
+        Has("actual_damage_known=1 actual_damage=40 target_actual_known=1 target_actual_damage=40 actual_partial=0"),
+        "human and file output retain the captured prediction alongside confirmed same-target damage");
     FlushAt(1500);
     Expect(Count("AIM_SHOT #") == 1, "repeated render flush never repeats an already drained shot");
 }
@@ -373,6 +378,34 @@ void TestReasonOutput() {
     Start(); ShotLoggingCapture(Metadata()); Deliver(Fire()); Deliver(Fire(1050, 4)); Deliver(Hurt(1060)); FlushAt(1361);
     Expect(Has("UNCONFIRMED shot overlap") && Has("AIM_HIT HIT BOT Delta") && Has("shot overlap (2 possible shots"),
         "overlapping fire reports actual damage separately with an understandable mapping explanation");
+    Expect(Has("| predicted unknown | actual 40 (confirmed)") &&
+        Has("actual_damage_known=0 actual_damage=0 target_actual_known=0 target_actual_damage=0"),
+        "ambiguous effects keep confirmed event damage separate from each shot's unknown actual damage");
+}
+void TestDamagePredictionOutput() {
+    Start(); ShotLoggingCapture(Metadata()); Deliver(Fire()); FlushAt(1321);
+    Expect(Has("| predicted 42.2 (target) | actual unknown") &&
+        Has("predicted_valid=1 predicted_damage=42.250 min_damage=35 predicted_hitgroup=1 actual_damage_known=0"),
+        "no damage event leaves actual damage unknown in human and numeric output");
+
+    Start(); ShotLoggingCapture(Metadata()); Deliver(Fire());
+    auto other = Hurt(); other.victim.pawn += 0x8000; Deliver(other); FlushAt(1321);
+    Expect(Has("| actual 40 (unmatched victim; target unknown)") &&
+        Has("actual_damage_known=1 actual_damage=40 target_actual_known=0 target_actual_damage=0"),
+        "a different full victim identity cannot masquerade as measured damage to the predicted target");
+
+    Start(); ShotLoggingCapture(Metadata()); Deliver(Fire()); Deliver(Hurt());
+    auto second = Hurt(1031, 4); second.damage = 20; Deliver(second);
+    other = Hurt(1032, 5); other.victim.pawn += 1; other.damage = 5; Deliver(other); FlushAt(1321);
+    Expect(Has("| actual 60 (target) + 5 (unmatched victims)") &&
+        Has("actual_damage_known=1 actual_damage=65 target_actual_known=1 target_actual_damage=60 actual_partial=0") &&
+        Count("AIM_SHOT_DAMAGE") == 3,
+        "multiple native hurts retain per-event details and separate intended-target and overall damage totals");
+
+    Start(); auto unknown = Metadata(); unknown.damageValid = false;
+    ShotLoggingCapture(unknown); Deliver(Fire()); Deliver(Hurt()); FlushAt(1321);
+    Expect(Has("| predicted unknown | actual 40 (target)") && Has("predicted_valid=0 predicted_damage=0.000"),
+        "unavailable damage model cannot publish a numerical prediction beside a confirmed hurt");
 }
 }
 
@@ -407,6 +440,7 @@ int main() {
     TestTransientLocalLoss();
     TestStopAndUnlockedSink();
     TestReasonOutput();
+    TestDamagePredictionOutput();
     captureFromSink = false;
     ShotLoggingStop("test complete");
     ShotLogSetSettings({});

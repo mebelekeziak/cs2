@@ -451,6 +451,102 @@ void AttemptChecks() {
         "attempt ring eviction reports capacity instead of pretending a timeout elapsed");
 }
 
+void DamagePredictionChecks() {
+    auto metadata = Metadata(); metadata.damageValid = true;
+    metadata.predictedDamage = 35.5f; metadata.minDamage = 30; metadata.predictedHitgroup = 2;
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata);
+    metadata.predictedDamage = 99; // Captured snapshots must own their values.
+    ShotLogOnFire(Fire()); ShotLogOnHurt(Hurt()); ShotLogAdvance(1311);
+    auto records = Drain();
+    Expect(records.size() == 1 && records[0].metadata.damageValid && records[0].metadata.predictedDamage == 35.5f &&
+        records[0].metadata.minDamage == 30 && records[0].metadata.predictedHitgroup == 2,
+        "settled shot retains copied damage prediction, minimum and predicted hitgroup");
+    if (!records.empty()) {
+        const auto line = Format(records[0]);
+        const auto summary = ShotLogSummarizeDamage(records[0]);
+        Expect(line.find("| predicted 35.5 (target) | actual 34 (target)") != std::string::npos &&
+            summary.predictionKnown && summary.actualKnown && summary.targetActualKnown && summary.actualDamage == 34,
+            "matched full target identity permits predicted versus confirmed actual damage");
+    }
+
+    metadata.predictedDamage = 35.5f;
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire()); ShotLogAdvance(1311);
+    records = Drain();
+    if (!records.empty()) Expect(Format(records[0]).find("| predicted 35.5 (target) | actual unknown") != std::string::npos,
+        "a settled miss has no fabricated zero damage observation");
+
+    ShotLogInitialize(Local, 900); metadata.attackPublished = true; ShotLogAddMetadata(metadata); ShotLogAdvance(2051);
+    records = Drain();
+    if (!records.empty()) Expect(records[0].kind == ShotLogRecordKind::CommandAttempt &&
+        Format(records[0]).find("| predicted 35.5 (target) | actual unknown") != std::string::npos,
+        "unregistered attack retains its estimate without inventing a shot or actual damage");
+    metadata.attackPublished = false;
+
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire()); ShotLogOnHurt(Hurt()); ShotLogAdvance(1311); records = Drain();
+    if (!records.empty()) Expect(Format(records[0]).find("| predicted unknown | actual 34 (confirmed)") != std::string::npos,
+        "manual fire without compatible aim metadata retains actual damage with an unknown prediction");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire());
+    auto other = Hurt(); other.victimPawn += 0x8000; // Same index, new serial.
+    ShotLogOnHurt(other); ShotLogAdvance(1311); records = Drain();
+    if (!records.empty()) {
+        const auto summary = ShotLogSummarizeDamage(records[0]);
+        Expect(Format(records[0]).find("| actual 34 (unmatched victim; target unknown)") != std::string::npos &&
+            !summary.targetActualKnown, "recycled full victim handle cannot be compared against the intended target estimate");
+    }
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire());
+    other = Hurt(); other.victimController = UINT32_MAX;
+    ShotLogOnHurt(other); ShotLogAdvance(1311); records = Drain();
+    if (!records.empty()) Expect(!ShotLogSummarizeDamage(records[0]).targetActualKnown,
+        "missing victim controller ownership leaves the intended-target comparison unknown");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire());
+    ShotLogOnHurt(Hurt()); ShotLogOnHurt(Hurt(1023, 4));
+    other = Hurt(1024, 5); other.victimPawn += 1; other.damage = 12;
+    ShotLogOnHurt(other); ShotLogAdvance(1311); records = Drain();
+    if (!records.empty()) {
+        const auto summary = ShotLogSummarizeDamage(records[0]);
+        Expect(summary.actualDamage == 80 && summary.targetActualDamage == 68 &&
+            Format(records[0]).find("| actual 68 (target) + 12 (unmatched victims)") != std::string::npos,
+            "multiple confirmed hurts sum per target without mixing another victim into the comparison");
+    }
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire()); ShotLogOnFire(Fire(1010, 4));
+    ShotLogOnHurt(Hurt()); ShotLogAdvance(1321); records = Drain();
+    unsigned uncertainShots = 0, actualEvents = 0;
+    for (const auto& record : records) {
+        const auto summary = ShotLogSummarizeDamage(record);
+        if (record.kind == ShotLogRecordKind::Shot) {
+            uncertainShots += !summary.actualKnown && Format(record).find("| actual unknown") != std::string::npos;
+        } else {
+            actualEvents += summary.actualKnown && !summary.predictionKnown &&
+                Format(record).find("| predicted unknown | actual 34 (confirmed)") != std::string::npos;
+        }
+    }
+    Expect(uncertainShots == 2 && actualEvents == 1,
+        "ambiguous hurt remains one confirmed event and never borrows either shot's prediction");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(metadata); ShotLogOnFire(Fire());
+    for (unsigned i = 0; i <= ShotLogDamageCapacity; ++i) ShotLogOnHurt(Hurt(1022 + i, 10 + i));
+    ShotLogAdvance(1311); records = Drain();
+    bool partialFound = false;
+    for (const auto& record : records) if (record.kind == ShotLogRecordKind::Shot) {
+        const auto summary = ShotLogSummarizeDamage(record);
+        partialFound = summary.partial && summary.actualDamage == 34 * ShotLogDamageCapacity &&
+            Format(record).find("(partial)") != std::string::npos;
+    }
+    Expect(partialFound, "bounded hurt overflow labels retained damage totals partial instead of claiming an exact total");
+
+    for (const auto bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -1.0f}) {
+        ShotLogInitialize(Local, 900); metadata.predictedDamage = bad; ShotLogAddMetadata(metadata);
+        ShotLogOnFire(Fire()); ShotLogOnHurt(Hurt()); ShotLogAdvance(1311); records = Drain();
+        Expect(records.size() == 1 && !records[0].metadata.damageValid && records[0].metadata.predictedDamage == 0 &&
+            Format(records[0]).find("| predicted unknown | actual 34 (target)") != std::string::npos,
+            "invalid copied estimate becomes unknown without losing confirmed damage");
+    }
+}
+
 void FormattingChecks() {
     ShotLogInitialize(Local, 900); ShotLogOnFire(Fire());
     auto hostile = Hurt(); Text(hostile.victimName, " \rMayer\n|%n\t\x1b"); hostile.hitgroup = 123;
@@ -496,7 +592,7 @@ void FormattingChecks() {
 }
 
 int main() {
-    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); AttemptChecks(); FormattingChecks();
+    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); AttemptChecks(); DamagePredictionChecks(); FormattingChecks();
     std::printf("Shot log checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;
 }

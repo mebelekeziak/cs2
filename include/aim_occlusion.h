@@ -13,9 +13,14 @@ struct AimOcclusionResult {
     bool valid = false, clear = false;
     float fraction = 0;
     const char* reason = "occlusion not evaluated";
+    // First native pawn collision, copied before the stack trace expires.
+    // A clear segment without a known hitbox cannot predict health damage.
+    bool hitgroupKnown = false;
+    int hitgroup = 0;
+    float distance = 0;
 };
 // Native command owner only. Fresh direct line of fire to the selected capsule;
-// no retained trace/manager/entity pointers and no penetration/damage simulation.
+// no retained trace/manager/entity pointers and no penetration simulation.
 bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept;
 AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext& context, const AimSource& source,
     const AimTarget& target, const AimTargetVolume& volume) noexcept;

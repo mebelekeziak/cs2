@@ -10,6 +10,7 @@ struct SilentAimSettings {
     float hitchance = 50;
     int samples = 256;
     bool quickstop = false;
+    int minDamage = 1;
 
     bool operator==(const SilentAimSettings&) const = default;
 };

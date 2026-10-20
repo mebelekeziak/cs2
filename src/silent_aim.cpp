@@ -8,6 +8,7 @@
 #include "aim_hitchance.h"
 #include "aim_weapon.h"
 #include "aim_occlusion.h"
+#include "aim_damage.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -29,6 +30,7 @@ std::uintptr_t client = 0;
 AimBoneContext bones{};
 AimWeaponContext weaponContext{};
 AimOcclusionContext occlusionContext{};
+AimDamageContext damageContext{};
 AimRecordHistoryFn recordHistory = nullptr;
 bool weaponPrepared = false, autofirePrepared = false, finalizerReady = false;
 SilentAimLogCallback logger = nullptr;
@@ -43,7 +45,7 @@ AimCommandDiagnostics commandDiagnostics{};
 AimTargetDiagnostics targetDiagnostics{};
 ULONGLONG lastReport = 0;
 ULONGLONG lastSummary = 0; // Render owner only.
-std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0, occlusionRejected = 0;
+std::uint64_t decisions = 0, requested = 0, fired = 0, cancelled = 0, chanceRejected = 0, occlusionRejected = 0, damageRejected = 0;
 AimAutofireDiagnostics fireDiagnostics{};
 AimViewDiagnostics viewDiagnostics{};
 std::uint64_t prepareCalls = 0, prepareEvaluated = 0, viewRejected = 0, prepareBlocked = 0;
@@ -55,6 +57,7 @@ struct Decision {
     AimWeaponSnapshot weapon{};
     AimHitchanceResult chance{};
     AimOcclusionResult occlusion{};
+    AimDamageResult damage{};
     SilentAimSettings settings{};
     const char* reason = "not evaluated";
     bool selected = false;
@@ -133,7 +136,7 @@ struct WeaponSample {
     AimWeaponSnapshot value{};
     bool read = false, valid = false;
 };
-bool Reachable(Decision& decision) noexcept;
+bool Reachable(Decision& decision, bool enforceMinimum = true) noexcept;
 Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon) noexcept {
     const auto& settings = result.settings;
     const char* geometryReason = "geometry unavailable";
@@ -256,9 +259,9 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     auto& reportTime = event ? lastEventReport : lastDecisionReport;
     if (reportTime && now - reportTime < ((changed || event) ? 50u : 200u)) return;
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
-    char message[1280]{};
+    char message[1536]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u; selected-capsule snapshot, direct-path autofire gate, no penetration/damage prediction",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; direct-bullet estimate; no penetration",
         handle, static_cast<int>(decision.settings.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
@@ -267,15 +270,18 @@ void Report(const Decision& decision, const char* action, bool event = false) no
         decision.weapon.range, decision.weapon.clip, action, decision.reason,
         decision.occlusion.valid, decision.occlusion.clear, decision.occlusion.fraction, decision.occlusion.reason,
         decision.target.solution.separation, decision.target.solution.angles.pitch, decision.target.solution.angles.yaw,
-        targetDiagnostics.eligibilityRejected);
+        targetDiagnostics.eligibilityRejected, decision.damage.valid, decision.damage.damage, decision.damage.healthDamage,
+        decision.settings.minDamage, decision.damage.input.hitgroup, decision.damage.reason);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
     return SameSource(decision.source) && SilentAimTargetValid(decision.source, decision.target) &&
         SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
-        AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
+        AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) &&
+        (!decision.damage.valid || AimDamageStillCurrent(damageContext, decision.source, decision.target,
+            decision.volume, decision.weapon, decision.damage));
 }
-bool Reachable(Decision& decision) noexcept {
+bool Reachable(Decision& decision, bool enforceMinimum) noexcept {
     if (!Current(decision)) { decision.reason = "target or weapon changed before occlusion check"; return false; }
     decision.occlusion = AimOcclusionCheck(occlusionContext, decision.source, decision.target, decision.volume);
     if (!decision.occlusion.valid || !decision.occlusion.clear) {
@@ -288,6 +294,14 @@ bool Reachable(Decision& decision) noexcept {
         !(SilentAimGetSettings() == decision.settings) || !Current(decision)) {
         decision.reason = "aim state changed during occlusion check"; return false;
     }
+    decision.damage = AimDamageRead(damageContext, decision.source, decision.target,
+        decision.volume, decision.weapon, decision.occlusion);
+    if (!decision.damage.valid || (enforceMinimum && decision.damage.healthDamage < decision.settings.minDamage)) {
+        ++damageRejected;
+        decision.reason = decision.damage.valid ? "below minimum damage" : decision.damage.reason;
+        return false;
+    }
+    if (!Current(decision)) { decision.reason = "damage source changed"; return false; }
     return true;
 }
 template<std::size_t N> void CopyNativeText(std::uintptr_t address, char (&text)[N]) noexcept {
@@ -329,6 +343,11 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
     metadata.chanceValid = decision.chance.valid && volumeCurrent && weaponCurrent;
     metadata.spread = decision.weapon.spread; metadata.inaccuracy = decision.weapon.inaccuracy;
     metadata.range = decision.weapon.range; metadata.automatic = automatic;
+    metadata.damageValid = decision.damage.valid && volumeCurrent && weaponCurrent &&
+        AimDamageStillCurrent(damageContext, decision.source, decision.target, decision.volume, decision.weapon, decision.damage);
+    metadata.predictedDamage = decision.damage.damage;
+    metadata.minDamage = decision.settings.minDamage;
+    metadata.predictedHitgroup = decision.damage.input.hitgroup;
     metadata.attackPublished = weaponCurrent && decision.weapon.ready && *metadata.weapon;
     ShotLoggingCapture(metadata);
 }
@@ -393,10 +412,14 @@ void Process(void* input, void* command) noexcept {
         Status("awaiting primary-fire history"); return;
     }
     ++shots;
-    const auto decision = Evaluate(shot.view, settings);
+    auto decision = Evaluate(shot.view, settings);
     if (!decision.selected) { Status(decision.reason); Report(decision, decision.reason); return; }
+    // Manual input keeps its existing behavior; a failed damage/path estimate
+    // stays unknown in logs and never turns the slider into a manual-fire gate.
+    if (decision.chance.valid) Reachable(decision, false);
     const auto& target = decision.target;
-    if (!SameSource(decision.source) || !SilentAimTargetValid(decision.source, target) ||
+    if (!active.load(std::memory_order_acquire) || !Foreground() || !(SilentAimGetSettings() == settings) ||
+        !SameSource(decision.source) || !SilentAimTargetValid(decision.source, target) ||
         !SilentAimWriteShot(shot, target.solution.angles)) {
         ++writeRejected;
         Status("source/history changed; shot unchanged"); return;
@@ -459,6 +482,7 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     bones = {client, reinterpret_cast<AimBoneLookup>(client + bone::LookupBone)};
     weaponPrepared = AimWeaponPrepare(client, weaponContext);
     AimOcclusionPrepare(client, occlusionContext);
+    AimDamagePrepare(client, damageContext);
     namespace fire = aim_autofire_offsets;
     std::array<unsigned char, sizeof(fire::RecordHistoryBytes)> recorderBytes{};
     autofirePrepared = MovementCopy(client + fire::RecordHistory, recorderBytes.data(), recorderBytes.size()) &&
@@ -469,8 +493,8 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     if (logger) {
         char message[384]{};
         std::snprintf(message, sizeof(message),
-            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u; current authored capsules; native spread/inaccuracy/punch snapshot; fresh direct-path check before request and publication; autofire starts off; command finalizer required for native CRC",
-            weaponPrepared, autofirePrepared, occlusionContext.prepared);
+            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u damage=%u; native accuracy and direct-bullet damage snapshots; path and minimum damage checked before request and publication; autofire starts off; command finalizer required for native CRC",
+            weaponPrepared, autofirePrepared, occlusionContext.prepared, damageContext.prepared);
         logger(message);
     }
     return true;
@@ -590,15 +614,17 @@ void SilentAimFlushTelemetry() noexcept {
         static_cast<unsigned long long>(target.model), static_cast<unsigned long long>(target.pose), target.boneCount, target.boneIndex);
     ReleaseSRWLockShared(&mutationLock);
     logger(message);
-    char fireMessage[1024]{};
+    char fireMessage[1280]{};
     AcquireSRWLockShared(&mutationLock);
     std::snprintf(fireMessage, sizeof(fireMessage),
-        "AIM_FIRE_DIAGNOSTICS decisions=%llu requested=%llu published=%llu cancelled=%llu below_chance=%llu autofire=%u minimum=%.2f samples=%d native_recorder=%u weapon_model=%u finalizer=%u last_valid=%u last_estimated=%.2f last_hits=%u last_samples=%u fire_reason=%s sequence=%d native_index=%d last_action=\"%s\" last_reason=\"%s\" occlusion_ready=%u occlusion_rejected=%llu last_path_valid=%u last_path_clear=%u last_path_reason=\"%s\"; publication is not observed hit registration",
+        "AIM_FIRE_DIAGNOSTICS decisions=%llu requested=%llu published=%llu cancelled=%llu below_chance=%llu autofire=%u minimum=%.2f samples=%d native_recorder=%u weapon_model=%u finalizer=%u last_valid=%u last_estimated=%.2f last_hits=%u last_samples=%u fire_reason=%s sequence=%d native_index=%d last_action=\"%s\" last_reason=\"%s\" occlusion_ready=%u occlusion_rejected=%llu last_path_valid=%u last_path_clear=%u last_path_reason=\"%s\" damage_ready=%u damage_rejected=%llu predicted_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d; publication is not observed hit registration",
         decisions, requested, fired, cancelled, chanceRejected, settings.autofire, settings.hitchance, settings.samples,
         autofirePrepared, weaponPrepared, finalizerReady, lastDecision.chance.valid, lastDecision.chance.percent,
         lastDecision.chance.hits, lastDecision.chance.samples, fireDiagnostics.reason, fireDiagnostics.sequence, fireDiagnostics.nativeIndex,
         lastObservedAction, lastDecision.reason, occlusionContext.prepared, occlusionRejected,
-        lastDecision.occlusion.valid, lastDecision.occlusion.clear, lastDecision.occlusion.reason);
+        lastDecision.occlusion.valid, lastDecision.occlusion.clear, lastDecision.occlusion.reason,
+        damageContext.prepared, damageRejected, lastDecision.damage.valid, lastDecision.damage.damage,
+        lastDecision.damage.healthDamage, settings.minDamage);
     ReleaseSRWLockShared(&mutationLock);
     logger(fireMessage);
     char prepareMessage[768]{};
@@ -622,9 +648,10 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
     lastEventReport = 0; lastObservedAction = "not evaluated";
     weaponContext.client = base;
+    damageContext = {base, true};
     occlusionContext = {base, true};
     callbacks = edited = shots = selected = sourceRejected = writeRejected = 0;
-    decisions = requested = fired = cancelled = chanceRejected = occlusionRejected = 0;
+    decisions = requested = fired = cancelled = chanceRejected = occlusionRejected = damageRejected = 0;
     commandDiagnostics = {}; targetDiagnostics = {}; fireDiagnostics = {};
     viewDiagnostics = {}; prepareCalls = prepareEvaluated = viewRejected = prepareBlocked = 0;
     prepareStage = "not_called"; logger = callback; lastSummary = 0;

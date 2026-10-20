@@ -158,8 +158,8 @@ retained ring or alter base/camera angles. Missing/invalid history is a no-op.
 Bone names resolve per model and callback; no cached numerical indices or forced
 animation refresh. Missing selected bones/pose data skip the player. These are
 animated landmarks, not authored hitbox-volume centers. Manual firing does not
-require a visibility trace. No recoil/spread correction, penetration or damage
-system is provided.
+require a visibility trace. No recoil/spread correction or penetration is
+provided; direct damage prediction is covered below.
 
 ### Hitchance and autofire extension
 
@@ -167,11 +167,12 @@ The combined compatibility bundle also checks
 [weapon contracts](../tools/inspect_aim_weapon.py),
 [authored capsules](../tools/inspect_aim_geometry.py),
 [native attack requests](../tools/inspect_autofire.py),
+[direct damage](../tools/inspect_aim_damage.py),
 [direct-path occlusion](../tools/inspect_aim_occlusion.py) and
 [console output](../tools/inspect_aim_console.py).
 The manual firing path above remains available; automatic requests additionally
 require a current supported weapon, authored volume, sufficient sampled estimate
-and native readiness, plus a fresh direct-path trace before request and history
+and native readiness, plus minimum predicted damage and a fresh direct-path trace before request and history
 publication. See the corresponding
 [weapon](../tools/CS2_AIM_WEAPON_EVIDENCE.md),
 [geometry](../tools/CS2_AIM_GEOMETRY_EVIDENCE.md),
@@ -188,6 +189,10 @@ rediscovery. Geometry changes from landmarks to authored centers when available.
 | `aim_occlusion_offsets::InitializeFilter` | `0x352920`, client function RVA | Complete filter constructor called by BulletServices at `0x887F71`; shared synchronous ray uses `third_person_offsets::TraceShape` |
 | `aim_occlusion_offsets::ShotMask`, `ShotExclude` | `0x1C300B`, `0x4000000000`, collision masks | Native bullet filter producer `0x887F60` onward: layer 3, flags `0x0F`, additional byte `+0x39` bits `0x02` |
 | `aim_occlusion_offsets::TraceEntity`, `TraceHitFlag` | `0x08`, `0xBB`, result members | Native entity comparison and DidHit consumer; shared fraction is `+0xAC`; zero shape bounds select a ray |
+| `aim_damage_offsets::Damage`, `HeadshotMultiplier`, `ArmorRatio`, `RangeModifier` | `0x820`, `0x824`, `0x828`, `0x834`, weapon-data members | `CCSWeaponBaseVData` schema; native firing inputs `0xD23B43`, head/body switch `0x89DB48`, ordinary armor `0x8A0052`, falloff `0x8A187D` |
+| `aim_damage_offsets::ItemServices`, `HasHelmet`, `ArmorValue`, `GunGameImmunity`, `HealthShotBoostExpiration` | `0x12F8`, `0x49`, `0x1EC8`, `0x3508`, `0x15A8`, pawn/service members | Exact named schema, item-service RTTI/owner, native armor coverage `0x8D8CF0`; active boost modifiers stay unsupported |
+| `aim_damage_offsets::DamageScaleCtBody/CtHead/TBody/THead`, `HeadshotOnly` | `0x24BCA78/88/98/A8`, `0x24BCA68`, wrappers | Named `mp_damage_*` registrations `0x85AF0..0x85E1A`; native team scale consumer `0x89D9F1`; wrapper `+8` points to storage, value `+0x58` |
+| `aim_damage_offsets::TraceHitbox`, `HitboxGroup`, `UnknownHitboxPointer` | `0x10`, `0x38`, `0x2733DC0`, trace/member/pointer slot | Native trace group helper `0xAADF40`, sentinel predicate `0x1779560`; independent animationsystem `CHitBox::m_nGroupId` schema |
 | Native `tier0!Msg` | `0x7EE60`, named export | Variadic prologue and client `%s` format callers; runtime export/module verification in `aim_console.cpp` |
 | Native `tier0!ConColorMsg` | `0x7F710`, export `?ConColorMsg@@YAXAEBVColor@@PEBDZZ` | RCX points to four RGBA bytes; RDX format, R8 first vararg. Client caller `0x1C6149` constructs a four-byte stack color. Optional color validation in `aim_console.cpp`; plain `Msg` fallback |
 

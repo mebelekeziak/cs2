@@ -407,6 +407,20 @@ void DamageText(Text& text, const ShotLogDamage& damage) noexcept {
     Name(damage.victimName, name);
     text.Add("%s in %s for %d (%d HP)", name, Hitgroup(damage.hitgroup), damage.damage, damage.remainingHp);
 }
+void PredictionText(Text& text, const ShotLogRecord& record) noexcept {
+    const auto summary = ShotLogSummarizeDamage(record);
+    if (summary.predictionKnown) text.Add(" | predicted %.1f (target)", record.metadata.predictedDamage);
+    else text.Add(" | predicted unknown");
+    if (!summary.actualKnown) text.Add(" | actual unknown");
+    else if (!record.metadataKnown) text.Add(" | actual %d (confirmed)", summary.actualDamage);
+    else if (!summary.targetActualKnown) text.Add(" | actual %d (unmatched victim; target unknown)", summary.actualDamage);
+    else {
+        text.Add(" | actual %d (target)", summary.targetActualDamage);
+        if (summary.actualDamage != summary.targetActualDamage)
+            text.Add(" + %d (unmatched victims)", summary.actualDamage - summary.targetActualDamage);
+    }
+    if (summary.partial) text.Add(" (partial)");
+}
 void CloseText(Text& text, const ShotLogRecord& record) noexcept {
     if (record.closeReason == ShotLogCloseReason::SourceChanged) text.Add(" | source changed before settlement");
     else if (record.closeReason == ShotLogCloseReason::Stopped) text.Add(" | stopped before settlement");
@@ -470,6 +484,10 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
         !std::isfinite(value.inaccuracy) || value.inaccuracy < 0 || value.inaccuracy > 1) value.chanceValid = false;
     if (!Finite(value.eye) || !Finite(value.capsule.start) || !Finite(value.capsule.end) ||
         !std::isfinite(value.capsule.radius) || value.capsule.radius <= 0 || value.capsule.radius > 10000) value.capsuleValid = false;
+    if (!std::isfinite(value.predictedDamage) || value.predictedDamage < 0 || value.predictedDamage > 100000 ||
+        value.minDamage < 1 || value.minDamage > 100 || value.predictedHitgroup < 1 || value.predictedHitgroup > 8 ||
+        value.targetController == UINT32_MAX || value.targetPawn == UINT32_MAX) value.damageValid = false;
+    if (!value.damageValid) value.predictedDamage = 0;
     for (const auto& pending : state.pending) if (pending.used && Acknowledges(value, pending.record.fireMs, pending.record.weapon))
         destination->acknowledged = true;
     for (const auto& retired : state.retired) if (retired.used && Acknowledges(value, retired.fireMs, retired.weapon))
@@ -609,6 +627,29 @@ const char* ShotLogDiagnosticText(ShotLogDiagnostic diagnostic) noexcept {
     default: return "insufficient evidence";
     }
 }
+ShotLogDamageSummary ShotLogSummarizeDamage(const ShotLogRecord& record) noexcept {
+    ShotLogDamageSummary result{};
+    const auto& metadata = record.metadata;
+    result.predictionKnown = record.metadataKnown && metadata.damageValid &&
+        std::isfinite(metadata.predictedDamage) && metadata.predictedDamage >= 0 && metadata.predictedDamage <= 100000 &&
+        metadata.minDamage >= 1 && metadata.minDamage <= 100 && metadata.predictedHitgroup >= 1 && metadata.predictedHitgroup <= 8 &&
+        metadata.targetController != UINT32_MAX && metadata.targetPawn != UINT32_MAX;
+    const bool confirmed = record.outcome == ShotLogOutcome::Hit || record.kind == ShotLogRecordKind::AmbiguousHit ||
+        record.kind == ShotLogRecordKind::UnmatchedHit;
+    for (unsigned index = 0; confirmed && index < std::min(record.damageCount, ShotLogDamageCapacity); ++index) {
+        const auto& damage = record.damage[index];
+        if (damage.damage < 0 || damage.damage > 100000) continue;
+        result.actualKnown = true;
+        result.actualDamage += damage.damage;
+        if (record.metadataKnown && metadata.targetPawn != UINT32_MAX && metadata.targetController != UINT32_MAX &&
+            damage.victimPawn == metadata.targetPawn && damage.victimController == metadata.targetController) {
+            result.targetActualKnown = true;
+            result.targetActualDamage += damage.damage;
+        }
+    }
+    result.partial = result.actualKnown && record.damageOverflow;
+    return result;
+}
 bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capacity) noexcept {
     if (!output || !capacity) return false;
     *output = 0;
@@ -624,6 +665,7 @@ bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capaci
             record.candidateCount, record.firstCandidateId, record.lastCandidateId);
         else if (record.candidateCount) text.Add(" | shot unknown (late or incomplete event; candidate #%llu)", record.firstCandidateId);
         else text.Add(" | shot unknown (no matching fire event)");
+        PredictionText(text, record);
         if (record.possibleLateEvent) text.Add(" | possible late event");
         CloseText(text, record);
         return text.complete;
@@ -658,6 +700,7 @@ bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capaci
         if (record.kind == ShotLogRecordKind::CommandAttempt) text.Add(" | no fire event after %llums", ShotLogFireAckWindowMs);
     }
     if (record.damageOverflow) text.Add(" | additional damage events logged separately");
+    PredictionText(text, record);
     CloseText(text, record);
     return text.complete;
 }

@@ -135,8 +135,9 @@ void Drain() noexcept {
         ShotLogFormat(record, line, sizeof(line));
         if (*line) sink(line);
         char detail[2048]{};
+        const auto damageSummary = ShotLogSummarizeDamage(record);
         std::snprintf(detail, sizeof(detail),
-            "AIM_SHOT_DETAIL id=%llu kind=%u outcome=%u lifecycle=%llu controller=0x%08x pawn=0x%08x fire_ms=%llu settled_ms=%llu event_ms=%llu candidates=%u candidate_ids=%llu..%llu metadata=%u ambiguous_metadata=%u metadata_age_ms=%llu sequence=%d weapon_handle=0x%08x target_controller=0x%08x target_pawn=0x%08x automatic=%u chance_valid=%u hc=%.2f hits=%u samples=%u spread=%.7f inaccuracy=%.7f range=%.1f impacts=%u damage_events=%u ambiguous_events=%u trajectory=%u evidence_lost=%u late=%u reordered=%u close_reason=%u",
+            "AIM_SHOT_DETAIL id=%llu kind=%u outcome=%u lifecycle=%llu controller=0x%08x pawn=0x%08x fire_ms=%llu settled_ms=%llu event_ms=%llu candidates=%u candidate_ids=%llu..%llu metadata=%u ambiguous_metadata=%u metadata_age_ms=%llu sequence=%d weapon_handle=0x%08x target_controller=0x%08x target_pawn=0x%08x automatic=%u chance_valid=%u hc=%.2f hits=%u samples=%u spread=%.7f inaccuracy=%.7f range=%.1f impacts=%u damage_events=%u ambiguous_events=%u trajectory=%u evidence_lost=%u late=%u reordered=%u close_reason=%u predicted_valid=%u predicted_damage=%.3f min_damage=%d predicted_hitgroup=%d actual_damage_known=%u actual_damage=%d target_actual_known=%u target_actual_damage=%d actual_partial=%u",
             record.id, static_cast<unsigned>(record.kind), static_cast<unsigned>(record.outcome), record.source.lifecycle,
             record.source.controller, record.source.pawn, record.fireMs, record.settledMs, record.eventMs,
             record.candidateCount, record.firstCandidateId, record.lastCandidateId, record.metadataKnown, record.metadataAmbiguous,
@@ -144,7 +145,10 @@ void Drain() noexcept {
             record.metadata.targetController, record.metadata.targetPawn, record.metadata.automatic, record.metadata.chanceValid,
             record.metadata.hitchance, record.metadata.hits, record.metadata.samples, record.metadata.spread, record.metadata.inaccuracy,
             record.metadata.range, record.uniqueImpacts, record.damageCount, record.ambiguousEvents, static_cast<unsigned>(record.trajectory),
-            record.evidenceLost, record.possibleLateEvent, record.reorderedEvent, static_cast<unsigned>(record.closeReason));
+            record.evidenceLost, record.possibleLateEvent, record.reorderedEvent, static_cast<unsigned>(record.closeReason),
+            damageSummary.predictionKnown, damageSummary.predictionKnown ? record.metadata.predictedDamage : 0,
+            record.metadata.minDamage, record.metadata.predictedHitgroup, damageSummary.actualKnown, damageSummary.actualDamage,
+            damageSummary.targetActualKnown, damageSummary.targetActualDamage, damageSummary.partial);
         sink(detail);
         std::snprintf(detail, sizeof(detail),
             "AIM_SHOT_REASON id=%llu sequence=%d native_fire=%u reason=\"%s\" diagnostic=\"%s\" inferred=%u attack_published=%u aim_ray_valid=%u aim_intersects=%u geometry_impacts=%u short_impacts=%u spread_miss_impacts=%u miss_distance=%.4f impact_distance=%.4f impact_angle_deg=%.4f spread_cone_deg=%.4f overlapping_events=%u fire_ack_timeout_ms=%llu seed_known=0",

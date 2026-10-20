@@ -6,6 +6,7 @@
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
 #include "aim_occlusion.h"
+#include "aim_damage.h"
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "movement.h"
@@ -29,6 +30,8 @@ bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volum
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
 bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
 bool quickstopAvailable = true, wideFallback = false;
+bool damageAvailable = true, damageCurrent = true, damageChangeDuringTrace = false;
+int predictedHp = 34;
 std::vector<bool> quickstopBrakes;
 std::vector<void*> quickstopCommands;
 std::uint32_t selectedPawnHandle = 0x8004, localPawnHandle = 0x8003;
@@ -178,6 +181,7 @@ struct World {
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
         quickstopAvailable = true; wideFallback = false;
+        damageAvailable = damageCurrent = true; damageChangeDuringTrace = false; predictedHp = 34;
         quickstopBrakes.clear(); quickstopCommands.clear();
         selectedPawnHandle = 0x8004; localPawnHandle = 0x8003;
         telemetry.clear();
@@ -530,8 +534,9 @@ void OcclusionChecks(World& world) {
     Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(manual);
-    Expect(traceCalls == 0 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1),
-        "occlusion gate leaves manual primary input and manual aiming available");
+    Expect(traceCalls == 1 && recorderCalls == 0 && Equal(manual.History(), Desired()) && (manual.Buttons().down & 1) &&
+        shotMetadata.size() == 1 && !shotMetadata[0].damageValid,
+        "manual prediction observes cover without gating physical primary input or manual aiming");
 
     world.Reset();
     Command takeover;
@@ -586,8 +591,9 @@ void WideFovChecks(World& world) {
     Put(Address(manual.command) + move::command::Buttons, MovementButtons{1, 1, 0});
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(manual);
-    Expect(Equal(manual.History(), Desired()) && traceCalls == 0 && shotMetadata.size() == 1 && !shotMetadata[0].automatic,
-        "manual primary keeps nearest-landmark behavior even while autofire is enabled");
+    Expect(Equal(manual.History(), Desired()) && traceCalls == 1 && shotMetadata.size() == 1 && !shotMetadata[0].automatic &&
+        !shotMetadata[0].damageValid,
+        "manual primary keeps nearest-landmark behavior while its damage estimate observes cover");
 }
 
 void EnableQuickstop() {
@@ -780,10 +786,24 @@ bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot&
     return weaponAvailable;
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
+bool AimDamagePrepare(std::uintptr_t client, AimDamageContext& context) noexcept { context = {client, true}; return true; }
+AimDamageResult AimDamageRead(const AimDamageContext&, const AimSource&, const AimTarget& target,
+    const AimTargetVolume&, const AimWeaponSnapshot&, const AimOcclusionResult&) noexcept {
+    AimDamageResult result{};
+    result.valid = damageAvailable;
+    result.healthDamage = rejectedCandidate == 4 && target.enemy.pawnHandle == 0x8004 ? 10 : predictedHp;
+    result.damage = static_cast<float>(result.healthDamage) + .75f;
+    result.input.hitgroup = 2;
+    result.reason = damageAvailable ? "direct-bullet damage estimate" : "fixture damage unavailable";
+    return result;
+}
+bool AimDamageStillCurrent(const AimDamageContext&, const AimSource&, const AimTarget&,
+    const AimTargetVolume&, const AimWeaponSnapshot&, const AimDamageResult&) noexcept { return damageCurrent; }
 bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept { context = {client, true}; return true; }
 AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget& target, const AimTargetVolume&) noexcept {
     ++traceCalls;
     if (changeDuringTrace) weaponCurrent = false;
+    if (damageChangeDuringTrace) damageCurrent = false;
     const bool clear = pathClear && !(rejectedCandidate == 1 && target.enemy.pawnHandle == 0x8004);
     return {pathAvailable, pathAvailable && clear, clear ? 1.0f : 0.25f,
         !pathAvailable ? "occlusion trace unavailable" : clear ? "direct path clear" : "target occluded"};
@@ -805,6 +825,70 @@ void MovementTelemetryPush(const char* message) noexcept { if (message) telemetr
 void ShotLoggingPump() noexcept { ++shotPumps; }
 void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept { shotMetadata.push_back(metadata); }
 
+void DamageGateChecks(World& world) {
+    for (bool quickstop : {false, true}) {
+        world.Reset();
+        auto settings = SilentAimGetSettings(); settings.minDamage = 35; settings.quickstop = quickstop;
+        SilentAimSetSettings(settings);
+        if (quickstop) weapon.inaccuracy = .4f;
+        Command low;
+        const auto before = low.command;
+        world.Prepare(low);
+        Expect(recorderCalls == 0 && low.command == before && LastBrake(false) &&
+            std::strstr(SilentAimStatus(), "below minimum damage"),
+            "below damage threshold cannot fire or own quickstop; quickstop=" + std::to_string(quickstop));
+    }
+    world.Reset();
+    auto settings = SilentAimGetSettings(); settings.minDamage = 34; SilentAimSetSettings(settings);
+    Command equal;
+    world.Prepare(equal); world.History(equal);
+    Expect(recorderCalls == 1 && shotMetadata.size() == 1 && shotMetadata[0].damageValid &&
+        shotMetadata[0].predictedDamage == 34.75f && shotMetadata[0].minDamage == 34 && shotMetadata[0].predictedHitgroup == 2,
+        "minimum damage equality publishes copied damage estimate and configured minimum");
+
+    for (int mode = 0; mode < 3; ++mode) {
+        world.Reset();
+        Command changed;
+        world.Prepare(changed);
+        if (mode == 0) damageCurrent = false;
+        else if (mode == 1) { predictedHp = 0; }
+        else damageChangeDuringTrace = true;
+        world.History(changed);
+        Expect(checksumCalls == 1 && Equal(changed.Buttons(), changed.originalButtons) && shotMetadata.empty(),
+            "damage change before/during publication cancels owned attack and regenerates checksum case " + std::to_string(mode));
+    }
+    world.Reset(); damageAvailable = false;
+    Command unavailable;
+    world.Prepare(unavailable);
+    Expect(recorderCalls == 0 && shotMetadata.empty() && std::strstr(SilentAimStatus(), "damage unavailable"),
+        "unknown damage fails automatic eligibility closed");
+
+    for (bool reversed : {false, true}) {
+        world.Reset(); multipleTargets = true; reverseCandidates = reversed; rejectedCandidate = 4;
+        settings = SilentAimGetSettings(); settings.fov = 180; settings.minDamage = 34; SilentAimSetSettings(settings);
+        Command fallback;
+        world.Prepare(fallback); world.History(fallback);
+        Expect(recorderCalls == 1 && shotMetadata.size() == 1 && shotMetadata[0].targetPawn == 0x8005,
+            "low-damage nearest enemy cannot hide eligible alternative; reversed=" + std::to_string(reversed));
+    }
+
+    world.Reset();
+    settings = SilentAimGetSettings(); settings.minDamage = 100; settings.autofire = false; SilentAimSetSettings(settings);
+    Command manual;
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(manual);
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].automatic && shotMetadata[0].damageValid &&
+        Equal(manual.History(), Desired()), "minimum damage does not gate manual shot aiming or prediction capture");
+
+    world.Reset();
+    settings = SilentAimGetSettings(); settings.autofire = false; SilentAimSetSettings(settings); damageAvailable = false;
+    Command manualUnknown;
+    Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    world.History(manualUnknown);
+    Expect(shotMetadata.size() == 1 && !shotMetadata[0].damageValid && Equal(manualUnknown.History(), Desired()),
+        "unknown damage remains unknown in manual metadata without suppressing manual aim");
+}
+
 int main() {
     World world;
     GateChecks(world);
@@ -815,6 +899,7 @@ int main() {
     OcclusionChecks(world);
     WideFovChecks(world);
     QuickstopChecks(world);
+    DamageGateChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

@@ -1,5 +1,6 @@
 #include "aim_occlusion.h"
 #include "aim_occlusion_offsets.h"
+#include "aim_damage_offsets.h"
 #include "silent_aim_target.h"
 #include "third_person_offsets.h"
 #include "cs2_offsets.h"
@@ -26,8 +27,9 @@ template<class T> T Get(const void* buffer, std::size_t offset) {
 unsigned char* memory = nullptr;
 std::uintptr_t client = 0;
 std::array<unsigned char, 16> manager{}, local{}, enemy{}, blocker{};
+std::array<unsigned char, 64> nativeHitbox{}, unknownHitbox{};
 float fraction = 1;
-std::uintptr_t hit = 0;
+std::uintptr_t hit = 0, hitbox = 0;
 unsigned char hitFlag = 0;
 bool returned = false, changeManager = false, changePawn = false, fault = false;
 void Shape(void* output, const float* bounds) {
@@ -58,19 +60,22 @@ bool Trace(void* nativeManager, void* shape, const void* start, const void* end,
     Check(eye.x == 10 && eye.y == 20 && eye.z == 30 && center.x == 100 && center.y == 20 && center.z == 30,
         "segment starts at current eye and ends at selected capsule center");
     Check(Get<float>(output, shared::TraceFraction) == 1, "result initialized before trace");
+    Check(Get<std::uintptr_t>(output, aim_damage_offsets::TraceHitbox) == 0, "hitbox output initialized before every native trace");
     Put(output, shared::TraceFraction, fraction);
     Put(output, off::TraceEntity, hit);
     Put(output, off::TraceHitFlag, hitFlag);
+    Put(output, aim_damage_offsets::TraceHitbox, hitbox);
     if (changeManager) Put(memory, shared::TraceManager, std::uintptr_t{0});
     if (changePawn) Put(memory, cs2_offsets::globals::dwLocalPlayerPawn, std::uintptr_t{0});
     if (fault) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
     return returned;
 }
 void Reset() {
-    fraction = 1; hit = 0; hitFlag = 0; returned = false;
+    fraction = 1; hit = 0; hitbox = 0; hitFlag = 0; returned = false;
     changeManager = false; changePawn = false; fault = false;
     Put(memory, shared::TraceManager, reinterpret_cast<std::uintptr_t>(manager.data()));
     Put(memory, cs2_offsets::globals::dwLocalPlayerPawn, reinterpret_cast<std::uintptr_t>(local.data()));
+    Put(memory, aim_damage_offsets::UnknownHitboxPointer, reinterpret_cast<std::uintptr_t>(unknownHitbox.data()));
 }
 }
 int main() {
@@ -107,18 +112,57 @@ int main() {
     Reset();
     auto result = AimOcclusionCheck(context, source, target, volume);
     Check(result.valid && result.clear && result.fraction == 1, "unobstructed false-return trace clears");
+    Check(!result.hitgroupKnown && result.hitgroup == 0 && result.distance == 90,
+        "clear endpoint retains 90-unit travel without inventing a pawn hitgroup");
     returned = true;
     Check(AimOcclusionCheck(context, source, target, volume).clear, "bool does not replace fraction result");
     fraction = 0.4f; hit = target.enemy.pawn;
     Check(AimOcclusionCheck(context, source, target, volume).clear, "first hit selected pawn clears before endpoint");
+    hitbox = reinterpret_cast<std::uintptr_t>(nativeHitbox.data());
+    Put(nativeHitbox.data(), aim_damage_offsets::HitboxGroup, 3);
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(result.valid && result.clear && result.hitgroupKnown && result.hitgroup == 3 && std::abs(result.distance - 36) < .0001f,
+        "selected pawn collision copies the native stomach group and 90-unit segment times hit fraction");
+    Put(nativeHitbox.data(), aim_damage_offsets::HitboxGroup, 1);
+    Check(result.hitgroup == 3, "returned hitgroup is a copied value independent of later native hitbox changes");
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(result.hitgroupKnown && result.hitgroup == 1, "subsequent collision samples the current native hitgroup");
+    hitbox = 0;
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(result.valid && result.clear && !result.hitgroupKnown && result.hitgroup == 0,
+        "null hitbox retains reachability but clears previous hitgroup knowledge");
+    hitbox = reinterpret_cast<std::uintptr_t>(unknownHitbox.data());
+    Put(unknownHitbox.data(), aim_damage_offsets::HitboxGroup, 2);
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(result.valid && result.clear && !result.hitgroupKnown && result.hitgroup == 0,
+        "native unknown-hitbox sentinel cannot supply a damage hitgroup even if its memory is readable");
+    auto unreadable = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Check(unreadable != nullptr, "unreadable hitbox fixture allocated");
+    if (unreadable) {
+        hitbox = reinterpret_cast<std::uintptr_t>(unreadable);
+        result = AimOcclusionCheck(context, source, target, volume);
+        Check(result.valid && result.clear && !result.hitgroupKnown && result.hitgroup == 0,
+            "unreadable hitbox cannot publish stale or unverified damage context");
+        VirtualFree(unreadable, 0, MEM_RELEASE);
+    }
+    hitbox = reinterpret_cast<std::uintptr_t>(nativeHitbox.data());
     hit = reinterpret_cast<std::uintptr_t>(blocker.data());
-    Check(!AimOcclusionCheck(context, source, target, volume).clear, "intervening entity blocks");
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(!result.clear, "intervening entity blocks");
+    Check(result.valid && !result.hitgroupKnown && result.hitgroup == 0,
+        "an intervening entity's hitbox cannot become the selected pawn's predicted hitgroup");
     hit = 0;
-    Check(!AimOcclusionCheck(context, source, target, volume).clear, "world cover blocks");
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(!result.clear, "world cover blocks");
+    Check(!result.hitgroupKnown && result.hitgroup == 0, "world collision cannot supply pawn hitgroup knowledge");
     fraction = std::nextafter(1.0f, 0.0f);
     Check(!AimOcclusionCheck(context, source, target, volume).clear, "cover one float before endpoint blocks");
     fraction = 1; hit = reinterpret_cast<std::uintptr_t>(blocker.data());
     Check(!AimOcclusionCheck(context, source, target, volume).clear, "non-target endpoint collision blocks");
+    hit = 0;
+    result = AimOcclusionCheck(context, source, target, volume);
+    Check(result.clear && !result.hitgroupKnown && result.hitgroup == 0 && result.distance == 90,
+        "clear no-entity segment does not inherit a readable but unrelated hitbox record");
     hit = target.enemy.pawn; hitFlag = 1;
     Check(!AimOcclusionCheck(context, source, target, volume).clear, "native hit flag beats selected pawn and full fraction");
     hitFlag = 0; fraction = 0;

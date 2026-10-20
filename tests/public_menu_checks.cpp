@@ -678,9 +678,11 @@ int main() {
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.9f);
     ClickControl("##AimSamples", 0.9f);
+    ClickControl("##AimMinDamage", 0.9f);
     ClickControl("Quickstop");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256 &&
-           !SilentAimGetSettings().quickstop, "disabled aim master blocks autofire, quickstop and hitchance edits");
+           !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
+           "disabled aim master blocks autofire, quickstop, damage and hitchance edits");
     ClickControl("##AimFov", 0.8f);
     Expect(SilentAimGetSettings().fov == 5, "disabled silent aim blocks FOV editing");
     ClickControl("Enable silent aim");
@@ -697,17 +699,27 @@ int main() {
     }
     ClickControl("Quickstop");
     Expect(!SilentAimGetSettings().quickstop, "quickstop checkbox waits for enabled autofire");
+    ClickControl("##AimMinDamage", 0.9f);
+    Expect(SilentAimGetSettings().minDamage == 1, "minimum damage slider waits for enabled autofire");
     ClickControl("Autofire");
     ClickControl("##AimHitchance", 0.75f);
     ClickControl("##AimSamples", 0.8f);
     Expect(SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance > 60 && SilentAimGetSettings().samples > 700,
            "autofire threshold and sample count respond to real mouse input");
+    ClickControl("##AimMinDamage", 0.99f);
+    Expect(SilentAimGetSettings().minDamage == 100, "minimum damage slider reaches 100 HP with real mouse input");
+    ClickControl("##AimMinDamage", 0.01f);
+    Expect(SilentAimGetSettings().minDamage == 1, "minimum damage slider reaches 1 HP with real mouse input");
+    ClickControl("##AimMinDamage", 0.65f);
+    const int savedMinDamage = SilentAimGetSettings().minDamage;
+    Expect(savedMinDamage > 50 && savedMinDamage < 80, "minimum damage slider publishes intermediate integer HP");
     ClickControl("Quickstop");
     Expect(SilentAimGetSettings().quickstop, "quickstop checkbox publishes its enabled preference with autofire enabled");
     ClickControl("Autofire");
     ClickControl("Quickstop");
-    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().quickstop,
-        "disabling autofire preserves quickstop preference and blocks quickstop edits");
+    ClickControl("##AimMinDamage", 0.1f);
+    Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == savedMinDamage,
+        "disabling autofire preserves quickstop and minimum damage preferences and blocks edits");
     ClickControl("Enable silent aim");
     Expect(!SilentAimGetSettings().enabled && !EspGetSettings().boxes && EspGetSettings().armor,
            "silent aim changes preserve independent ESP settings");

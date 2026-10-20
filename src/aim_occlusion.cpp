@@ -1,5 +1,6 @@
 #include "aim_occlusion.h"
 #include "aim_occlusion_offsets.h"
+#include "aim_damage_offsets.h"
 #include "silent_aim_target.h"
 #include "third_person_offsets.h"
 #include "cs2_offsets.h"
@@ -37,7 +38,13 @@ bool CurrentClient(std::uintptr_t client) noexcept {
 bool Finite(AimVector vector) noexcept {
     return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z);
 }
-struct TraceOutput { float fraction; std::uintptr_t entity; unsigned char hitFlag; };
+struct TraceOutput {
+    float fraction = 0;
+    std::uintptr_t entity = 0;
+    unsigned char hitFlag = 0;
+    bool hitgroupKnown = false;
+    int hitgroup = 0;
+};
 // Native calls can invoke callbacks. Stack objects expire only after the
 // synchronous call returns; faults fail closed and publish no attack decision.
 bool Trace(std::uintptr_t client, std::uintptr_t manager, std::uintptr_t pawn,
@@ -70,6 +77,11 @@ bool Trace(std::uintptr_t client, std::uintptr_t manager, std::uintptr_t pawn,
         std::memcpy(&output.fraction, result + shared::TraceFraction, sizeof(output.fraction));
         std::memcpy(&output.entity, result + off::TraceEntity, sizeof(output.entity));
         output.hitFlag = result[off::TraceHitFlag];
+        std::uintptr_t hitbox = 0, unknown = 0;
+        std::memcpy(&hitbox, result + aim_damage_offsets::TraceHitbox, sizeof(hitbox));
+        if (hitbox && Read(client + aim_damage_offsets::UnknownHitboxPointer, unknown) &&
+            hitbox != unknown && Read(hitbox + aim_damage_offsets::HitboxGroup, output.hitgroup))
+            output.hitgroupKnown = true;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -121,6 +133,9 @@ AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext& context, const A
     if (!std::isfinite(output.fraction) || output.fraction < 0 || output.fraction > 1) return result;
     result.valid = true;
     result.fraction = output.fraction;
+    result.distance = static_cast<float>(std::sqrt(x*x + y*y + z*z) * output.fraction);
+    result.hitgroupKnown = output.entity == target.enemy.pawn && output.hitgroupKnown;
+    result.hitgroup = result.hitgroupKnown ? output.hitgroup : 0;
     // No near-endpoint tolerance: even cover just before the capsule blocks.
     // A first hit on the selected pawn is direct reachability. Its other
     // hitboxes are native collision; authored selected-capsule chance is separate.

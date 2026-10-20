@@ -59,6 +59,7 @@ def component_commands(game):
         ("aim_geometry", "inspect_aim_geometry.py", ["--client", client,
             "--animation", str(game / "bin/win64/animationsystem.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk")]),
         ("aim_weapon", "inspect_aim_weapon.py", ["--client", client]),
+        ("aim_damage", "inspect_aim_damage.py", ["--game", str(game)]),
         ("autofire", "inspect_autofire.py", ["--client", client]),
         ("aim_occlusion", "inspect_aim_occlusion.py", ["--client", client]),
         ("aim_console", "inspect_aim_console.py", ["--game", str(game)]),

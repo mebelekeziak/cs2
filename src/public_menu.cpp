@@ -584,12 +584,16 @@ void DrawPublicMenu() {
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::SliderInt("##AimSamples", &settings.samples, 64, 1024);
                 ImGui::BeginDisabled(!settings.autofire);
+                ImGui::TextUnformatted("Minimum damage");
+                ImGui::SetNextItemWidth(-1);
+                changed |= ImGui::SliderInt("##AimMinDamage", &settings.minDamage, 1, 100, "%d HP");
                 changed |= FeatureCheckbox("Quickstop", settings.quickstop);
                 ImGui::EndDisabled();
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 ImGui::TextWrapped("Quickstop brakes ready shots below minimum hitchance and releases movement during weapon cooldown.");
-                ImGui::TextWrapped("Autofire requires a clear direct path and minimum hitchance. Manual fire remains available.");
+                ImGui::TextWrapped("Autofire requires a clear direct path, minimum hitchance and minimum predicted damage. Manual fire remains available.");
+                ImGui::TextWrapped("Damage estimates account for range, hitgroup and armor on unobstructed shots.");
                 ImGui::TextWrapped("Cover blocks autofire, including penetrable walls. Hitchance estimates spread; server timing can still prevent a hit.");
                 ImGui::TextDisabled("F10  Silent aim");
                 ImGui::Separator();

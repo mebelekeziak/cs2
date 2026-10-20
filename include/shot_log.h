@@ -36,6 +36,11 @@ struct ShotLogMetadata {
     // Set only after publishing a ready primary attack. Estimates and held
     // attacks during cooldown must not produce unregistered-shot timeouts.
     bool attackPublished = false;
+    // Copied direct-hit estimate for the intended target; never actual damage.
+    bool damageValid = false;
+    float predictedDamage = 0;
+    int minDamage = 1;
+    int predictedHitgroup = 0;
 };
 
 // deliveryId optionally identifies a copied delivery occurrence. Repeating the
@@ -104,6 +109,15 @@ struct ShotLogCounters {
     std::uint64_t pendingOverflow = 0, closedOverflow = 0, eventOverflow = 0, metadataOverflow = 0, completedDropped = 0;
     std::uint64_t dedupEvictions = 0, lateEvents = 0, orphanEvents = 0, abandonedDisabled = 0, unregistered = 0;
 };
+
+struct ShotLogDamageSummary {
+    bool predictionKnown = false, actualKnown = false, targetActualKnown = false;
+    bool partial = false;
+    int actualDamage = 0, targetActualDamage = 0;
+};
+// Actual values sum confirmed native hurt events retained in this record.
+// Missing or ambiguous shot attribution never becomes zero observed damage.
+ShotLogDamageSummary ShotLogSummarizeDamage(const ShotLogRecord& record) noexcept;
 
 // Initialize is a fresh tracker (IDs/counters reset). Reset closes current
 // pending shots as UNCONFIRMED, starts a new source and retains completed lines

@@ -3,7 +3,7 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-two
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-three
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -720,9 +720,44 @@ settings do not control aim acquisition.
 **Autofire** starts off. Enable it to request primary fire when the current
 estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
 ready, with a clear direct line of fire to the selected target. **Spread samples** controls the complete estimate (64–1024, initially
-256). All three controls save in local configs; older presets restore these
+256). **Minimum damage** (1–100 HP, initially 1) also gates autofire. These controls save in local configs; older presets restore these
 defaults. Manual primary fire stays available at any threshold, including when
 the weapon or geometry cannot be modeled. Autofire does not suppress manual input.
+
+Damage prediction models one unobstructed bullet using the current weapon's base
+damage, range modifier, headshot multiplier and armor ratio; current target armor
+and helmet; and the target team's head/body damage scales. The current native
+ray supplies the first hitgroup and distance, including an arm intercepted on a
+chest aim. It honors `mp_damage_headshot_only`. Unknown native hitgroups,
+unavailable inputs, immunity and active healthshot damage modifiers prevent an
+automatic request. Cover remains blocked; this does not add wall penetration.
+
+The slider compares the estimate rounded down to whole HP, without capping it to
+remaining target health or adding a lethal-shot override. Both hitchance and
+minimum damage must pass. A low-damage candidate cannot hide an eligible enemy
+or start quickstop. Damage inputs are checked again after native tracing and
+before publication; changes cancel owned attacks through the existing checksum
+path. The estimate describes the central direct ray: spread, recoil, movement,
+server hooks and event rounding can change the observed result.
+
+Shot result lines append `| predicted 35.5 (target) | actual 34 (target)` when
+both are known. Actual damage comes only from confirmed native hurt events;
+misses, missing events and command timeouts retain `actual unknown`. Damage to a
+different victim is labeled separately, and ambiguous shot association remains
+separate evidence. `AIM_SHOT_DETAIL` records the configured minimum, predicted
+hitgroup and target/total actual damage. See [damage evidence](tools/CS2_AIM_DAMAGE_EVIDENCE.md)
+and run `python tools/inspect_aim_damage.py` to verify the installed contracts.
+Build and load using the existing commands; restart CS2 normally before loading
+the rebuilt DLL when an older copy remains resident.
+
+**Verification, October 20, 2026:** public and diagnostic x64 Release builds
+each pass **49/49 CTest suites**, including 221 damage checks, 182 integrated aim
+pipeline checks, 260 occlusion checks, 140 shot-log checks and 108 logging-runtime
+checks. All **23 installed-file compatibility components** pass, and 61 deliberately
+incorrect damage contracts are rejected. Normal and narrow software-D3D11 Aim
+previews were inspected. Both payloads retain zero static TLS and delay imports.
+No CS2 client or server was launched; live predicted-versus-actual accuracy and
+hit registration remain unobserved.
 
 The estimator copies the selected region's authored `cstrike` capsule from the
 current enabled model mesh and hitbox set, transforms it with the current bone
@@ -824,7 +859,7 @@ retain uncertainty instead of choosing a shot by FIFO or intended target. A
 not identify world geometry, material or penetration; an unregistered command
 reports missing local event observation, not proof of server rejection. The
 project has no verified server seed, resolver, lagcomp/backtrack model, local
-prediction comparison or penetration/damage scan, so their proposed reasons
+prediction comparison or penetration scan, so their proposed reasons
 are omitted. Even 100% sampled hitchance does not prove a seed misprediction.
 Command rebuilds share one timeout; competing compatible commands suppress
 timeouts when a fire could acknowledge any of them. Cooldown-only manual input
