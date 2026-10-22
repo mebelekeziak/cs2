@@ -616,7 +616,7 @@ void DrawPublicMenu() {
                 visualizationChanged |= ImGui::ColorEdit4("##AimPointColor", visualization.color,
                     ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf);
                 ImGui::EndDisabled();
-                ImGui::TextWrapped("Shows hitbox centers with a valid damage path before hitchance and firing timing, including while moving or waiting to shoot.");
+                ImGui::TextWrapped("Shows hitbox centers with a valid damage path, including below minimum damage, while moving or waiting to shoot.");
                 ImGui::BeginDisabled(!settings.enabled);
                 ImGui::TextUnformatted("Hitgroups");
                 constexpr const char* hitgroups[]{"Head", "Chest", "Stomach", "Pelvis", "Arms", "Hands", "Legs", "Feet"};

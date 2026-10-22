@@ -2,8 +2,11 @@
 
 The markers represent the damage-path scan, rather than all evaluated geometry
 or only commands that will fire. They use authored hitbox centers in the selected
-groups/FOV and require range, a valid direct/autowall path and minimum damage.
-Hitchance, trigger state and firing cooldown do not decide marker visibility.
+groups/FOV and require range, a valid direct/autowall path and at least 1 predicted
+HP. The configured minimum damage, hitchance, trigger state and firing cooldown
+do not decide marker visibility. A 20 HP path is visible with minimum damage 40;
+automatic shots and quickstop still require the configured minimum. Changing
+minimum damage also keeps existing, unexpired path markers visible.
 An empty clip or unsupported/stale weapon data leaves no markers.
 
 The command owner reads one weapon sample and enumerates candidates. Each
@@ -13,6 +16,19 @@ automatic/manual shots retain their existing gates and fresh path rechecks.
 Preview-only commands, including manual mode before any trigger input and
 automatic cooldown, do not run hitchance estimates. Rendering consumes copied
 positions/serialized handles with a short expiry and configurable RGBA.
+
+The FOV setting is currently applied twice: target enumeration first checks the
+selected bone pivot, then candidate evaluation checks the authored hitbox center.
+Those positions can differ. A pivot outside FOV prevents that center from being
+scanned even if the center itself would pass. This is a geometry prefilter, not a
+line-of-sight requirement, and was not changed by the minimum-damage correction.
+
+Verified October 22, 2026: public and diagnostic x64 Release builds succeed and
+each pass 56/56 CTest suites. The integrated pipeline passes 329 checks, including
+below-minimum direct/penetrated markers without attack or movement ownership;
+the visualization suite passes 24 checks, including capture after changing
+minimum damage. The software D3D11 menu preview was inspected. No client/server
+was launched; live behavior remains unobserved.
 
 ## Local reference investigation
 

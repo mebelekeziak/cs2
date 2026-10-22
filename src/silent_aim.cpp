@@ -192,7 +192,10 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
             result.volume.center.y - result.target.eye.y,
             result.volume.center.z - result.target.eye.z) <= result.weapon.range) {
         auto scan = result;
-        if (Reachable(scan) && visualization->count < visualization->points.size()) {
+        // Preview any path that deals whole-HP damage. The configured minimum
+        // remains a shot/braking gate, not a marker-visibility requirement.
+        if (Reachable(scan, false) && scan.damage.healthDamage > 0 &&
+            visualization->count < visualization->points.size()) {
             const auto& p = scan.volume.center;
             visualization->points[visualization->count++] = {{p.x, p.y, p.z}, scan.target.enemy.pawnHandle};
             visualization->localPawn = scan.target.local.pawnHandle;

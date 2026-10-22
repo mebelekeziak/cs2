@@ -53,9 +53,12 @@ void AimVisualizationClear() noexcept {
 AimVisualizationFrame AimVisualizationCapture(std::uint64_t now, const SilentAimSettings* criteria) noexcept {
     AimVisualizationFrame result{};
     AcquireSRWLockShared(&lock);
+    auto comparable = published.criteria;
+    // Minimum damage only controls firing; moving its slider cannot hide paths.
+    if (criteria) comparable.minDamage = criteria->minDamage;
     if (settings.enabled && published.generation == generation && now >= published.capturedMs &&
         now - published.capturedMs <= AimVisualizationLifetimeMs &&
-        (!criteria || published.criteria == *criteria)) result = published;
+        (!criteria || comparable == *criteria)) result = published;
     ReleaseSRWLockShared(&lock);
     return result;
 }

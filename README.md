@@ -32,12 +32,14 @@ presets restore these defaults.
 
 Small outlined dots show the **damage-path scan**, before hitchance and firing
 timing: a selected hitbox center must be in aim FOV/range, have a valid bullet
-path and meet minimum predicted damage. With **Autowall** enabled, penetrable
-cover uses the existing native penetration/damage checks. Blocked or insufficient
-damage points stay hidden. Reachable points can appear while moving, below
-hitchance, braking, or waiting for weapon cooldown. They indicate potential
-damage, not permission to fire this command. All markers use one chosen color;
-multipoints are not added. Points work with chams and ESP disabled.
+path and deal at least 1 predicted HP, regardless of **Minimum damage**. With
+**Autowall** enabled, penetrable cover uses the existing native penetration/damage
+checks. Blocked and zero-HP paths stay hidden. Reachable points can appear while
+moving, below hitchance, braking, or waiting for weapon cooldown. They indicate potential
+damage, not permission to fire this command. Minimum damage still gates autofire
+and quickstop; a 20 HP path stays visible with minimum damage set to 40. All
+markers use one chosen color; multipoints are not added. Points work with chams
+and ESP disabled.
 
 The visualization shares the command-owner target enumeration and weapon sample.
 It checks copied candidates for damage before shot-ranking shortcuts, including
@@ -52,7 +54,8 @@ autofire/manual-shot gates retain their existing behavior. Empty clips,
 unavailable weapon data, empty scans, focus loss, local pawn replacement/death,
 visualization disable and cooperative stop clear or hide the points. Copied
 centers expire after 100 ms if callbacks stop; rendering also checks current
-serialized player handles and hides snapshots made with different shot settings.
+serialized player handles and hides snapshots made with different shot settings,
+except changes to minimum damage, which do not affect marker visibility.
 No native pointers cross into the point renderer.
 
 Use the existing build and **Load Overlay.cmd** workflow. Restart CS2 normally
@@ -80,6 +83,16 @@ Blocked, insufficient-damage, empty-clip and stale candidates are covered. The
 visualization suite passes 23 checks; RGBA/config tests and software D3D11
 previews pass. Both DLLs retain zero static TLS/delay imports. No CS2 client or
 server was launched; live point appearance remains unobserved.
+
+**Minimum-damage visibility correction, October 22, 2026:** markers now show
+valid paths dealing at least 1 predicted HP even below the configured minimum.
+Changing minimum damage keeps existing, unexpired markers visible. Autofire and
+quickstop retain their minimum-damage requirement. Public and diagnostic x64
+Release builds succeed without project warnings, each passing **56/56 CTest
+suites**, including 329 aim-pipeline checks and 24 visualization checks. Direct
+and penetrated 20 HP paths with minimum damage 40 are covered across readiness,
+autofire and quickstop settings. The software D3D11 menu preview was inspected.
+No CS2 client or server was launched; live behavior remains unobserved.
 
 ## Ragebot autowall
 

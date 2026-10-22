@@ -19,9 +19,12 @@ int main() {
     frame.points[0] = {{0, 0, 0}, 0x8002}; frame.count = 1;
     AimVisualizationPublish(frame, 1000);
     auto changedCriteria = frame.criteria; changedCriteria.minDamage = 100;
+    expect(AimVisualizationCapture(1000, &changedCriteria).count == 1,
+        "minimum damage changes do not hide existing damage-path points");
+    changedCriteria.autowall = !changedCriteria.autowall;
     expect(AimVisualizationCapture(1000, &changedCriteria).count == 0 &&
         AimVisualizationCapture(1000, &frame.criteria).count == 1,
-        "changed shot criteria immediately hide old eligible points");
+        "changed path criteria immediately hide old eligible points");
     expect(AimVisualizationCapture(1000).count == 1 && AimVisualizationCapture(1100).count == 1 &&
         AimVisualizationCapture(1101).count == 0 && AimVisualizationCapture(999).count == 0,
         "copied evaluation expires after 100ms and rejects reversed time");

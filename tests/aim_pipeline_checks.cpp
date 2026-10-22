@@ -1274,12 +1274,31 @@ void VisualizationChecks(World& world) {
         SilentAimSetSettings(settings);
         Command command; world.Prepare(command);
         const auto frame = AimVisualizationCapture(GetTickCount64(), &settings);
-        const std::size_t expected = mixed == 2 || mixed == 4 || mixed == 5 ? 2 : mixed == 7 ? 0 : 1;
+        const std::size_t expected = mixed == 1 || mixed == 2 || mixed == 4 || mixed == 5 || mixed == 7 ? 2 : 1;
         Expect(frame.count == expected, "only damage-path hitboxes on a mixed target appear before hitchance; case " +
             std::to_string(mixed) + " reversed=" + std::to_string(reversed));
         if (frame.count == 1) Expect(frame.points[0].center.y ==
-            (mixed == 1 || mixed == 8 || mixed == 9 ? 10.0f : 20.0f),
+            (mixed == 8 || mixed == 9 ? 10.0f : 20.0f),
             "marker belongs to the eligible hitbox, not every hitbox on its target");
+    }
+    for (bool penetrated : {false, true}) for (bool ready : {false, true})
+        for (bool automatic : {false, true}) for (bool quickstop : {false, true}) {
+        world.Reset(); AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings();
+        settings.minDamage = 40; settings.autowall = penetrated;
+        settings.autofire = automatic; settings.quickstop = quickstop;
+        SilentAimSetSettings(settings);
+        pathClear = !penetrated; predictedHp = 20; weapon.ready = ready;
+        Command command;
+        const auto beforeCommand = command.command;
+        const auto beforeInput = world.InputBytes();
+        world.Prepare(command);
+        Expect(AimVisualizationCapture(GetTickCount64(), &settings).count == 1 &&
+            (!penetrated || penetrationCalls > 0),
+            "20 HP path is visible with minimum damage 40 regardless of penetration/readiness/trigger/quickstop");
+        Expect(recorderCalls == 0 && checksumCalls == 0 && shotMetadata.empty() && LastBrake(false) &&
+            command.command == beforeCommand && world.InputBytes() == beforeInput,
+            "below-minimum preview cannot request an automatic shot, acquire braking or modify input");
     }
     world.Reset(); AimVisualizationSetSettings({true});
     auto brakingSettings = SilentAimGetSettings(); brakingSettings.quickstop = true;
