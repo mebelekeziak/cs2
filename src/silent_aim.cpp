@@ -9,6 +9,7 @@
 #include "aim_autofire_offsets.h"
 #include "aim_hitchance.h"
 #include "aim_weapon.h"
+#include "aim_shoot_origin.h"
 #include "aim_occlusion.h"
 #include "aim_damage.h"
 #include "aim_autowall.h"
@@ -33,6 +34,8 @@ HistoryFn original = nullptr;
 std::uintptr_t client = 0;
 AimBoneContext bones{};
 AimWeaponContext weaponContext{};
+AimShootOriginContext originContext{};
+bool originPrepared = false;
 AimOcclusionContext occlusionContext{};
 AimDamageContext damageContext{};
 AimAutowallContext autowallContext{};
@@ -60,6 +63,9 @@ struct Decision {
     AimTarget target{};
     AimTargetVolume volume{};
     AimWeaponSnapshot weapon{};
+    AimShootOriginSnapshot origin{};
+    AimAngles view{}, commandAngles{}, effectiveAngles{};
+    bool anglesValid = false;
     AimHitchanceResult chance{};
     AimOcclusionResult occlusion{};
     AimDamageResult damage{};
@@ -164,6 +170,31 @@ struct WeaponSample {
 bool Reachable(Decision& decision, bool enforceMinimum = true) noexcept;
 bool Current(const Decision& decision) noexcept;
 bool BetterShot(const Decision& candidate, const Decision& current) noexcept;
+Decision EstimateShot(Decision result, WeaponSample& weapon) noexcept {
+    const auto& settings = result.settings;
+    result.anglesValid = SilentAimCompensate(result.target.solution.angles, result.weapon.aimPunch,
+        result.commandAngles, result.effectiveAngles);
+    if (!result.anglesValid) { result.reason = "recoil compensation unavailable"; return result; }
+    AimHitchanceInput cone{};
+    cone.eye = result.target.eye;
+    cone.angles = result.effectiveAngles;
+    cone.capsule = result.volume.capsule;
+    cone.spread = result.weapon.spread; cone.inaccuracy = result.weapon.inaccuracy;
+    cone.range = result.weapon.range; cone.recoilIndex = result.weapon.recoilIndex;
+    cone.samples = static_cast<unsigned>(settings.samples); cone.negev = result.weapon.negev;
+    cone.forceMaxRadius = result.weapon.forceMaxRadius; cone.fixedSpreadAngle = result.weapon.fixedSpreadAngle;
+    if (!weapon.patternAttempted) {
+        weapon.patternAttempted = true;
+        if (AimPrepareSpreadPattern(cone, weapon.pattern)) ++performance.patterns;
+    }
+    ++performance.estimates;
+    result.chance = AimEstimateHitchance(cone, weapon.pattern);
+    if (!result.chance.valid) result.reason = result.chance.reason;
+    else if (result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
+    else if (!result.weapon.ready) result.reason = result.weapon.reason;
+    else result.reason = settings.autofire ? "autofire eligible" : "manual mode";
+    return result;
+}
 Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon, const Decision& best,
     AimVisualizationFrame* visualization, bool scanOnly) noexcept {
     const auto& settings = result.settings;
@@ -183,6 +214,8 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
     if (!weapon.valid) {
         result.reason = weaponPrepared ? result.weapon.reason : "weapon model verification unavailable"; return result;
     }
+    result.anglesValid = SilentAimCompensate(result.target.solution.angles, result.weapon.aimPunch,
+        result.commandAngles, result.effectiveAngles);
     if (!geometry) { result.reason = geometryReason; return result; }
     // Damage-path eligibility precedes accuracy and firing timing. This copied
     // decision cannot acquire attack or movement ownership. Keep the real shot's
@@ -217,28 +250,9 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
             return result;
         }
     }
-    AimHitchanceInput cone{};
-    cone.eye = result.target.eye;
-    cone.angles = {result.target.solution.angles.pitch + result.weapon.aimPunch.pitch,
-        result.target.solution.angles.yaw + result.weapon.aimPunch.yaw,
-        result.target.solution.angles.roll + result.weapon.aimPunch.roll};
-    cone.capsule = result.volume.capsule;
-    cone.spread = result.weapon.spread; cone.inaccuracy = result.weapon.inaccuracy;
-    cone.range = result.weapon.range; cone.recoilIndex = result.weapon.recoilIndex;
-    cone.samples = static_cast<unsigned>(settings.samples); cone.negev = result.weapon.negev;
-    cone.forceMaxRadius = result.weapon.forceMaxRadius; cone.fixedSpreadAngle = result.weapon.fixedSpreadAngle;
-    if (!weapon.patternAttempted) {
-        weapon.patternAttempted = true;
-        if (AimPrepareSpreadPattern(cone, weapon.pattern)) ++performance.patterns;
-    }
-    ++performance.estimates;
-    result.chance = AimEstimateHitchance(cone, weapon.pattern);
-    if (!result.chance.valid) result.reason = result.chance.reason;
-    else if (result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
-    else if (!result.weapon.ready) result.reason = result.weapon.reason;
-    else result.reason = settings.autofire ? "autofire eligible" : "manual mode";
-    return result;
+    return EstimateShot(result, weapon);
 }
+
 struct AutofireSelection {
     Decision prototype{}, accepted{}, rejected{}, brake{};
     AimAngles view{};
@@ -341,6 +355,7 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
     visualization.frame.criteria = settings;
     Decision result{};
     result.settings = settings;
+    result.view = view;
     ++decisions;
     if (!Source(result.source)) {
         ++sourceRejected; result.reason = "local source unavailable"; return result;
@@ -359,6 +374,10 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
             if (!readyRead || !visualization.enabled || readyWeapon.clip <= 0) return result;
         }
     }
+    if (!originPrepared || !AimShootOriginRead(originContext, result.source, result.origin)) {
+        result.reason = originPrepared ? result.origin.reason : "native shooting origin unavailable";
+        return result;
+    }
     AutofireSelection selection{};
     selection.prototype = result;
     selection.view = view;
@@ -367,7 +386,7 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
     if (visualization.enabled) selection.visualization = &visualization.frame;
     if (selectEligible) { selection.weapon.value = readyWeapon; selection.weapon.read = true; selection.weapon.valid = readyRead; }
     const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitgroups, bones,
-        result.target, &targetDiagnostics, &EligibleTarget, &selection);
+        result.target, &targetDiagnostics, &EligibleTarget, &selection, &result.origin.position);
     if (selection.visualization && (!SameSource(result.source) || !active.load(std::memory_order_acquire) ||
         !Foreground() || !(SilentAimGetSettings() == settings) ||
         (selection.weapon.valid && !AimWeaponStillCurrent(weaponContext, result.source, selection.weapon.value)) ||
@@ -409,7 +428,7 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
     char message[1536]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; autowall=%u penetrations=%d",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; autowall=%u penetrations=%d native_origin=%u eye=(%.3f,%.3f,%.3f) command=(%.3f,%.3f) effective=(%.3f,%.3f,%.3f)",
         handle, static_cast<int>(decision.target.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
@@ -420,12 +439,16 @@ void Report(const Decision& decision, const char* action, bool event = false) no
         decision.target.solution.separation, decision.target.solution.angles.pitch, decision.target.solution.angles.yaw,
         targetDiagnostics.eligibilityRejected, decision.damage.valid, decision.damage.damage, decision.damage.healthDamage,
         decision.settings.minDamage, decision.damage.input.hitgroup, decision.damage.reason,
-        decision.settings.autowall, decision.occlusion.penetrations);
+        decision.settings.autowall, decision.occlusion.penetrations, decision.origin.valid,
+        decision.target.eye.x, decision.target.eye.y, decision.target.eye.z,
+        decision.commandAngles.pitch, decision.commandAngles.yaw,
+        decision.effectiveAngles.pitch, decision.effectiveAngles.yaw, decision.effectiveAngles.roll);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
     // Volume validation includes current target ownership, health and pose.
     return SameSource(decision.source) &&
+        AimShootOriginStillCurrent(originContext, decision.source, decision.origin) &&
         SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) &&
         AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) &&
         (!decision.damage.valid || AimDamageStillCurrent(damageContext, decision.source, decision.target,
@@ -486,9 +509,7 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
     if (weaponCurrent && decision.weapon.identity && Read(decision.weapon.identity + cs2_offsets::CEntityIdentity::m_designerName, designer))
         CopyNativeText(designer, metadata.weapon);
     metadata.eye = decision.target.eye;
-    metadata.aim = {decision.target.solution.angles.pitch + decision.weapon.aimPunch.pitch,
-        decision.target.solution.angles.yaw + decision.weapon.aimPunch.yaw,
-        decision.target.solution.angles.roll + decision.weapon.aimPunch.roll};
+    metadata.aim = decision.effectiveAngles;
     metadata.capsule = decision.volume.capsule;
     metadata.capsuleValid = volumeCurrent;
     metadata.hitchance = decision.chance.percent;
@@ -503,6 +524,44 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
     metadata.predictedHitgroup = decision.damage.input.hitgroup;
     metadata.attackPublished = weaponCurrent && decision.weapon.ready && *metadata.weapon;
     ShotLoggingCapture(metadata);
+}
+bool ModelUnchanged(const Decision& decision) noexcept {
+    AimWeaponSnapshot current{};
+    const auto& before = decision.weapon;
+    return AimWeaponRead(weaponContext, decision.source, current) &&
+        AimWeaponStillCurrent(weaponContext, decision.source, before) &&
+        current.weapon == before.weapon && current.identity == before.identity && current.data == before.data &&
+        current.services == before.services && current.punchServices == before.punchServices &&
+        current.fullAuto == before.fullAuto && current.handle == before.handle && current.mode == before.mode &&
+        current.clip == before.clip && current.ready == before.ready && current.reloading == before.reloading &&
+        current.currentTime == before.currentTime && current.nextAttack == before.nextAttack &&
+        current.inaccuracy == before.inaccuracy && current.spread == before.spread && current.range == before.range &&
+        current.recoilIndex == before.recoilIndex && current.negev == before.negev &&
+        current.forceMaxRadius == before.forceMaxRadius && current.fixedSpreadAngle == before.fixedSpreadAngle &&
+        current.aimPunch.pitch == before.aimPunch.pitch && current.aimPunch.yaw == before.aimPunch.yaw &&
+        current.aimPunch.roll == before.aimPunch.roll;
+}
+bool RefreshShot(Decision& decision) noexcept {
+    // Native history building follows preparation. Its accuracy, punch, time
+    // and shoot position cannot be inferred from the earlier structural checks.
+    decision.chance = {}; decision.damage = {}; decision.occlusion = {};
+    decision.automaticEligible = decision.quickstopEligible = decision.cannotImprove = false;
+    decision.anglesValid = false;
+    AimShootOriginSnapshot origin{};
+    WeaponSample weapon{};
+    if (!AimShootOriginRead(originContext, decision.source, origin) ||
+        !AimWeaponRead(weaponContext, decision.source, weapon.value)) {
+        decision.reason = "publication shooting model unavailable"; return false;
+    }
+    decision.origin = origin;
+    decision.target.eye = origin.position;
+    decision.weapon = weapon.value;
+    decision.target.solution = SilentAimSolve(origin.position, decision.volume.center, decision.view, decision.settings.fov);
+    if (!decision.target.solution.valid) { decision.reason = "publication center outside FOV"; return false; }
+    decision = EstimateShot(decision, weapon);
+    if (!decision.chance.valid || !decision.anglesValid || !decision.weapon.ready ||
+        decision.chance.percent < decision.settings.hitchance) return false;
+    return true;
 }
 bool Cancel(Pending& request, void* input, void* command) noexcept {
     const bool restored = SilentAimCancelAutofire(request.patch, &fireDiagnostics);
@@ -543,9 +602,14 @@ void Process(void* input, void* command) noexcept {
             !SilentAimTargetValid(decision.source, decision.target) ? "target changed" :
             !SilentAimTargetVolumeValid(decision.source, decision.target, decision.volume) ? "hitbox geometry changed" :
             !AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon) ? "weapon changed" :
+            !RefreshShot(decision) ? decision.reason :
             !Reachable(decision) ? decision.reason :
+            !ModelUnchanged(decision) ? "weapon accuracy changed during publication" :
+            !Current(decision) ? "shooting origin or target changed during publication" :
+            !active.load(std::memory_order_acquire) || !Foreground() || !(SilentAimGetSettings() == settings) ?
+                "aim ownership changed during publication" :
             !SilentAimReadShot(address, shot, &commandDiagnostics) ? commandDiagnostics.reason :
-            !SilentAimWriteShot(shot, decision.target.solution.angles) ? "history changed before angle write" : nullptr;
+            !SilentAimWriteShot(shot, decision.commandAngles) ? "history changed before angle write" : nullptr;
         if (rejection) {
             decision.reason = rejection;
             ++writeRejected;
@@ -570,10 +634,14 @@ void Process(void* input, void* command) noexcept {
     // Manual input keeps its existing behavior; a failed damage/path estimate
     // stays unknown in logs and never turns the slider into a manual-fire gate.
     if (decision.chance.valid) Reachable(decision, false);
+    if (!decision.anglesValid || !ModelUnchanged(decision)) {
+        Status("manual shooting model unavailable or changed; shot unchanged"); return;
+    }
     const auto& target = decision.target;
     if (!active.load(std::memory_order_acquire) || !Foreground() || !(SilentAimGetSettings() == settings) ||
-        !SameSource(decision.source) || !SilentAimTargetValid(decision.source, target) ||
-        !SilentAimWriteShot(shot, target.solution.angles)) {
+        !SameSource(decision.source) ||
+        !AimShootOriginStillCurrent(originContext, decision.source, decision.origin) || !SilentAimTargetValid(decision.source, target) ||
+        !SilentAimWriteShot(shot, decision.commandAngles)) {
         ++writeRejected;
         Status("source/history changed; shot unchanged"); return;
     }
@@ -634,6 +702,7 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     prepared = true;
     bones = {client, reinterpret_cast<AimBoneLookup>(client + bone::LookupBone)};
     weaponPrepared = AimWeaponPrepare(client, weaponContext);
+    originPrepared = AimShootOriginPrepare(client, originContext);
     AimOcclusionPrepare(client, occlusionContext);
     AimDamagePrepare(client, damageContext);
     AimAutowallPrepare(client, autowallContext);
@@ -647,8 +716,8 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     if (logger) {
         char message[384]{};
         std::snprintf(message, sizeof(message),
-            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u damage=%u autowall=%u; native accuracy and bullet damage snapshots; path and minimum damage checked before request and publication; autofire starts off; command finalizer required for native CRC",
-            weaponPrepared, autofirePrepared, occlusionContext.prepared, damageContext.prepared, autowallContext.prepared);
+            "AIM_HITCHANCE_BUILD weapon_model=%u native_attack_recorder=%u occlusion=%u damage=%u autowall=%u shooting_origin=%u; recoil compensated; native accuracy and bullet damage snapshots; path and minimum damage checked before request and publication; autofire starts off; command finalizer required for native CRC",
+            weaponPrepared, autofirePrepared, occlusionContext.prepared, damageContext.prepared, autowallContext.prepared, originPrepared);
         logger(message);
     }
     return true;
@@ -818,6 +887,7 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
     lastEventReport = 0; lastObservedAction = "not evaluated";
     weaponContext.client = base;
+    originPrepared = AimShootOriginPrepare(base, originContext);
     damageContext = {base, true};
     autowallContext = {base, true};
     occlusionContext = {base, true};

@@ -20,6 +20,8 @@ struct AimTarget {
     AimSolution solution{};
     AimVector eye{}, point{};
     AimHitbox hitbox = AimHitbox::Chest;
+    AimVector sceneEye{}; // Acquisition-time scene eye; native eye may differ.
+    bool nativeEye = false;
 };
 struct AimTargetVolume {
     AimCapsule capsule{};
@@ -69,11 +71,13 @@ using AimTargetFilter = bool (*)(const AimTarget&, void*) noexcept;
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
                            const AimBoneContext& bones, AimTarget& target,
                            AimTargetDiagnostics* diagnostics = nullptr,
-                           AimTargetFilter filter = nullptr, void* filterContext = nullptr) noexcept;
+                           AimTargetFilter filter = nullptr, void* filterContext = nullptr,
+                           const AimVector* shootingEye = nullptr) noexcept;
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
                            const AimBoneContext& bones, AimTarget& target,
                            AimTargetDiagnostics* diagnostics = nullptr,
-                           AimTargetFilter filter = nullptr, void* filterContext = nullptr) noexcept;
+                           AimTargetFilter filter = nullptr, void* filterContext = nullptr,
+                           const AimVector* shootingEye = nullptr) noexcept;
 bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noexcept;
 // Reads the authored capsule attached to the selected landmark in the current
 // enabled mesh/current hitbox set, then transforms its endpoints by copied pose.

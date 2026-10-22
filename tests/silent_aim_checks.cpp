@@ -74,6 +74,14 @@ void MathChecks() {
            "zero-length and out-of-range pitch have no aim solution");
     Expect(!SilentAimSolve({}, {100, 0, 0}, {0, std::numeric_limits<float>::quiet_NaN(), 0}, 5).valid,
            "nonfinite camera values are rejected");
+    AimAngles command{}, effective{};
+    Expect(SilentAimCompensate({10, 179, 0}, {5, -7, .25f}, command, effective) &&
+        Near(command.pitch, 5) && Near(command.yaw, -174) && command.roll == 0 &&
+        Near(effective.pitch, 10) && Near(effective.yaw, 179) && Near(effective.roll, .25f),
+        "recoil compensation wraps command yaw and reconstructs the native effective basis");
+    Expect(!SilentAimCompensate({-85,0,0}, {5,0,0}, command, effective) &&
+        !SilentAimCompensate({}, {std::numeric_limits<float>::quiet_NaN(),0,0}, command, effective),
+        "impossible pitch and nonfinite punch never clamp into a misleading shot");
     SilentAimSetSettings({true, std::numeric_limits<float>::quiet_NaN(), static_cast<AimHitbox>(99)});
     const auto settings = SilentAimGetSettings();
     Expect(settings.enabled && settings.fov == 5 && settings.hitbox == AimHitbox::Pelvis, "one atomic settings snapshot sanitizes FOV and hitbox");
@@ -309,6 +317,13 @@ void FilteredTargetChecks() {
         "native entity scan continues behind the camera after nearest candidate fails eligibility");
     Expect(fixture.Select(target, AimHitbox::Head, 180) && target.enemy.pawn == Address(fixture.enemy.pawn),
         "unfiltered manual entity scan retains angular-nearest priority");
+    const AimVector nativeEye{0, 100, 64};
+    Expect(SilentAimSelectTarget(fixture.source, {0,-4.573921f,0}, .1f, AimHitbox::Head, fixture.bones, target,
+        nullptr, nullptr, nullptr, &nativeEye) && target.nativeEye && target.eye.y == 100 &&
+        SilentAimTargetValid(fixture.source, target), "native shooting origin can differ from scene eye without invalidating its target");
+    Put(Address(fixture.local.scene) + ent::CGameSceneNode::m_vecAbsOrigin, AimVector{1,0,0});
+    Expect(!SilentAimTargetValid(fixture.source, target), "scene movement still invalidates a target acquired from native eye");
+    Put(Address(fixture.local.scene) + ent::CGameSceneNode::m_vecAbsOrigin, AimVector{});
     context.rejectAll = true;
     Expect(!SilentAimSelectTarget(fixture.source, {}, 180, AimHitbox::Head, fixture.bones, target,
         &diagnostics, &Eligible, &context) && !target.solution.valid && diagnostics.eligibilityRejected == 2,

@@ -61,6 +61,27 @@ The existing shared stage-8 owner captures copied world edges. Smoke is an XY
 voxel-column projection; fire uses a union of live visual patch disks. Rendering
 does not call engine methods. No live grenade appearance observation is claimed.
 
+## Current native shooting origin and aim consistency: client.dll
+
+Added October 22, 2026. `include/aim_shoot_origin_offsets.h` freezes the
+`CCSPlayer_WeaponServices` table `0x1C14C78`, current-origin slot `0x100`
+(index 32), and getter `0xA7FD00`. Microsoft x64 ABI is
+`AimVector*(services*, AimVector*)`. Its pawn slot `0x568` resolves to
+`0x93C660`; native base eye `0x15FAB0` and view-offset getter `0x160770`
+include native interpolation. Named schema and independent history-producer
+and fallback callers establish ownership and dispatch. Read only on the command
+owner; native queries may refresh engine-owned scene/interpolation caches.
+
+The aim pipeline uses one copied current native origin throughout a scan and
+refreshes the selected origin/weapon cone after history construction. Current
+punch is subtracted from outgoing primary-history pitch/yaw; the full sampler
+models the actual command-plus-punch basis. Final path/model/source rechecks
+cancel stale owned attacks through the native CRC restoration path. Historical
+shot-time origin and punch are separate native contracts and remain unconsumed.
+See [native-origin evidence](../tools/CS2_AIM_SHOOT_ORIGIN_EVIDENCE.md),
+[consistency notes](AIM_CONSISTENCY.md), and run
+`python tools/inspect_aim_shoot_origin.py` or the combined compatibility command.
+
 ## Ragebot autowall: client.dll
 
 Added October 20, 2026.
@@ -197,8 +218,9 @@ retained ring or alter base/camera angles. Missing/invalid history is a no-op.
 Bone names resolve per model and callback; no cached numerical indices or forced
 animation refresh. Missing selected bones/pose data skip the player. These are
 animated landmarks, not authored hitbox-volume centers. Manual firing does not
-require a visibility trace. No recoil/spread correction or penetration is
-provided; direct damage prediction is covered below.
+require a visibility trace. This original stage did not provide recoil/spread
+correction or penetration; later autowall and October 22 current-punch
+compensation are documented in their sections above.
 
 ### Hitchance and autofire extension
 

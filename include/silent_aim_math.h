@@ -11,3 +11,9 @@ struct AimSolution {
 // Copied values only. FOV is angular distance from the current view direction.
 AimSolution SilentAimSolve(const AimVector& eye, const AimVector& point,
                            const AimAngles& view, float fov) noexcept;
+
+// Native firing adds punch to command angles. Keep outgoing roll zero and
+// model the resulting bullet basis, including native punch roll. Never clamp
+// an unrepresentable pitch into a different shot.
+bool SilentAimCompensate(const AimAngles& desired, const AimAngles& punch,
+                         AimAngles& command, AimAngles& effective) noexcept;

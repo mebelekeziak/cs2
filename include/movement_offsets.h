@@ -24,6 +24,10 @@ inline constexpr unsigned char FinalizeBytes[]{
 };
 inline constexpr std::ptrdiff_t AirCap = 0x25325B0;
 inline constexpr std::ptrdiff_t AirAccelerate = 0x2564E90;
+inline constexpr std::ptrdiff_t GroundAccelerate = 0x2564E80;
+inline constexpr std::ptrdiff_t GroundFriction = 0x2564EF0;
+inline constexpr std::ptrdiff_t StopSpeed = 0x2564DF0;
+inline constexpr std::ptrdiff_t GroundAccelerationSpeedFloor = 0x1BB7194;
 inline constexpr std::ptrdiff_t AutoBunnyhop = 0x2532758;
 inline constexpr std::ptrdiff_t JumpPenalty = 0x25325A0;
 inline constexpr std::ptrdiff_t JumpPrecision = 0x2532640;
@@ -48,6 +52,7 @@ inline constexpr std::ptrdiff_t Velocity = 0x3F8;
 inline constexpr std::ptrdiff_t ActualMoveType = 0x526;
 inline constexpr std::ptrdiff_t WaterLevel = 0x528;
 inline constexpr std::ptrdiff_t MovementServices = 0x1330;
+inline constexpr std::ptrdiff_t GroundFrictionScale = 0x538;
 }
 namespace controller {
 inline constexpr std::ptrdiff_t TickBase = 0x6B8;

@@ -7,6 +7,8 @@
 #include "silent_aim_offsets.h"
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
+#include "aim_shoot_origin.h"
+#include <limits>
 #include "aim_occlusion.h"
 #include "aim_damage.h"
 #include "aim_autowall.h"
@@ -58,6 +60,23 @@ std::vector<std::string> telemetry;
 std::vector<ShotLogMetadata> shotMetadata;
 unsigned shotPumps = 0;
 AimWeaponSnapshot weapon{};
+AimVector nativeOrigin{};
+bool originAvailable = true;
+int builderMutation = 0, traceModelMutation = 0, modelReadMutation = 0;
+unsigned modelMutationTrace = 3;
+void MutateModel(int mode) {
+    if (mode == 1) weapon.inaccuracy = .5f;
+    if (mode == 2) weapon.spread = .5f;
+    if (mode == 3) weapon.aimPunch = {5, -7, .25f};
+    if (mode == 4) { weapon.ready = false; weapon.reason = "fixture cooldown"; }
+    if (mode == 5) weaponAvailable = false;
+    if (mode == 6) nativeOrigin.y = 6;
+    if (mode == 7) originAvailable = false;
+    if (mode == 8) weapon.aimPunch.pitch = 100;
+    if (mode == 9) weapon.currentTime += .01f;
+    if (mode == 10) { auto settings = SilentAimGetSettings(); settings.enabled = false; SilentAimSetSettings(settings); }
+    if (mode == 11) SilentAimTestForeground(false);
+}
 constexpr std::uint64_t UnrelatedDown = 0x1000, UnrelatedChanged = 0x2000, UnrelatedThird = 0x4000;
 constexpr std::uint32_t UnrelatedPresence = 0x400000;
 
@@ -162,6 +181,7 @@ void NativeBuilder(void* input, int slot, void* command) {
     const auto baseAngles = Get<std::uintptr_t>(base + move::base::Angles);
     Put(angles + cmd::angle::Pitch, baseAngles ? Get<AimAngles>(baseAngles + cmd::angle::Pitch) : AimAngles{});
     Put(angles + cmd::angle::Presence, badHistory ? std::uint32_t{0} : std::uint32_t{0x8007});
+    MutateModel(builderMutation);
 }
 
 struct World {
@@ -208,6 +228,7 @@ struct World {
         telemetry.clear();
         shotMetadata.clear(); shotPumps = 0;
         ShotLogSetSettings({});
+        nativeOrigin = {}; originAvailable = true; modelMutationTrace = 3; builderMutation = traceModelMutation = modelReadMutation = 0;
         weapon = {};
         weapon.weapon = 0x444000; weapon.identity = 0x445000; weapon.services = 0x446000;
         weapon.identity = Address(weaponIdentity);
@@ -296,9 +317,8 @@ void GateChecks(World& world) {
     auto staleButtons = manualStale.originalButtons; staleButtons.down |= 1;
     Put(Address(manualStale.command) + move::command::Buttons, staleButtons);
     world.Prepare(manualStale); world.History(manualStale);
-    Expect(Equal(manualStale.History(), Desired()) && shotMetadata.size() == 1 &&
-        !shotMetadata[0].chanceValid && !shotMetadata[0].capsuleValid && !shotMetadata[0].attackPublished && !*shotMetadata[0].weapon,
-        "manual fire remains available when logging revalidation marks stale weapon/geometry metadata unknown");
+    Expect(Equal(manualStale.History(), Command::PhysicalView) && Equal(manualStale.Buttons(), staleButtons) && shotMetadata.empty(),
+        "stale shooting model preserves physical manual fire and original aim without guessed compensation");
 
     world.Reset();
     Command cooldown;
@@ -584,7 +604,7 @@ void WideFovChecks(World& world) {
                 command.baseAngles == baseBefore,
                 "180-degree autofire skips ineligible crosshair-nearest enemy and aims behind; rejection=" +
                 std::to_string(rejection) + " reversed=" + std::to_string(reversed));
-            Expect(weaponReads == 1, "candidate scan shares one command-owner weapon snapshot");
+            Expect(weaponReads == 3, "candidate scan shares one snapshot plus publication and post-trace model samples");
         }
     }
     world.Reset(); multipleTargets = true; rejectedCandidate = 1;
@@ -765,7 +785,7 @@ void QuickstopChecks(World& world) {
 // links the real runtime, real history/ownership code, settings and estimator.
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
     const AimBoneContext&, AimTarget& target, AimTargetDiagnostics* diagnostics,
-    AimTargetFilter filter, void* filterContext) noexcept {
+    AimTargetFilter filter, void* filterContext, const AimVector* shootingEye) noexcept {
     ++selectionCalls;
     if (!selectAvailable || !hitgroups) return false;
     const int capturedHealth = targetHealth;
@@ -780,6 +800,7 @@ bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float
         const auto hitbox = performanceEnemies ? torso[group] : index == 0 ? AimHitbox::Head : AimHitbox::Chest;
         if (!(hitgroups & AimHitboxGroup(hitbox))) continue;
         AimTarget candidate{};
+        if (shootingEye) candidate.eye = *shootingEye;
         candidate.local.pawn = source.pawn;
         candidate.local.controllerHandle = 0x8002; candidate.local.pawnHandle = localPawnHandle;
         candidate.enemy.pawn = fallback ? 0x556000 : 0x555000;
@@ -825,9 +846,19 @@ bool SilentAimReadTargetVolume(const AimSource&, const AimTarget& target, AimTar
 bool SilentAimTargetVolumeValid(const AimSource& source, const AimTarget& target, const AimTargetVolume&) noexcept {
     return volumeCurrent && SilentAimTargetValid(source, target);
 }
+bool AimShootOriginPrepare(std::uintptr_t client, AimShootOriginContext& context) noexcept { context.client = client; return true; }
+bool AimShootOriginRead(const AimShootOriginContext&, const AimSource&, AimShootOriginSnapshot& out) noexcept {
+    out = {}; out.position = nativeOrigin; out.valid = originAvailable;
+    out.reason = originAvailable ? "fixture native origin" : "fixture native origin unavailable";
+    return originAvailable;
+}
+bool AimShootOriginStillCurrent(const AimShootOriginContext&, const AimSource&, const AimShootOriginSnapshot& snapshot) noexcept {
+    return originAvailable && snapshot.valid && !std::memcmp(&snapshot.position, &nativeOrigin, sizeof(nativeOrigin));
+}
 bool AimWeaponPrepare(std::uintptr_t client, AimWeaponContext& context) noexcept { context.client = client; return true; }
 bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot& out) noexcept {
     ++weaponReads;
+    if (weaponReads == 3) MutateModel(modelReadMutation);
     out = weapon;
     return weaponAvailable;
 }
@@ -861,6 +892,7 @@ bool AimDamageStillCurrent(const AimDamageContext&, const AimSource&, const AimT
 bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept { context = {client, true}; return true; }
 AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget& target, const AimTargetVolume&) noexcept {
     ++traceCalls;
+    if (traceCalls == modelMutationTrace) MutateModel(traceModelMutation);
     if (changeDuringTrace || (changeOnTraceCall && traceCalls == changeOnTraceCall)) weaponCurrent = false;
     if (damageChangeDuringTrace) damageCurrent = false;
     if (healthChangeDuringTrace) targetHealth = 40;
@@ -1020,7 +1052,7 @@ void MultihitgroupChecks(World& world) {
         configure(); reverseHitgroups = reversed;
         Command powerful;
         world.Prepare(powerful); world.History(powerful);
-        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1 && weaponReads == 1,
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].predictedHitgroup == 1 && weaponReads == 3,
             "higher expected head damage wins with one weapon sample; reversed=" + std::to_string(reversed));
 
         configure(); reverseHitgroups = reversed; weapon.inaccuracy = .1f; groupRadius = {1, 8};
@@ -1141,7 +1173,7 @@ void PerformanceChecks(World& world) {
         "manual mode performs no scans or weapon-model work until real shot history arrives");
     Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
     world.History(quiet);
-    Expect(selectionCalls == 1 && weaponReads == 1 && shotMetadata.size() == 1 &&
+    Expect(selectionCalls == 1 && weaponReads == 2 && shotMetadata.size() == 1 &&
         Equal(quiet.History(), Desired()), "manual history still receives fresh target ranking and aim");
 
     for (bool reversed : {false, true}) {
@@ -1188,14 +1220,14 @@ void PerformanceChecks(World& world) {
         bool shared = false, bounded = false;
         for (const auto& message : telemetry) if (message.find("AIM_PERFORMANCE") != std::string::npos) {
             shared = message.find("candidates=30 ") != std::string::npos &&
-                message.find("spread_patterns=1 ") != std::string::npos;
-            bounded = message.find("estimates=1 ") != std::string::npos &&
+                message.find("spread_patterns=2 ") != std::string::npos;
+            bounded = message.find("estimates=2 ") != std::string::npos &&
                 message.find("bounded_estimates=29 ") != std::string::npos;
         }
-        Expect(shared && shotMetadata.size() == 1 && weaponReads == 1 && volumeReads == 30,
-            "five enemies and six torso capsules share exactly one 1024-sample pattern and weapon snapshot");
+        Expect(shared && shotMetadata.size() == 1 && weaponReads == 3 && volumeReads == 30,
+            "candidate scan shares one pattern and model; publication independently refreshes the selected shot");
         if (perfect) Expect(bounded && traceCalls == 3,
-            "perfect lethal winner leaves one sampled/traced candidate plus fresh request/publication traces");
+            "perfect lethal winner samples one candidate plus its full publication recheck and fresh traces");
     }
 }
 
@@ -1378,8 +1410,81 @@ void VisualizationChecks(World& world) {
     AimVisualizationSetSettings({});
 }
 
+void FreshShotChecks(World& world) {
+    world.Reset(); weapon.aimPunch = {5, -7, .25f};
+    Command compensated; world.Prepare(compensated); world.History(compensated);
+    const auto desired = Desired();
+    Expect(compensated.Index() == 0 && Equal(compensated.History(), {desired.pitch - 5, desired.yaw + 7, 0}) &&
+        shotMetadata.size() == 1 && Equal(shotMetadata[0].aim, {desired.pitch, desired.yaw, .25f}),
+        "outgoing angles compensate native recoil while full hitchance and metadata use the effective bullet basis");
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].hits == 64 && shotMetadata[0].samples == 64,
+        "compensated zero-spread shot retains the full configured sample count");
+    world.Reset(); weapon.aimPunch = {5, -7, .25f};
+    auto manualSettings = SilentAimGetSettings(); manualSettings.autofire = false; SilentAimSetSettings(manualSettings);
+    Command manualCompensated;
+    auto physicalButtons = manualCompensated.originalButtons; physicalButtons.down |= 1;
+    Put(Address(manualCompensated.command) + move::command::Buttons, physicalButtons);
+    world.Prepare(manualCompensated); world.History(manualCompensated);
+    Expect(recorderCalls == 0 && Equal(manualCompensated.Buttons(), physicalButtons) &&
+        Equal(manualCompensated.History(), {desired.pitch - 5, desired.yaw + 7, 0}) &&
+        shotMetadata.size() == 1 && !shotMetadata[0].automatic,
+        "manual aim compensates recoil without owning or suppressing physical fire");
+    world.Reset(); manualSettings = SilentAimGetSettings(); manualSettings.autofire = false; SilentAimSetSettings(manualSettings);
+    Command manualChanged;
+    physicalButtons = manualChanged.originalButtons; physicalButtons.down |= 1;
+    Put(Address(manualChanged.command) + move::command::Buttons, physicalButtons);
+    modelMutationTrace = 2; traceModelMutation = 3;
+    world.Prepare(manualChanged); world.History(manualChanged);
+    Expect(Equal(manualChanged.Buttons(), physicalButtons) && Equal(manualChanged.History(), Command::PhysicalView) && shotMetadata.empty(),
+        "manual model changed during trace preserves physical fire and original history");
+    for (int mode : {1, 2, 4, 5, 7, 8}) {
+        world.Reset(); Command changed; world.Prepare(changed); builderMutation = mode;
+        world.History(changed);
+        Expect(checksumCalls == 1 && Equal(changed.Buttons(), changed.originalButtons) && shotMetadata.empty(),
+            "native builder model/origin change cancels formerly eligible shot case " + std::to_string(mode));
+    }
+    world.Reset(); Command recoilChanged; world.Prepare(recoilChanged); builderMutation = 3;
+    world.History(recoilChanged);
+    Expect(shotMetadata.size() == 1 && Equal(recoilChanged.History(), {desired.pitch - 5, desired.yaw + 7, 0}),
+        "punch changed during native history is refreshed and compensated before publication");
+    world.Reset(); Command originChanged; world.Prepare(originChanged); builderMutation = 6;
+    world.History(originChanged);
+    const auto moved = SilentAimSolve({0,6,0}, {100,10,0}, {}, 30).angles;
+    Expect(shotMetadata.size() == 1 && Equal(originChanged.History(), moved) && shotMetadata[0].eye.y == 6,
+        "publication re-solves selected capsule from the fresh native shooting origin");
+    world.Reset(); nativeOrigin = {0,6,0};
+    Command nativeInitial; world.Prepare(nativeInitial); world.History(nativeInitial);
+    Expect(shotMetadata.size() == 1 && Equal(nativeInitial.History(), moved) && shotMetadata[0].eye.y == 6,
+        "acquisition FOV estimation tracing and logging share the native shooting origin");
+    for (int mode : {1, 2, 3, 4, 5, 6, 7, 9}) {
+        world.Reset(); Command changed; world.Prepare(changed); traceModelMutation = mode;
+        world.History(changed);
+        Expect(checksumCalls == 1 && Equal(changed.Buttons(), changed.originalButtons) && shotMetadata.empty(),
+            "native model/origin mutation inside final trace cancels owned attack case " + std::to_string(mode));
+    }
+    for (bool manual : {false, true}) {
+        world.Reset(); weapon.aimPunch.pitch = 100;
+        auto settings = SilentAimGetSettings(); settings.autofire = !manual; SilentAimSetSettings(settings);
+        Command impossible;
+        if (manual) Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+        world.Prepare(impossible); world.History(impossible);
+        Expect(recorderCalls == 0 && Equal(impossible.History(), Command::PhysicalView) && shotMetadata.empty(),
+            "unrepresentable compensation never clamps into a different aim; manual=" + std::to_string(manual));
+    }
+    for (int mode : {10, 11}) {
+        world.Reset(); Command lateInvalidation; world.Prepare(lateInvalidation); modelReadMutation = mode;
+        world.History(lateInvalidation);
+        Expect(checksumCalls == 1 && Equal(lateInvalidation.Buttons(), lateInvalidation.originalButtons) && shotMetadata.empty(),
+            "settings or focus changed inside final native model read prevents publication case " + std::to_string(mode));
+    }
+    world.Reset(); originAvailable = false;
+    Command missing; world.Prepare(missing);
+    Expect(recorderCalls == 0 && LastBrake(false), "unavailable native shooting origin cannot acquire autofire or quickstop");
+}
+
 int main() {
     World world;
+    FreshShotChecks(world);
     GateChecks(world);
     SparseViewChecks(world);
     PreparationDiagnosticsChecks(world);

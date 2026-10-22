@@ -1,5 +1,6 @@
 #include "quickstop_command.h"
 #include "movement_memory.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +17,23 @@ template<class T> std::uintptr_t Address(T& v) { return reinterpret_cast<std::ui
 template<class T> void Put(std::uintptr_t a, const T& v) { std::memcpy(reinterpret_cast<void*>(a), &v, sizeof(v)); }
 template<class T> T Get(std::uintptr_t a) { T v{}; std::memcpy(&v, reinterpret_cast<void*>(a), sizeof(v)); return v; }
 bool Near(float a, float b) { return std::abs(a - b) < 0.00001f; }
+QuickstopPhysics Rules() { return {250, 5.5f, 250, 1, 5.2f, 1, 80, 1.0f / 64}; }
+// Independent scalar version of the installed flat-ground friction, speed
+// floor and add-speed clamp. Actual native stance/weapon modifiers reduce
+// acceleration, so exercise those explicitly instead of predicting accuracy.
+float GroundStep(float velocity, float axis, const QuickstopPhysics& p, float modifier = 1) {
+    const float speed = std::abs(velocity);
+    const float after = std::max(0.0f, speed - std::max(speed, p.stopSpeed) * p.groundFriction *
+        p.surfaceFriction * p.pawnFriction * p.interval);
+    const float current = std::copysign(after, velocity);
+    if (axis == 0) return current;
+    const float wish = std::abs(axis) * p.wishSpeed;
+    const float direction = std::copysign(1.0f, axis);
+    const float addSpeed = std::max(0.0f, wish - current * direction);
+    const float impulse = std::min(addSpeed, p.acceleration * std::max(wish, p.accelerationSpeedFloor) *
+        p.surfaceFriction * p.interval * modifier);
+    return current + direction * impulse;
+}
 template<class T> bool Equal(const T& a, const T& b) { return !std::memcmp(&a, &b, sizeof(T)); }
 struct Fixture {
     std::array<std::byte, 0x90> command{}, base{}, angles{};
@@ -79,7 +97,7 @@ int main() {
         bool braking = true;
         for (float yaw : {-720.0f, -135.0f, -90.0f, 0.0f, 45.0f, 90.0f, 180.0f, 720.0f}) {
             for (const auto velocity : {std::array<float, 2>{250, 0}, {0, 250}, {-170, -110}, {5, -7}}) {
-                const auto axes = QuickstopBrakeAxes(velocity[0], velocity[1], yaw);
+                const auto axes = QuickstopBrakeAxes(velocity[0], velocity[1], 0, yaw, Rules());
                 const float r = yaw * 0.01745329251994329577f;
                 const float worldX = axes.forward * std::cos(r) - axes.left * std::sin(r);
                 const float worldY = axes.forward * std::sin(r) + axes.left * std::cos(r);
@@ -89,13 +107,86 @@ int main() {
             }
         }
         Expect(braking, "counter-velocity remains opposite travel across camera rotations, diagonals and reduced speeds");
-        const auto slow = QuickstopBrakeAxes(15, 0, 0), resting = QuickstopBrakeAxes(0.5f, 0, 0);
-        Expect(slow.valid && slow.forward == -0.5f && resting.valid && resting.forward == 0 && resting.left == 0,
-            "feedback taper reduces near-rest counter-input and neutralizes residual velocity below one unit");
+        const auto slow = QuickstopBrakeAxes(15, 0, 0, 0, Rules()), resting = QuickstopBrakeAxes(0.2f, 0, 0, 0, Rules());
+        Expect(slow.valid && slow.settling && Near(slow.forward * Rules().wishSpeed, -0.25f) &&
+            resting.valid && resting.forward == 0 && resting.left == 0,
+            "near-rest counter-wish is bounded to settling tolerance instead of assuming proportional acceleration");
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        Expect(!QuickstopBrakeAxes(nan, 0, 0).valid && !QuickstopBrakeAxes(0, nan, 0).valid &&
-            !QuickstopBrakeAxes(0, 0, nan).valid && !QuickstopBrakeAxes(100001, 0, 0).valid,
+        Expect(!QuickstopBrakeAxes(nan, 0, 0, 0, Rules()).valid && !QuickstopBrakeAxes(0, nan, 0, 0, Rules()).valid &&
+            !QuickstopBrakeAxes(0, 0, 0, nan, Rules()).valid && !QuickstopBrakeAxes(100001, 0, 0, 0, Rules()).valid &&
+            !QuickstopBrakeAxes(0, 0, nan, 0, Rules()).valid,
             "invalid velocity and camera samples cannot produce brake input");
+    }
+    {
+        auto p = Rules();
+        bool safe = true;
+        for (int field = 0; field < 8; ++field) {
+            // Each invalid physics source must reject, without inventing a
+            // fallback cvar, weapon cap, surface value or interval.
+            auto invalid = p;
+            float* values[]{&invalid.wishSpeed, &invalid.acceleration, &invalid.accelerationSpeedFloor,
+                &invalid.surfaceFriction, &invalid.groundFriction, &invalid.pawnFriction, &invalid.stopSpeed, &invalid.interval};
+            *values[field] = std::numeric_limits<float>::quiet_NaN();
+            safe &= !QuickstopBrakeAxes(200, 0, 0, 0, invalid).valid;
+            *values[field] = -1;
+            safe &= !QuickstopBrakeAxes(200, 0, 0, 0, invalid).valid;
+        }
+        p.interval = 0;
+        safe &= !QuickstopBrakeAxes(200, 0, 0, 0, p).valid;
+        p.interval = 0.11f;
+        safe &= !QuickstopBrakeAxes(200, 0, 0, 0, p).valid;
+        Expect(safe, "every stale or invalid ground physics input rejects braking");
+    }
+    {
+        bool settles = true, noLargeReversal = true, fullAtSpeed = true, repeatable = true;
+        for (const float wishSpeed : {100.0f, 180.0f, 250.0f, 320.0f})
+            for (const float interval : {1.0f / 128, 1.0f / 64, 1.0f / 32})
+                for (const float friction : {0.0f, 1.0f, 5.2f, 12.0f})
+                    for (const float surface : {0.2f, 0.7f, 1.0f})
+                        for (const float modifier : {0.34f, 0.52f, 1.0f}) {
+                            auto p = Rules(); p.wishSpeed = wishSpeed; p.interval = interval;
+                            p.groundFriction = friction; p.surfaceFriction = surface;
+                            float v = 250;
+                            for (int command = 0; command < 400 && std::abs(v) > 0.251f; ++command) {
+                                const auto axes = QuickstopBrakeAxes(v, 0, 0, 0, p);
+                                const auto replay = QuickstopBrakeAxes(v, 0, 0, 0, p);
+                                repeatable &= axes.valid && axes.forward == replay.forward && axes.settling == replay.settling;
+                                if (axes.speedAfterFriction > axes.maximumImpulse)
+                                    fullAtSpeed &= Near(std::abs(axes.forward), 1);
+                                const float next = GroundStep(v, axes.forward, p, modifier);
+                                if (next * v < 0) noLargeReversal &= std::abs(next) <= 0.251f;
+                                noLargeReversal &= std::abs(next) <= std::abs(v) + 0.001f;
+                                v = next;
+                            }
+                            settles &= std::abs(v) <= 0.251f;
+                        }
+        Expect(settles && noLargeReversal, "ground controller settles across tick rates, weapon caps, zero/high friction and reduced stance acceleration without oscillation");
+        Expect(fullAtSpeed && repeatable, "full braking stays available above current impulse bound and repeated prediction reads return identical axes");
+        auto p = Rules();
+        float oldVelocity = 15, velocity = 15;
+        for (int i = 0; i < 40; ++i) {
+            const float oldAxis = std::abs(oldVelocity) < 1 ? 0 : -std::clamp(oldVelocity / 30.0f, -1.0f, 1.0f);
+            oldVelocity = GroundStep(oldVelocity, oldAxis, p);
+            velocity = GroundStep(velocity, QuickstopBrakeAxes(velocity, 0, 0, 0, p).forward, p);
+        }
+        Expect(std::abs(oldVelocity) > 1 && std::abs(velocity) <= 0.251f,
+            "native acceleration speed floor reproduces old taper oscillation while bounded counter-wish settles");
+        p.acceleration = 0; p.groundFriction = 0;
+        const auto noImpulse = QuickstopBrakeAxes(200, 0, 0, 0, p);
+        Expect(noImpulse.valid && noImpulse.forward == 0 && noImpulse.left == 0,
+            "disabled ground acceleration produces neutral movement without promising a stop");
+    }
+    {
+        Fixture f; QuickstopCommandPatch p{};
+        const auto steps = f.steps;
+        const float tiny = 0.25f / Rules().wishSpeed;
+        bool safe = Apply(f, p, -tiny, tiny);
+        const auto buttons = Get<MovementButtons>(Address(f.command) + off::command::Buttons);
+        safe &= (buttons.down & off::Directions) == (off::Back | off::Left) &&
+            Near(Get<float>(Address(f.base) + off::base::Forward), -tiny) &&
+            Near(Get<float>(Address(f.base) + off::base::Left), tiny);
+        safe &= QuickstopRestoreCommand(p) && Equal(f.steps, steps) && f.Count() == 4;
+        Expect(safe, "small settling axes retain directional ownership and restore the original timed command exactly");
     }
     {
         Fixture f; QuickstopCommandPatch p{};

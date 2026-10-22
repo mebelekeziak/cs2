@@ -102,15 +102,32 @@ bool Write(const QuickstopCommandPatch& p, bool outgoing) noexcept {
 }
 }
 
-QuickstopAxes QuickstopBrakeAxes(float vx, float vy, float yaw) noexcept {
+QuickstopAxes QuickstopBrakeAxes(float vx, float vy, float vz, float yaw, const QuickstopPhysics& physics) noexcept {
     QuickstopAxes result{};
-    if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(yaw) ||
-        std::abs(vx) > 100000 || std::abs(vy) > 100000) return result;
+    if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz) || !std::isfinite(yaw) ||
+        std::abs(vx) > 100000 || std::abs(vy) > 100000 || std::abs(vz) > 100000) return result;
+    for (const float value : {physics.wishSpeed, physics.acceleration, physics.accelerationSpeedFloor,
+        physics.surfaceFriction, physics.groundFriction, physics.pawnFriction, physics.stopSpeed, physics.interval})
+        if (!std::isfinite(value) || value < 0 || value > 100000) return result;
+    if (physics.wishSpeed <= 0 || physics.accelerationSpeedFloor <= 0 || physics.interval <= 0 ||
+        physics.interval > 0.1f) return result;
     const float speed = std::hypot(vx, vy);
+    const float speed3 = std::hypot(speed, vz);
+    const float frictionDrop = std::max(speed3, physics.stopSpeed) * physics.groundFriction *
+        physics.surfaceFriction * physics.pawnFriction * physics.interval;
+    result.speedAfterFriction = speed3 > 0 ? speed * std::max(0.0f, 1.0f - frictionDrop / speed3) : 0;
+    result.maximumImpulse = physics.acceleration * std::max(physics.wishSpeed, physics.accelerationSpeedFloor) *
+        physics.surfaceFriction * physics.interval;
+    if (!std::isfinite(result.speedAfterFriction) || !std::isfinite(result.maximumImpulse)) return {};
     result.valid = true;
-    if (speed < 1) return result;
+    // Tuning tolerance, not an engine accuracy threshold. Keep the tiny input
+    // below this bound even if a floor-limited impulse crosses through zero.
+    constexpr float settleSpeed = 0.25f;
+    if (speed <= settleSpeed || result.maximumImpulse == 0) return result;
+    result.settling = result.speedAfterFriction <= result.maximumImpulse;
+    const float magnitude = result.settling ? std::min(1.0f, settleSpeed / physics.wishSpeed) : 1.0f;
     const float radians = std::remainder(yaw, 360.0f) * 0.01745329251994329577f;
-    const float gain = std::min(speed / 30.0f, 1.0f) / speed;
+    const float gain = magnitude / speed;
     result.forward = -(vx * std::cos(radians) + vy * std::sin(radians)) * gain;
     result.left = -(-vx * std::sin(radians) + vy * std::cos(radians)) * gain;
     return result;

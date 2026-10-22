@@ -196,7 +196,7 @@ bool BonePoint(AimActor& actor, AimHitbox hitbox, const AimBoneContext& bones, A
 
 static bool SelectTargetLandmarks(const AimSource& source, const AimAngles& view, float fov, std::uint32_t landmarks,
                            const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
-                           AimTargetFilter filter, void* filterContext) noexcept {
+                           AimTargetFilter filter, void* filterContext, const AimVector* shootingEye) noexcept {
     target = {};
     if (diagnostics) { *diagnostics = {}; diagnostics->stage = "local actor"; }
     if (!landmarks) {
@@ -218,6 +218,11 @@ static bool SelectTargetLandmarks(const AimSource& source, const AimAngles& view
     if (!Read(local.pawn + silent_aim_target_offsets::ViewOffset, offset) || !Point(local, offset, eye)) {
         if (diagnostics) diagnostics->localFailure = "view offset/scene transform";
         return false;
+    }
+    const AimVector sceneEye = eye;
+    if (shootingEye) {
+        if (!Vector(*shootingEye)) return false;
+        eye = *shootingEye;
     }
     if (diagnostics) diagnostics->stage = "enumerating controllers";
     std::array<unsigned char, (off::entity_layout::BucketMask + 1) * off::entity_layout::IdentityStride> entries{};
@@ -263,7 +268,7 @@ static bool SelectTargetLandmarks(const AimSource& source, const AimAngles& view
                 }
                 if (!filter && target.solution.valid && solution.separation >= target.solution.separation) continue;
                 if (!Same(source.system, landmarkEnemy)) continue;
-                const AimTarget candidate{local, landmarkEnemy, solution, eye, point, hitbox};
+                const AimTarget candidate{local, landmarkEnemy, solution, eye, point, hitbox, sceneEye, shootingEye != nullptr};
                 if (filter && !filter(candidate, filterContext)) {
                     if (diagnostics) ++diagnostics->eligibilityRejected;
                     continue;
@@ -279,18 +284,18 @@ static bool SelectTargetLandmarks(const AimSource& source, const AimAngles& view
 }
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, std::uint32_t hitgroups,
                            const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
-                           AimTargetFilter filter, void* filterContext) noexcept {
+                           AimTargetFilter filter, void* filterContext, const AimVector* shootingEye) noexcept {
     std::uint32_t landmarks = 0;
     for (unsigned i = 0; i < static_cast<unsigned>(AimHitbox::Count); ++i)
         if (AimHitboxGroup(static_cast<AimHitbox>(i)) & hitgroups) landmarks |= 1u << i;
-    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext);
+    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext, shootingEye);
 }
 bool SilentAimSelectTarget(const AimSource& source, const AimAngles& view, float fov, AimHitbox hitbox,
                            const AimBoneContext& bones, AimTarget& target, AimTargetDiagnostics* diagnostics,
-                           AimTargetFilter filter, void* filterContext) noexcept {
+                           AimTargetFilter filter, void* filterContext, const AimVector* shootingEye) noexcept {
     const auto index = static_cast<unsigned>(hitbox);
     const auto landmarks = index < static_cast<unsigned>(AimHitbox::Count) ? 1u << index : 0u;
-    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext);
+    return SelectTargetLandmarks(source, view, fov, landmarks, bones, target, diagnostics, filter, filterContext, shootingEye);
 }
 bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noexcept {
     AimVector offset{}, eye{}, point{};
@@ -299,7 +304,7 @@ bool SilentAimTargetValid(const AimSource& source, const AimTarget& target) noex
         target.enemy.pawn != source.pawn && target.enemy.team != target.local.team &&
         Same(source.system, target.local) && Same(source.system, target.enemy) &&
         Read(target.local.pawn + silent_aim_target_offsets::ViewOffset, offset) && Point(target.local, offset, eye) &&
-        !std::memcmp(&eye, &target.eye, sizeof(eye)) && target.enemy.boneIndex >= 0 &&
+        !std::memcmp(&eye, target.nativeEye ? &target.sceneEye : &target.eye, sizeof(eye)) && target.enemy.boneIndex >= 0 &&
         Read(target.enemy.model + silent_aim_hitbox_offsets::BoneCount, count) && target.enemy.boneIndex < count && count <= 1024 &&
         Read(target.enemy.boneArray + target.enemy.boneIndex * silent_aim_hitbox_offsets::BoneStride, point) &&
         !std::memcmp(&point, &target.point, sizeof(point));

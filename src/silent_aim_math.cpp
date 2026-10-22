@@ -39,3 +39,18 @@ AimSolution SilentAimSolve(const AimVector& eye, const AimVector& point,
     result.valid = true;
     return result;
 }
+
+bool SilentAimCompensate(const AimAngles& desired, const AimAngles& punch,
+                         AimAngles& command, AimAngles& effective) noexcept {
+    command = {}; effective = {};
+    if (!std::isfinite(desired.pitch) || !std::isfinite(desired.yaw) || desired.roll != 0 ||
+        std::abs(desired.pitch) > 89 || std::abs(desired.yaw) > 360 ||
+        !std::isfinite(punch.pitch) || !std::isfinite(punch.yaw) || !std::isfinite(punch.roll)) return false;
+    const double pitch = static_cast<double>(desired.pitch) - punch.pitch;
+    const double yaw = std::remainder(static_cast<double>(desired.yaw) - punch.yaw, 360.0);
+    if (std::abs(pitch) > 89) return false;
+    command = {static_cast<float>(pitch), static_cast<float>(yaw), 0};
+    effective = {command.pitch + punch.pitch,
+        static_cast<float>(std::remainder(static_cast<double>(command.yaw) + punch.yaw, 360.0)), punch.roll};
+    return std::isfinite(effective.pitch) && std::isfinite(effective.yaw);
+}

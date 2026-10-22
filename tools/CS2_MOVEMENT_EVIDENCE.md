@@ -709,3 +709,68 @@ eight analog messages plus the jump edge. The exact-stop regression exposed
 float-overload `atan2` roundoff at pi; desired/velocity angle calculations now
 use double inputs and zero velocity does not advertise an attained heading.
 The installed-binary verifier passes with the existing layouts and bytes.
+
+## October 22: quickstop ground impulse and settling bounds
+
+This section supersedes the old feedback taper described in the October 20
+quickstop evidence. It uses the currently installed client SHA-256
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`.
+Initial static compatibility passed 27/27 components in
+`logs/compatibility/20261022T145808023821Z/`. No game or server was launched.
+
+Named registrations and installed ground callers independently identify:
+
+| Source constant | Registration wrapper / native evidence |
+| --- | --- |
+| `GroundAccelerate` | `sv_accelerate`, wrapper `0x2564E80`, registration LEA at `0xD84C8`, name LEA `0xD8462`, ground walk reads pointer slot at `0x8EA6F7` |
+| `GroundFriction` | `sv_friction`, wrapper `0x2564EF0`, registration `0xD878B` / name `0xD8782`, ground friction reads slot at `0x8CC021` |
+| `StopSpeed` | `sv_stopspeed`, wrapper `0x2564DF0`, registration `0xD926B` / name `0xD9262`, control speed MAX at `0x8CC054` |
+| `GroundAccelerationSpeedFloor` | `0x1BB7194`, float 250, loaded at `0x8BF09A`; MAX helper `0x1B9C30` returns max(250, desired wish speed) |
+| `pawn::GroundFrictionScale` | `C_BaseEntity::m_flFriction +0x538`, exact named schema plus getter `0x21AF80`, called at `0x8CC04B` |
+
+All wrappers use the existing getter contract wrapper+8 -> value-object+0x58.
+The movement verifier freezes these registration names, actual pointer-slot
+operands, constant load/value, schema field and native calculation windows.
+Five deliberately incorrect headers each reject the added source constants;
+results are in `logs/research/quickstop-ground-negative.json`.
+
+The current ground friction entry is `0x8CBF50`; the historical `0x8CB090`
+mentioned earlier in this document belongs to an older build. Ground walk calls
+friction at `0x8EA6B7` before dispatching ground acceleration at `0x8EA718`.
+Friction multiplies surface friction, sv_friction, pawn m_flFriction and
+max(control speed, sv_stopspeed). It removes at most the current speed over the
+engine integration duration. Acceleration uses max(250,wishSpeed), the current
+sv_accelerate, surface friction and duration. The directional add-speed clamp
+at `0x8BF2A4` limits the impulse to desired wish speed minus current projected
+velocity. Duck, walk and weapon branches can reduce acceleration; this controller
+does not claim to predict those states or the engine's exact substep clock.
+
+This explains a flaw in the old speed/30 input taper: reducing analog magnitude
+can leave ground acceleration unchanged because the 250 floor still applies.
+The independently coded flat-ground model reproduces a persistent near-rest
+oscillation with the old taper. The replacement first bounds one full command's
+maximum impulse from live movement rules, effective weapon/server/surface/stamina
+speed and the verified engine tick quantum. It requests full opposite input
+while friction-adjusted speed exceeds that bound. Inside that final window,
+it limits requested opposite wish speed to 0.25 units/s: the native add-speed
+clamp then limits any reversal to that small value rather than the old large
+oscillation. 0.25 is an intentional settling tolerance, not an engine accuracy
+threshold. Already settled speed uses neutral axes. Missing rules reject the
+brake and release any previous history through the existing physical-input
+handoff; no guessed cvar defaults are used.
+
+The movement transaction still owns only direction/analog edits. Repeated native
+rebuilds restore the exact original stream before reapplying, and cooldowns
+return ordinary movement. The existing full hitchance sample remains the firing
+authority; no future eye, extrapolated enemy, stationary cone or modeled firing
+time is published from this controller. Surfaces/collisions, external impulses,
+changing stance or movement rules and actual subtick subdivision can differ
+from this model, so live stopping time and hit registration remain unobserved.
+`QUICKSTOP_BRAKE` diagnostics report observed speed, friction estimate, impulse
+bound, settling branch and inputs at most once per two seconds.
+
+`quickstop_checks` passes model regressions across weapon caps 100/180/250/320,
+tick quantum 1/128,1/64,1/32, zero/low/normal/high friction, three surface friction
+values and duck/walk/full acceleration reductions. It verifies bounded settling,
+full high-speed counter-input, repeatable outputs, diagonal/camera basis,
+invalid physics rejection and the unchanged command restoration/rebuild tests.

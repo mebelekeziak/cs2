@@ -26,7 +26,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/aim_visualization.cpp src/aim_visualization_draw.cpp
   src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_visuals.cpp src/grenade_effects.cpp
   src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_material.cpp src/client_frame.cpp
-  src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
+  src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_shoot_origin.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
   src/scoped_crosshair.cpp src/scoped_crosshair_draw.cpp src/scope_overlay.cpp
@@ -171,6 +171,11 @@ if(BUILD_TESTING)
   target_compile_definitions(console_control_checks PRIVATE CS2_AIM_CONSOLE_CHECKS CS2_CONSOLE_CONTROL_CHECKS)
   target_link_libraries(console_control_checks PRIVATE minhook)
   add_executable(silent_aim_autofire_checks tests/silent_aim_autofire_checks.cpp src/silent_aim_command.cpp)
+  add_executable(aim_shoot_origin_checks tests/aim_shoot_origin_checks.cpp src/aim_shoot_origin.cpp)
+  target_include_directories(aim_shoot_origin_checks PRIVATE include)
+  target_compile_definitions(aim_shoot_origin_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_AIM_SHOOT_ORIGIN_CHECKS)
+  target_compile_options(aim_shoot_origin_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME aim_shoot_origin_checks COMMAND aim_shoot_origin_checks)
   add_executable(aim_weapon_checks tests/aim_weapon_checks.cpp src/aim_weapon.cpp)
   target_compile_definitions(aim_weapon_checks PRIVATE CS2_AIM_WEAPON_CHECKS)
   add_executable(aim_occlusion_checks tests/aim_occlusion_checks.cpp src/aim_occlusion.cpp)

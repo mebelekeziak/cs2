@@ -23,6 +23,55 @@ client/server was launched; live behavior on this build remains unobserved.
 Use the existing **Load Overlay.cmd** workflow, restarting CS2 normally first
 if an older DLL is resident. Stopped and resident is not physically unloaded.
 
+## Aim consistency and quickstop - October 22, 2026
+
+Silent aim now uses the installed client's native current shooting-position
+getter, including native view-offset interpolation. Acquisition, FOV, capsule
+hitchance, direct/autowall damage and shot logging share that copied position.
+Automatic publication refreshes the selected shot after native history building:
+it re-reads origin, weapon accuracy, recoil and readiness, solves the angles
+again, and runs the complete configured hitchance sample count before the final
+path/damage check. A final native model comparison cancels an owned attack if
+accuracy, recoil, prediction time or readiness changed during tracing.
+
+Outgoing primary-history angles compensate current native aim punch. Hitchance
+and shot metadata use the resulting bullet direction/basis, including native
+punch roll; the camera and base view stay unchanged. Unrepresentable compensated
+pitch is rejected rather than clamped. Manual attack remains available without
+aiming edits when its shooting model is unavailable, stale or unrepresentable;
+minimum damage/hitchance still do not suppress physical manual fire.
+
+Quickstop now reads verified live ground acceleration, friction, stop speed,
+surface/pawn friction and movement speed. It uses full opposing input outside
+the one-command acceleration bound and a bounded 0.25 units/s settling wish speed
+near rest, replacing the old arbitrary speed/30 taper. This tolerance is tuning,
+not a native accuracy threshold. The native acceleration speed floor made that
+taper capable of reversing velocity. Fresh native accuracy on each command and
+at publication continues to govern firing; braking never grants permission to
+fire from a predicted future position or guessed stopped accuracy.
+
+This keeps the existing full estimator and lethal-first ranking. No multipoints,
+enemy extrapolation, rough hitchance prefilter, older-origin selection or input
+history timestamp rewriting are added. The native current origin/current punch
+are not proof of the exact historical/subtick origin and punch ultimately used
+by native firing or the server. These changes address demonstrated consistency
+risks; they do not establish the cause of previously reported miss streaks.
+
+Use the existing build and **Load Overlay.cmd** workflow. Restart CS2 normally
+before loading the rebuilt DLL if an older copy is resident: **stopped and
+resident is not physically unloaded**. The new installed contract is included
+in `python tools/check_compatibility.py` or checked alone with
+`python tools/inspect_aim_shoot_origin.py`. See the
+[shooting-origin evidence](tools/CS2_AIM_SHOOT_ORIGIN_EVIDENCE.md) and
+[implementation and validation notes](docs/AIM_CONSISTENCY.md).
+
+**Verification:** public and diagnostic x64 Release builds each pass **57/57
+CTest suites**, including **355 integrated aim-pipeline checks** and **61 native
+origin checks**. All **28/28 installed-file compatibility checks** pass; 25
+altered origin contracts and five altered movement constants reject. Both DLLs
+retain zero static TLS/delay imports. No client/server was launched; live
+stopping, shot timing and hit registration remain unobserved.
+
 ## Visualize ragebot
 
 Under **Aim**, enable **Visualize ragebot** and choose **Point color**, including
@@ -867,8 +916,10 @@ a ready weapon, can start braking when sampled hitchance is below your minimum.
 Covered, out-of-range and otherwise invalid candidates do not start a stop.
 An immediately shootable enemy takes priority over a candidate needing braking.
 
-Braking opposes observed horizontal velocity in physical camera space, tapers
-near rest, and uses fresh native accuracy on subsequent commands. Autofire
+Braking opposes observed horizontal velocity in physical camera space. Verified
+ground friction and an acceleration impulse bound choose full input or a small
+bounded settling input near rest; fresh native accuracy is read on subsequent
+commands and again before publishing the selected shot. Autofire
 requests the shot at **the configured minimum**, with no hidden percentage
 margin. A stop already in progress retains braking on its firing command.
 There is no guessed stationary-accuracy prediction or promise that a requested
@@ -971,8 +1022,10 @@ estimate meets **Minimum hitchance** (0–100%, initially 50%) and the weapon is
 ready, with a reachable line of fire to the selected target (direct, or penetrable
 with **Autowall** enabled). **Spread samples** controls the complete estimate (64–1024, initially
 256). **Minimum damage** (1–100 HP, initially 1) also gates autofire. These controls save in local configs; older presets restore these
-defaults. Manual primary fire stays available at any threshold, including when
-the weapon or geometry cannot be modeled. Autofire does not suppress manual input.
+defaults. Manual primary fire stays available at any threshold. Unsupported/stale weapon
+or origin data leaves physical fire and original history intact; missing authored
+geometry can still use compensated landmark aim when the shooting model is valid.
+Autofire does not suppress manual input.
 
 Damage prediction models one unobstructed bullet using the current weapon's base
 damage, range modifier, headshot multiplier and armor ratio; current target armor
@@ -1068,13 +1121,14 @@ TLS and delay imports. No client/server was launched for this correction;
 live FPS remains unmeasured.
 
 Spread, inaccuracy, range and current predicted aim punch come from the current
-weapon's verified native model. Punch shifts the sampled cone; outgoing aim is
-not recoil compensated. The native punch query can update its own memoization
+weapon's verified native model. Outgoing primary-history angles compensate
+current native punch; sampling uses command angles plus that punch. The native punch query can update its own memoization
 cache. Snapshots are read on the native command owner, without accuracy-penalty
 updates or cached ESP/entity pointers. Authored geometry unavailable, unsupported
 shape/space, non-unit pose scale, stale sources or an invalid native model produce
 an unavailable estimate and prevent automatic fire. Manual aim falls back to the
-existing named bone landmark when authored geometry is unavailable.
+existing named bone landmark when authored geometry is unavailable but the native
+shooting origin/recoil model remains valid.
 
 The verified firearm set covers single-projectile primary fire. Shotguns,
 revolver, taser, active burst mode, knives, grenades and unknown classes stay manual.

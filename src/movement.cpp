@@ -119,7 +119,7 @@ bool Writable(std::uintptr_t address, std::size_t bytes) noexcept {
 template<class T> bool Cvar(std::ptrdiff_t rva, T& value) noexcept {
     return MovementReadCvar(client + rva, value);
 }
-bool EffectiveSpeed(std::uintptr_t pawn, float& speed) noexcept {
+bool EffectiveSpeed(std::uintptr_t pawn, float& speed, bool recordStage = true) noexcept {
     // Locally verified engine helper, RCX=pawn and XMM0=float result. Invoke
     // only on the engine command owner; it includes server and weapon limits.
     bool valid = false;
@@ -129,7 +129,7 @@ bool EffectiveSpeed(std::uintptr_t pawn, float& speed) noexcept {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         valid = false;
     }
-    MarkStage(Stage::EngineSpeed);
+    if (recordStage) MarkStage(Stage::EngineSpeed);
     return valid;
 }
 void Reset() noexcept {
@@ -166,6 +166,7 @@ DWORD quickstopOwner = 0;
 bool quickstopHistory = false;
 bool quickstopRebuildHandoff = false;
 float quickstopPhysicalForward = 0, quickstopPhysicalLeft = 0;
+ULONGLONG lastQuickstopReport = 0;
 bool SamePawn(const Pawn& pawn) noexcept {
     std::uintptr_t current = 0, back = 0, bucket = 0, resolved = 0, services = 0, system = 0;
     std::uint32_t handle = UINT32_MAX, controllerHandle = UINT32_MAX, linkedPawn = UINT32_MAX;
@@ -239,8 +240,8 @@ bool BeginQuickstop(void* command) noexcept {
     ReleaseSRWLockExclusive(&commandLock);
     return ready;
 }
-bool AirSpeed(const Pawn& pawn, float& speed) noexcept {
-    if (!EffectiveSpeed(pawn.address, speed)) return false;
+bool AirSpeed(const Pawn& pawn, float& speed, bool recordStage = true) noexcept {
+    if (!EffectiveSpeed(pawn.address, speed, recordStage)) return false;
     float stamina = 0, staminaScale = 0, surfaceFactor = 1;
     std::uintptr_t surface = 0;
     if (!Read(pawn.services + off::services::Stamina, stamina) || !std::isfinite(stamina) ||
@@ -1049,15 +1050,31 @@ bool MovementQuickstop(void* command, bool brake) noexcept {
         // this takeoff command. Preserve all current jump/air/user input, and
         // return unavailable to aim so it cannot publish a ground-stop shot.
         // Bunnyhop can synthesize release while physical Space remains held.
-        const bool refusedBrake = brake && (!(pawn.flags & off::OnGround) ||
+        bool refusedBrake = brake && (!(pawn.flags & off::OnGround) ||
             (buttons.down & off::Jump) || (GetAsyncKeyState(VK_SPACE) & 0x8000));
+        QuickstopAxes axes{};
+        QuickstopPhysics physics{};
+        if (brake && !refusedBrake) {
+            // AirSpeed is the existing verified max-speed parameter path:
+            // native server/weapon cap, stamina and current surface modifier.
+            // Ground stance/weapon acceleration multipliers can only reduce
+            // the unmodified impulse bound used by the controller.
+            const bool physicsAvailable = AirSpeed(pawn, physics.wishSpeed, false) &&
+                Cvar(off::GroundAccelerate, physics.acceleration) &&
+                Cvar(off::GroundFriction, physics.groundFriction) &&
+                Cvar(off::StopSpeed, physics.stopSpeed) &&
+                Read(pawn.address + off::pawn::GroundFrictionScale, physics.pawnFriction) &&
+                Read(client + off::GroundAccelerationSpeedFloor, physics.accelerationSpeedFloor) &&
+                Read(client + off::TickIntervalConstant, physics.interval);
+            physics.surfaceFriction = pawn.friction;
+            if (physicsAvailable) axes = QuickstopBrakeAxes(pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], yaw, physics);
+            refusedBrake = !axes.valid;
+        }
         if (refusedBrake) {
             if (!quickstopHistory && !quickstopRebuildHandoff) return false;
             brake = false;
         }
         if (brake) {
-            const auto axes = QuickstopBrakeAxes(pawn.velocity[0], pawn.velocity[1], yaw);
-            if (!axes.valid) return false;
             forward = axes.forward; left = axes.left;
         } else { forward = quickstopPhysicalForward; left = quickstopPhysicalLeft; }
         auto& entry = quickstopEntries[static_cast<unsigned>(sequence) % quickstopEntries.size()];
@@ -1076,6 +1093,14 @@ bool MovementQuickstop(void* command, bool brake) noexcept {
         quickstopRebuildHandoff = false;
         quickstopHistory = brake;
         quickstopHistoryPawn = pawn;
+        const auto now = GetTickCount64();
+        if (brake && (!lastQuickstopReport || now - lastQuickstopReport >= 2000)) {
+            lastQuickstopReport = now;
+            Log("QUICKSTOP_BRAKE sequence=%d speed=%.4f after_friction=%.4f impulse_bound=%.4f settling=%u axes=%.6f,%.6f wish_speed=%.4f accel=%.4f friction=%.4f surface_friction=%.4f pawn_friction=%.4f stop_speed=%.4f interval=%.6f; movement bound only, fresh native accuracy still governs fire",
+                sequence, std::hypot(pawn.velocity[0], pawn.velocity[1]), axes.speedAfterFriction, axes.maximumImpulse,
+                axes.settling, forward, left, physics.wishSpeed, physics.acceleration, physics.groundFriction,
+                physics.surfaceFriction, physics.pawnFriction, physics.stopSpeed, physics.interval);
+        }
         return !refusedBrake;
     };
     const bool result = run();

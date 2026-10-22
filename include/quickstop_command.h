@@ -4,10 +4,20 @@
 struct QuickstopAxes {
     bool valid = false;
     float forward = 0, left = 0;
+    float speedAfterFriction = 0, maximumImpulse = 0;
+    bool settling = false;
 };
-// Feedback braking in the physical camera basis. Taper near rest limits
-// reversal without assuming unverified ground acceleration or friction rules.
-QuickstopAxes QuickstopBrakeAxes(float velocityX, float velocityY, float yaw) noexcept;
+struct QuickstopPhysics {
+    float wishSpeed = 0, acceleration = 0, accelerationSpeedFloor = 0;
+    float surfaceFriction = 0, groundFriction = 0, pawnFriction = 0;
+    float stopSpeed = 0, interval = 0;
+};
+// Whole-command impulse bound selects full counter-input or a small counter
+// wish speed. CS2's max(wishSpeed,250) accelerator makes a linear input taper
+// unreliable near rest. The native add-speed clamp bounds settling reversal.
+// This is a movement controller, never predicted shot accuracy or position.
+QuickstopAxes QuickstopBrakeAxes(float velocityX, float velocityY, float velocityZ,
+    float yaw, const QuickstopPhysics& physics) noexcept;
 
 struct QuickstopCommandPatch {
     AntiAimBoundaryPatch boundary{};

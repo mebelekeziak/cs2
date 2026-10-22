@@ -56,6 +56,15 @@ CHECKS = {
     "ingestion_forward_thunk": (0x8E9510, "e97bde1800"),
     "button_state_setter": (0x4C10A0, "48895c2408488bd941ba0000000041f6c001458bca4c8bda4c0f45ca49f7d3498bc3482341084c0bc8488b43104c89490841f6c002418bca480f45ca4923c3480bc8488b431841f6c00448894b104c0f45d24923c34c0bd04c895318488b5c2408c3cccccccccccccccccccccccccccc48895c2408574883ec40488b01488bf9"),
     "jump_actual_state": (0x8C3588, "f30f105714488d4dcf8b5710"),
+    "ground_friction_cvars": (0x8CC021, "488b05d08ec901440f29442470f3440f104058f3440f59836c020000"),
+    "ground_stop_control": (0x8CC047, "488b4b38e830ef94ff440f2fde488b059d8dc901f30f5f7858"),
+    "pawn_ground_friction_scale": (0x21AF80, "f30f108138050000c3"),
+    "ground_acceleration_floor": (0x8BF09A, "f3440f1025f1802f01"),
+    "ground_acceleration_max": (0x1B9C30, "f30f1001f30f5f02c3"),
+    "ground_acceleration_budget": (0x8BF279, "f30f59f0f3410f108728010000f3410f5ec7f30f59b36c020000f30f5cf0"),
+    "ground_acceleration_addspeed_clamp": (0x8BF29C, "0f28fef3410f59ff410f2ffe760d410f28f6410f28fef3410f5ef7"),
+    "ground_friction_before_acceleration": (0x8EA6B1, "488bd7488bcee89418feff"),
+    "ground_walk_accelerate": (0x8EA6F7, "488b058aa7c7014c8d442460410f28d9488bd7488bcef30f104058f30f11442420e87347fdff"),
 }
 
 # These are instruction sites, not copies of the source offsets: resolving
@@ -68,6 +77,9 @@ CVAR_REGISTRATIONS = {
     "JumpPrecision": (0xB1FE7, 0xB1FE0, "sv_jump_precision_enable"),
     "AirCap": (0xB19C8, 0xB1962, "sv_air_max_wishspeed"),
     "AirAccelerate": (0xD8568, 0xD8502, "sv_airaccelerate"),
+    "GroundAccelerate": (0xD84C8, 0xD8462, "sv_accelerate"),
+    "GroundFriction": (0xD878B, 0xD8782, "sv_friction"),
+    "StopSpeed": (0xD926B, 0xD9262, "sv_stopspeed"),
 }
 
 
@@ -116,6 +128,10 @@ def verify_cvar_offsets(image, header_path):
             raise SystemExit(f"Legacy selector pointer slot differs at 0x{load_site:X}")
         if bytes(image[compare_site:compare_site + 4]) != bytes((0x80, 0x78, values["CvarValue"], 0)):
             raise SystemExit(f"Legacy selector value addressing differs at 0x{compare_site:X}")
+    for name, load_site in (("GroundAccelerate", 0x8EA6F7), ("GroundFriction", 0x8CC021),
+                            ("StopSpeed", 0x8CC054)):
+        if rip_target(image, load_site, "488b05") != values[name] + values["CvarValuePointer"]:
+            raise SystemExit(f"Native ground movement cvar slot differs: {name}")
     return verified
 
 
@@ -156,7 +172,7 @@ def verify_jump_trace_offsets(image, header_path):
 # templates and code windows below. Never populate these from the source header.
 LAYOUTS = {
     "pawn": {"Flags": 0x3F4, "Velocity": 0x3F8, "ActualMoveType": 0x526,
-             "WaterLevel": 0x528, "MovementServices": 0x1330},
+             "WaterLevel": 0x528, "MovementServices": 0x1330, "GroundFrictionScale": 0x538},
     "controller": {"TickBase": 0x6B8},
     "services": {"Pawn": 0x38, "ModernJumpState": 0x6C8, "MaxSpeed": 0x1AC,
         "Friction": 0x26C, "SurfaceData": 0x278, "Stamina": 0x694,
@@ -171,7 +187,8 @@ LAYOUTS = {
 SCHEMA_CLASSES = {
     "C_BaseEntity": (0x21F4BE8, 0x21F32C0, 82, {
         "m_fFlags": ("pawn", "Flags"), "m_vecAbsVelocity": ("pawn", "Velocity"),
-        "m_nActualMoveType": ("pawn", "ActualMoveType"), "m_flWaterLevel": ("pawn", "WaterLevel")}),
+        "m_nActualMoveType": ("pawn", "ActualMoveType"), "m_flWaterLevel": ("pawn", "WaterLevel"),
+        "m_flFriction": ("pawn", "GroundFrictionScale")}),
     "C_BasePlayerPawn": (0x21F4588, 0x21F41F0, 28, {
         "m_pMovementServices": ("pawn", "MovementServices")}),
     "CBasePlayerController": (0x2223A38, 0x2223800, 17, {
@@ -217,10 +234,14 @@ def verify_source_offsets(image, image_base, header_path):
     }
     decoded["Finalize"] = struct.unpack_from("<Q", image, decoded["InputVtable"] + 6 * 8)[0] - image_base
     for name, site, opcode in (("TickIntervalConstant", 0xA55F99, "f30f5915"),
-                               ("StaminaScaleConstant", 0x8C46DA, "f30f5e0d")):
-        if image[site:site + 4] != bytes.fromhex(opcode):
+                               ("StaminaScaleConstant", 0x8C46DA, "f30f5e0d"),
+                               ("GroundAccelerationSpeedFloor", 0x8BF09A, "f3440f1025")):
+        length = len(bytes.fromhex(opcode))
+        if image[site:site + length] != bytes.fromhex(opcode):
             raise SystemExit(f"Engine constant addressing differs at 0x{site:X}")
-        decoded[name] = site + 8 + struct.unpack_from("<i", image, site + 4)[0]
+        decoded[name] = site + length + 4 + struct.unpack_from("<i", image, site + length)[0]
+    if struct.unpack_from("<f", image, decoded["GroundAccelerationSpeedFloor"])[0] != 250.0:
+        raise SystemExit("Ground acceleration speed floor differs")
     # Constructor writes its vtable to the embedded object itself.
     if rip_target(image, 0xEE59A, "488905") != decoded["Input"]:
         raise SystemExit("CCSGOInput constructor no longer initializes the embedded object")
