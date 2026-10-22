@@ -12,7 +12,7 @@ import struct
 from verify_sky_draw import mapped, primary_vtable, require_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
+EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
 CHECKS = {
     "override_entry": (0xB99250, "48895c241055488bec4881ec80000000488b01488bda"),
     "query_complete": (0xB627A0, "4863c24869d0280900000fb6840a29020000c3"),

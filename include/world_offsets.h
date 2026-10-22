@@ -1,16 +1,16 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-// Recertified October 15, 2026 for installed patch 1.41.9.1 / client 2000932.
+// Recertified October 21, 2026 for installed patch 1.41.9.1 / client 2000934.
 // scenesystem.dll SHA256 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
-// client.dll SHA256 659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0.
+// client.dll SHA256 5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49.
 // See tools/verify_sky_draw.py and CS2_SKY_DRAW_EVIDENCE.md.
 namespace world_offsets {
 inline constexpr std::uint32_t SceneTimestamp = 0x6ACFCD4F;
 inline constexpr std::uint32_t SceneImageSize = 0x978000;
 // Only the sky lighting-kind producer was recertified in client.dll. These
 // scoped identities do not enable unverified ESP or movement layouts.
-inline constexpr std::uint32_t ClientTimestamp = 0x6AD01314;
+inline constexpr std::uint32_t ClientTimestamp = 0x6AD7B41C;
 inline constexpr std::uint32_t ClientImageSize = 0x299D000;
 inline constexpr std::ptrdiff_t SkyDescriptorVtable = 0x5F64D8;
 inline constexpr std::ptrdiff_t SkyRender = 0x154FB0;

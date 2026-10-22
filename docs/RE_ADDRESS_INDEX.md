@@ -1,11 +1,12 @@
 # CS2 address and evidence index
 
 This is a navigation map for the Windows AMD64 **client**, recertified October
-15, 2026: patch **1.41.9.1**, client/server **2000932**, Source revision
-**11131657**, Steam build **25947352**, version date October 14, 2026, 16:57:53.
+21, 2026: patch **1.41.9.1**, client/server **2000934**, Source revision
+**11150591**, Steam build **26087496**, version date October 20, 2026, 11:41:22.
 These are the installed build's verified constants, not portable signatures.
-The October 15 evidence is static: it does not establish fresh ESP, movement or
-world appearance observations. Historical sections in the linked evidence
+The October 21 evidence is static: it does not establish fresh ESP, movement or
+world appearance observations. See the [update record](CS2_UPDATE_26087496.md).
+All consumed runtime addresses below remain unchanged. Historical sections in the linked evidence
 documents describe 1.41.9.0 and must not supply current runtime addresses.
 
 For the update procedure, see [CS2 update guide](CS2_UPDATE_GUIDE.md). Use the
@@ -27,7 +28,7 @@ Client is under `csgo/bin/win64`; the other modules are under `bin/win64`.
 
 | Module | PE timestamp / SizeOfImage | Full SHA-256 |
 | --- | --- | --- |
-| `client.dll` | `0x6AD01314` / `0x299D000` | `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0` |
+| `client.dll` | `0x6AD7B41C` / `0x299D000` | `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49` |
 | `scenesystem.dll` | `0x6ACFCD4F` / `0x978000` | `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5` |
 | `worldrenderer.dll` | `0x6ACFCCF2` / `0x26B000` | `f9eeff50acb10a89ab78c98d2726d3e5e6b5adf7a8b11be2a41cb5ebded11dac` |
 | `materialsystem2.dll` | `0x6ACFCC60` / `0x186000` | `b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6` |

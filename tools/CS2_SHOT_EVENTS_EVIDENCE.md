@@ -1,5 +1,47 @@
 # Native shot-event observations
 
+## Current recertification — October 21, 2026
+
+Installed Windows AMD64 client: patch **1.41.9.1**, client/server **2000934**,
+Steam build **26087496**, Source revision **11150591**, version date
+October 20, 2026, 11:41:22. Installation and executable paths remain those
+listed below. Current identities:
+
+| Image | SHA-256 | PE timestamp | Image size |
+| --- | --- | --- | --- |
+| Client | `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49` | `0x6AD7B41C` | `0x299D000` |
+| Server, static emission evidence only | `05e6f04972bb2983f463c08824c3133626e0703e881443589288b68e200acc4d` | `0x6AD7B41C` | `0x2572000` |
+
+The separate scratch investigation under
+`logs/research/26087496/events_console/` rediscovered the three exact code
+anchors in the new client and the manager, event and listener primary vtables
+from named RTTI. All **15 client windows and four server emission windows**
+retain their exact previous SHA-256, including full decoded relative operands.
+Manager global registration/destruction agree; native listener dispatch,
+external-listener ownership/reset, typed getters, serialized pawn-handle
+normalization and Murmur2 key contracts remain as documented below. All header
+constants and entry bytes match the independently resolved vtables/operands.
+The three installed VPK event assets and the named HitGroup_t registration
+also pass unchanged. No address, slot, key, layout or runtime code changed.
+
+`discover.py` preserves searches, RTTI results and full window disassembly in
+`discovery.json` (Capstone 5.0.9); `probe.py` ran all original checks with the
+candidate image identities in memory before changing frozen pins. Only the
+verifier's exact client/server hashes and PE timestamps were then updated.
+Unknown builds continue to reject. The identities in the original investigation
+below are historical.
+
+`python tools/inspect_shot_events.py` passes; its report is
+`logs/research/26087496/events_console/events-final.json`. Temporary changes to
+the manager global, handle getter RVA, AddListener slot and AddListener entry
+bytes all reject, as does a deliberately unfamiliar client hash; diagnostics
+are in `negative.json`. No game/server process was launched or opened and no
+installed file was changed. Native event delivery and shot outcomes remain
+unobserved. Repository build/CTest results belong to the combined update,
+separate from these installed-file checks.
+
+## Original October 18 investigation
+
 Read-only installed-file investigation, October 18, 2026. Target is the AMD64
 CS2 client, with all 17 prior compatibility components passing before research
 in `logs/compatibility/20261018T083320319050Z/`. No game/server process was

@@ -8,7 +8,7 @@ unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept;
 unsigned int SteeringCommandEvaluationsForBenchmark() noexcept;
 #endif
 
-// One shared deterministic corpus covers single-fragment and complete timed
+// One shared deterministic corpus covers direct planner and complete command
 // command costs. Elapsed time is reported without hardware-dependent thresholds.
 int main() {
     constexpr std::array<AirPhysics, 8> physics{{
@@ -36,12 +36,12 @@ int main() {
                 SteeringOutput output{};
                 if (whole) {
                     const auto command = PlanAirSteeringCommand(state, input, physics[i % physics.size()]);
-                    validCounts &= hasIntent ? command.valid && command.count == AirSteeringSliceCount : !command.valid && !command.count;
+                    validCounts &= hasIntent ? command.valid && command.count == 1 : !command.valid && !command.count;
                     output = command.summary;
 #ifdef CS2_STEERING_BENCHMARK
                     const unsigned int count = SteeringCommandEvaluationsForBenchmark();
                     maximumCommandEvaluations = std::max(maximumCommandEvaluations, count);
-                    validCounts &= hasIntent ? count == AirSteeringSliceCount : count == 0;
+                    validCounts &= hasIntent ? count == 1 : count == 0;
 #endif
                 } else {
                     output = PlanAirSteering(state, input, physics[i % physics.size()]);
@@ -55,16 +55,14 @@ int main() {
             }
             const double microseconds = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
             std::printf("path=%s trial=%d commands=%d us_per_command=%.6f checksum=%.9f\n",
-                        whole ? "timed_eight_fragment_command" : "single_fragment", trial + 1,
+                        whole ? "axion_single_command" : "axion_direct_planner", trial + 1,
                         commands, microseconds / commands, checksum);
         }
     }
 #ifdef CS2_STEERING_BENCHMARK
-    // The whole-command accessor aggregates all fragment simulations. The
-    // singular accessor resets per fragment and cannot establish this bound.
-    std::printf("maximum_fragment_candidate_evaluations=%u bound=1 maximum_command_candidate_evaluations=%u bound=%zu exact_counts=%s\n",
-                maximumFragmentEvaluations, maximumCommandEvaluations, AirSteeringSliceCount, validCounts ? "pass" : "fail");
-    return !validCounts || maximumFragmentEvaluations > 1 || maximumCommandEvaluations > AirSteeringSliceCount ? 1 : 0;
+    std::printf("maximum_fragment_candidate_evaluations=%u bound=1 maximum_command_candidate_evaluations=%u bound=1 exact_counts=%s\n",
+                maximumFragmentEvaluations, maximumCommandEvaluations, validCounts ? "pass" : "fail");
+    return !validCounts || maximumFragmentEvaluations > 1 || maximumCommandEvaluations > 1 ? 1 : 0;
 #else
     (void)maximumFragmentEvaluations; (void)maximumCommandEvaluations;
     return validCounts ? 0 : 1;

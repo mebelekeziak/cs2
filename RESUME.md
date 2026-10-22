@@ -1,4 +1,31 @@
-# CS2 auto-bhop correction — October 16, 2026
+# CS2 compatibility update — October 21, 2026
+
+Installed Windows AMD64 client **1.41.9.1 / 2000934 / Steam 26087496**, Source
+revision **11150591**. Steam's current-version API confirms this client is
+up to date. Full record: `docs/CS2_UPDATE_26087496.md`; next update still starts
+with `docs/CS2_UPDATE_GUIDE.md` and `docs/RE_ADDRESS_INDEX.md`.
+
+All **27/27** frozen installed-file compatibility checks pass. Shared/scoped PE
+timestamps and exact client/server hashes were updated only after independent
+scratch rechecks. No consumed runtime addresses, schema members, hook bytes or
+ABIs changed. Three scope-consumer windows changed only in nineteen native
+data-reference displacements; the frozen verifier now checks their new windows
+and decoded data identities. Unknown builds and wrong headers still reject.
+Initial bundle: `logs/compatibility/20261021T052237287897Z/`; final bundle:
+`logs/compatibility/26087496-final/`; research: `logs/research/26087496/`.
+
+Public and diagnostic x64 Release builds succeed without project warnings,
+each passing **56/56 CTest suites**. Both DLLs retain AMD64 PE32+, an exception
+directory and zero static TLS/delay imports. Build/test logs and payload hashes
+are under the research directory. Final bundle source hashes match current files.
+
+User's existing visualization/menu/config edits were preserved. No game/server
+process was opened, launched or injected and no installed files changed. Live
+behavior on this build remains unobserved. Use existing **Load Overlay.cmd**;
+restart the client normally if an older DLL remains resident. Cooperative stop
+does not physically unload resident code.
+
+## Historical auto-bhop correction — October 16, 2026
 
 Revision 9 fixes observed contradictory jump decisions during prediction
 corrections in private online play. Same-sequence command tick/TickBase changes

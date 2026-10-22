@@ -1,5 +1,30 @@
 # Direct bullet damage contracts
 
+## Current static recertification, October 21, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
+Steam build `26087496`, Source revision `11150591`, version date October 20,
+2026, 11:41:22. Installation/executable remain the paths below. Client SHA-256
+is `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`. Animation identity is unchanged.
+
+Before changing the frozen client hash, a separate scratch invocation reran the
+complete existing schema, RTTI, native windows, rule registration/consumer,
+import, numeric-constant and runtime-header checks against the new image. All
+twenty native windows remain byte-identical at their existing RVAs. Fresh
+Capstone 5.0.9 disassembly and an independent window-hash audit are retained in
+`logs/research/26087496/aim_ballistics/`. No consumed field, RVA, fingerprint,
+rule width, ownership or argument/return contract changed. Only the verifier's
+client hash pin changes; the header records this recertification.
+
+`python tools/inspect_aim_damage.py` passes. Temporary header mutations to
+`Damage`, `DamageScaleCtBody`, `TraceHitbox` and `WeaponDamageInputsBytes` each
+fail for the corresponding source mismatch. Reports, scratch code and the
+sixteen-case shared negative report are in the research directory above.
+Unknown binary hashes remain rejected. No client/server process was launched
+or opened, and no installed file changed. Actual damage and live behavior on
+this build remain unobserved; the earlier investigation below is historical.
+
 Investigated October 20, 2026, against the installed Windows AMD64 client at
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
 The executable is `bin/win64/cs2.exe`; client SHA-256 is

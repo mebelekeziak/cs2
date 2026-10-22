@@ -1,5 +1,31 @@
 # Autofire direct line of fire
 
+## Current static recertification, October 21, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
+Steam build `26087496`, Source revision `11150591`, version date October 20,
+2026, 11:41:22. Installation/executable remain unchanged. Client SHA-256 is
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`.
+
+Before frozen identity updates, a separate scratch invocation reran all eight
+complete occlusion windows, constructor entry, point-ray branch, native filter
+operands and shared third-person trace layout/manager checks. All passed at
+their existing RVAs. An independent byte/hash audit and Capstone 5.0.9 decoded
+windows, including `0x887F71 -> 0x352920`, remain in
+`logs/research/26087496/aim_ballistics/`. The six-argument synchronous trace ABI,
+filter ownership/serial rules, result widths, mask/layer and zero-bounds ray
+semantics are unchanged. No runtime constant or instruction fingerprint changed.
+
+The verifier retains its shared `inspect_third_person.EXPECTED_HASH` identity,
+now recertified for this client, and rejects unfamiliar binaries.
+`python tools/inspect_aim_occlusion.py` passes. Temporary changes to
+`InitializeFilter`, `ShotMask`, `TraceEntity` and `InitializeFilterBytes` each
+fail for their corresponding source mismatch; results are in the sixteen-case
+shared negative report. No client/server was launched or opened, and installed
+files were not modified. Live line-of-fire behavior on this build remains
+unobserved. Earlier investigation below is historical.
+
 Investigated October 18, 2026, against the installed Windows AMD64 client
 `game/csgo/bin/win64/client.dll`, SHA-256
 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`.

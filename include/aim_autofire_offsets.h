@@ -3,6 +3,7 @@
 #include <cstdint>
 
 // Verified installed AMD64 client. See tools/CS2_AUTOFIRE_EVIDENCE.md.
+// Reverified unchanged for client 2000934 / Steam build 26087496, October 21, 2026.
 namespace aim_autofire_offsets {
 inline constexpr std::uint32_t BaseAnglesPresent = 0x4;
 inline constexpr std::ptrdiff_t RecordHistory = 0xD055C0;

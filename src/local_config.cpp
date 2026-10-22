@@ -1,4 +1,5 @@
 #include "local_config.h"
+#include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "world_settings.h"
@@ -35,6 +36,7 @@ struct Snapshot {
     ModelSwapSettings model_swap;
     PlayerChamsSettings player_chams;
     GrenadeSettings grenades;
+    AimVisualizationSettings aimVisualization;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -61,6 +63,9 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(aim, autofire); FIELD(aim, hitchance); FIELD(aim, samples); FIELD(aim, quickstop);
     visit("aim.min_damage", s.aim.minDamage);
     FIELD(aim, autowall);
+    visit("aim.visualize", s.aimVisualization.enabled);
+    for (std::size_t i = 0; i < std::size(s.aimVisualization.color); ++i)
+        visit(std::string("aim.visualize_color.") + std::to_string(i), s.aimVisualization.color[i]);
     FIELD(anti_aim, enabled); FIELD(anti_aim, yawMode); FIELD(anti_aim, yawBase);
     FIELD(anti_aim, yawOffset); FIELD(anti_aim, jitterRange); FIELD(anti_aim, jitterInterval);
     FIELD(anti_aim, spinSpeed); FIELD(anti_aim, pitchMode); FIELD(anti_aim, pitch); FIELD(anti_aim, pitchAlternate);
@@ -172,7 +177,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings(), AimVisualizationGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
@@ -255,6 +260,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     ModelSwapSetSettings(snapshot.model_swap);
     PlayerChamsSetSettings(snapshot.player_chams);
     GrenadeSetSettings(snapshot.grenades);
+    AimVisualizationSetSettings(snapshot.aimVisualization);
     return true;
 }
 

@@ -2,6 +2,7 @@
 #include <cstddef>
 
 // Frozen installed-client contracts; tools/CS2_AUTOWALL_EVIDENCE.md.
+// Reverified unchanged for client 2000934 / Steam build 26087496, October 21, 2026.
 namespace aim_autowall_offsets {
 inline constexpr int Initialize = 0x87EE00;
 inline constexpr int Destroy = 0x87FB70;

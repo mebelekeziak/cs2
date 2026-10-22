@@ -14,8 +14,8 @@ from inspect_surface_tint import extract
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll")
-CLIENT_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
-SERVER_HASH = "09e8c04c5f44040155d04fa79a3f43491d542a386f45807ed77785729e5925a9"
+CLIENT_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
+SERVER_HASH = "05e6f04972bb2983f463c08824c3133626e0703e881443589288b68e200acc4d"
 SERVER_WINDOWS = {
     "server_weapon_fire_broadcast": (0xA07CFC, 0x15B, "b4228042c133a8e75719cfac2c66cc333d1e966594efed93ce1cfc9e0bd11940"),
     "server_bullet_impact_pawn_and_xyz": (0xA70A43, 0x14D, "76205d54b3192ab3e1203539f9b08532e269685d6b0cbd3dc65c1e6cb9193468"),
@@ -146,14 +146,14 @@ def main():
     parser.add_argument("--core-vpk", type=Path, default=CLIENT.parents[3] / "core/pak01_dir.vpk")
     args = parser.parse_args()
     raw, image, base, nt = mapped(args.client)
-    if hashlib.sha256(raw).hexdigest() != CLIENT_HASH or struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD01314 or len(image) != 0x299D000:
+    if hashlib.sha256(raw).hexdigest() != CLIENT_HASH or struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD7B41C or len(image) != 0x299D000:
         raise SystemExit("Client changed: repeat native listener/event-field investigation")
     require_bytes(image, CHECKS)
     for name, (site, size, digest) in WINDOWS.items():
         if hashlib.sha256(image[site:site + size]).hexdigest() != digest:
             raise SystemExit(f"Native event window changed: {name}")
     server_raw, server, _, server_nt = mapped(args.server)
-    if hashlib.sha256(server_raw).hexdigest() != SERVER_HASH or struct.unpack_from("<I", server_raw, server_nt + 8)[0] != 0x6ACFCD38 or len(server) != 0x2572000:
+    if hashlib.sha256(server_raw).hexdigest() != SERVER_HASH or struct.unpack_from("<I", server_raw, server_nt + 8)[0] != 0x6AD7B41C or len(server) != 0x2572000:
         raise SystemExit("Installed server changed: repeat event emission/identity investigation")
     for name, (site, size, digest) in SERVER_WINDOWS.items():
         if hashlib.sha256(server[site:site + size]).hexdigest() != digest:

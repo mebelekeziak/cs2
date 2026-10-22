@@ -3,6 +3,7 @@
 #include <cstdint>
 
 // Installed 1.41.9.1 client; independently verified by inspect_silent_aim.py.
+// Recertified October 21, 2026 for client 2000934 / Steam build 26087496.
 // See tools/CS2_SILENT_AIM_EVIDENCE.md for producer, consumer and timing.
 namespace silent_aim_offsets {
 inline constexpr std::ptrdiff_t Input = 0x257B640;

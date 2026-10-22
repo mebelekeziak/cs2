@@ -1,5 +1,106 @@
 # Movement evidence for the installed client
 
+## October 22 revision 10: Axion steering port
+
+Only the client autostrafe planner changes. `src/movement_steering.cpp` adapts
+Axion's `AutoStrafe` at commit `5e174c1f07b96f5bcaa5c9a09045d0c082325d93`;
+the MIT notice and exact local source provenance are under `third_party/`.
+The ideal angle is `clamp(degrees(atan2(15, speed)), 0, 45)`, correction uses
+configured smoothing 50 (`correct = 2 * ideal`), and sequence parity chooses
+the alternating side. The initial port used Axion's default 99; the user
+subsequently requested 50 after reporting decent live behavior. At speed 250,
+correction rises from 0.137 to 6.867 degrees. This also widens the error threshold
+for returning to the alternating branch. Engine acceleration still limits the
+resulting velocity change; this is not a 50-fold increase in actual turn rate.
+The speed-80 and absolute-delta-170 branches are preserved. A behind-velocity
+request follows Axion's positive correction branch rather than the previous
+solver's direct braking. This heuristic does not solve for the supplied physics.
+
+The command publishes one full-input wish at time zero. Current acceleration,
+wish cap, effective wish speed, friction and interval still drive prediction and
+validation. Source physical WASD and current command sequence replace Axion's
+static keys and hardcoded global command-ring access. W-only is supported instead
+of inheriting its zero-offset early return. The engine's verified positive-left
+axis convention is retained. No source layouts, offsets, UI, bunnyhop code or
+global movement-fix routine are imported. Native ownership, same-command replay,
+jump selection, physical release and ground handoff remain in place.
+
+Replay capacity remains eight analog events plus one separate jump event;
+inactive old slots are neutralized. The regression suite uses a synthetic
+eight-slot fixed-wish fixture to retain ordering, pool reuse and retirement
+coverage, alongside the actual one-event planner path. Rebuilt commands retain
+parity and recompute only from frozen command-start state when intent changes.
+Logs identify `revision=10 steering=axion_wasd smooth=50 subticks=command1`.
+
+`python tools/inspect_movement.py` passes against the installed AMD64 client
+SHA256 `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+patch 1.41.9.1 / client-server 2000934. All 44 instruction windows and consumed
+Cvar, schema, input and helper contracts match; no ABI changes were needed.
+The executable remains in the documented Steam `game/bin/win64` installation.
+Existing logs establish D3D11/MSVC runtime use; no new live runtime observation
+is claimed. No client or server was launched by the agent. The user reports the
+initial port works decently; the smoothing-50 tuning has no live observation yet.
+
+For the initial smoothing-99 port, both public and diagnostic x64 Release builds succeed and pass 56/56 CTest
+suites. Steering fixtures check fixed Axion outputs, sequence parity, the
+speed-80 boundary, all eight directions, yaw wrap, behind-velocity behavior,
+full-duration independent prediction and deterministic command replay. Replay
+tests retain jump/attack ownership, physical release/landing, eight-slot ordering
+and retirement coverage. Both AMD64 DLLs have zero static TLS and delay imports.
+Results: `logs/axion-public-ctest.log`, `logs/axion-diagnostic-ctest.log`,
+`logs/axion-diagnostic-build.log`, `logs/axion-payload-checks.json`.
+
+Smoothing-50 follow-up: both Release DLLs rebuilt successfully; all six targeted
+movement/jump/steering/benchmark/memory/replay CTest suites pass in each variant.
+Correction fixtures were updated to the independently calculated axes
+`(-0.1195695496, +/-0.9928258270)` at speed 250. The same eight-direction
+trajectory thresholds still pass. Results are in
+`logs/axion-smoothing50-public-ctest.log`,
+`logs/axion-smoothing50-diagnostic-ctest.log` and
+`logs/axion-smoothing50-diagnostic-build.log`. No client/server was launched.
+
+## Static recertification — October 21, 2026
+
+Target: Windows AMD64 client at
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
+Installed metadata: patch **1.41.9.1**, client/server **2000934**, Steam build
+**26087496**, Source revision **11150591**, version date October 20, 2026,
+11:41:22. Client SHA-256:
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+PE timestamp **0x6AD7B41C**, SizeOfImage **0x299D000**, machine **0x8664**.
+The prior client SHA-256 was
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,
+timestamp `0x6AD01314`. The patch changed that identity; the contracts below
+were checked independently before updating the frozen hash/timestamp.
+
+All **44** frozen movement instruction windows match at their original RVAs.
+Named Cvar registrations, all six schema templates/consumed schema fields,
+CCSGOInput constructor/RTTI, slot-6 finalizer, modern-jump call/receiver,
+subtick allocation/append ABI, historical axes and layout operands were decoded
+again from the installed PE. The existing native tick/stamina constants and
+protobuf descriptor checks pass. **No source address, layout, mask, fingerprint
+or ownership/ABI contract changed**. In particular, Input remains `0x257B640`,
+InputVtable `0x1C9DB20`, Finalize `0xCECF90`, ModernJump `0x8C34F0`;
+initialization/command ownership and cooperative stop behavior are unchanged.
+
+Verification: `python tools/inspect_movement.py`. Rejected header changes:
+`Input`, `services::Friction`, `FinalizeBytes`.
+
+Research is retained under `logs/research/26087496/movement_input/`:
+`contract_recheck.json` records every original exact instruction window, native
+body hash and decoded result before freezing; `movement.json` records the updated
+verifier run. The frozen verifier continues to reject every unfamiliar hash.
+Three temporary header copies for this component independently changed a global,
+a member/layout field and a runtime entry fingerprint; all were rejected.
+`negative_headers.json` contains the nine results across these three components.
+
+No CS2 process was launched/opened, no server was contacted and no installed
+file was changed. This is static contract evidence; current gameplay, movement
+and camera behavior remain unobserved. Build/CTest results are recorded in the
+main update handoff. Earlier dated evidence below describes its original build;
+its unchanged contract details remain applicable where rechecked here.
+
+
 ## October 16 revision 9: prediction correction fix
 
 The user reports perfect offline hops but intermittent ground stutter with

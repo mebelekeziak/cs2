@@ -1,4 +1,5 @@
 #include "local_config.h"
+#include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "world_settings.h"
@@ -178,6 +179,8 @@ int main() {
     const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67,
         AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true};
     SilentAimSetSettings(expectedAim);
+    const AimVisualizationSettings expectedVisualization{true, {.125f, .25f, .5f, .75f}};
+    AimVisualizationSetSettings(expectedVisualization);
     const AntiAimSettings expectedAntiAim{true, AntiAimYawMode::Jitter, AntiAimYawBase::World,
         -123.25f, 213.5f, 13, -17.75f, AntiAimPitchMode::Jitter, 32.25f, -51.5f};
     AntiAimSetSettings(expectedAntiAim);
@@ -208,6 +211,8 @@ int main() {
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
+    Expect(custom.find("aim.visualize=1\n") != std::string::npos && custom.find("aim.visualize_color.3=0.75\n") != std::string::npos,
+        "custom preset stores visualization toggle and RGBA");
     Expect(custom.find("grenades.removeSmoke=1\ngrenades.removeFlash=1\ngrenades.smokeAura=1\ngrenades.molotovAura=1\n") != std::string::npos,
         "custom preset saves all four independent grenade toggles");
     Expect(custom != defaults, "separate presets retain different options");
@@ -219,6 +224,7 @@ int main() {
         PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
+    Expect(AimVisualizationGetSettings() == expectedVisualization, "visualization toggle and all RGBA channels roundtrip");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim && custom.find("aim.min_damage=67\n") != std::string::npos &&
         custom.find("aim.hitgroups=67\n") != std::string::npos,
@@ -327,6 +333,7 @@ int main() {
         SilentAimGetSettings().fov == 180 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
     Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
+    Expect(AimVisualizationGetSettings() == AimVisualizationSettings{}, "older presets restore disabled visualization and white RGBA");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
         SilentAimGetSettings().samples == 256 && !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
         "older presets restore autofire and quickstop off, hitchance defaults and minimum damage 1");

@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed client SHA256 659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0.
+// Installed client SHA256 5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49.
 // Metadata, RTTI, callers and generated protobuf code checked locally; see
 // tools/CS2_MOVEMENT_EVIDENCE.md. These are build identities, not match defaults.
 namespace movement_offsets {

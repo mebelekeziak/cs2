@@ -1,5 +1,35 @@
 # Scoped weapon zoom and native view FOV
 
+## Build 2000934 recertification — October 21, 2026
+
+Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,
+client/server `2000934`, Steam build `26087496`, Source revision `11150591`.
+`csgo/bin/win64/client.dll` changed from SHA-256
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0` to
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+its PE timestamp changed `0x6AD01314 -> 0x6AD7B41C`, with AMD64 and
+SizeOfImage `0x299D000` unchanged. Installation and executable paths remain
+as documented below. This was file-only investigation: no client/server
+launch, process access, graphics-runtime observation or installed-file change.
+
+All seventeen complete native windows, six scoped-weapon RTTI tables, named
+schema registrations/fields, final view slot, mouse identity getter and full
+scope/mouse conversion caller chain match the existing contracts. Independent
+FOV/member/scale operands and every source fingerprint pass unchanged. No
+runtime constant or hook/lifecycle behavior changed. Only the verifier's exact
+client hash pin changed; an unfamiliar hash still rejects.
+
+Reproduce with `python tools/inspect_zoom.py`. The fresh real-header report is
+`logs/research/26087496/view_model/verified_zoom.json`. Temporary wrong
+`MouseInput`, `Scoped` and `MouseConvertBytes` headers all reject; results
+are in that directory's `negative_checks.json`.
+
+No fresh live appearance is claimed. Build/CTest integration results are recorded
+in the project update handoff and README. The earlier investigation below is
+historical provenance; its old module identity is superseded above.
+
+## Earlier baseline investigation
+
 Investigated October 16, 2026 against the installed Windows AMD64 **client**:
 patch 1.41.9.1, client/server 2000933, Steam build 25966348. Installation:
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`;

@@ -1,5 +1,36 @@
 # Current weapon model, recoil and readiness — October 16, 2026
 
+## October 21, 2026 recertification — client 2000934
+
+Installed Windows AMD64 client `1.41.9.1` / `2000934`, Source revision
+`11150591`, Steam build `26087496`, at the same installation below. New client
+SHA-256 `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`.
+
+Before changing the frozen hash, separate scratch
+`logs/research/26087496/aim_targets/recheck.py` ran the full `verify()` contract
+against the new image. All twenty complete native-window hashes match, along
+with twelve named schema registrations, 29 firearm RTTI tables and native
+spread/inaccuracy slots, decoded direct calls/member/global operands, named
+cvar and special-weapon consumers, imported RNG/trigonometry identities, float
+constants, source fields, supported weapon table list and entry fingerprints.
+All runtime constants and fingerprints are unchanged; only the exact client
+hash pin in `inspect_aim_weapon.py` and header provenance were refreshed.
+Unchanged complete callers/callees retain the argument/return ABI, command-owner
+invocation and native memoization evidence below.
+
+Final frozen command `python tools/inspect_aim_weapon.py` passes; full output
+is `logs/research/26087496/aim_targets/inspect_aim_weapon.json`.
+
+Research `negative.py` rejects four temporary headers: changed `Spread`,
+`ActiveWeapon`, `SpreadBytes` and the first supported weapon vtable. The frozen
+verifier still rejects unfamiliar client hashes before contract checks. No
+client/server was launched, no native getter was invoked, and no live accuracy,
+readiness or shot behavior was observed. Earlier build details below are
+historical.
+
+## Historical implementation evidence
+
 This concerns the AMD64 Windows client in the documented Steam installation:
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
 The executable is `bin/win64/cs2.exe`; the investigated module is

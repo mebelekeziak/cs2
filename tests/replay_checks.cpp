@@ -227,7 +227,21 @@ int main() {
     steeringStart.state.turnSide = -1;
     steeringStart.directions = off::Forward;
     auto initialState = steeringStart.state;
-    const auto initialSteering = PlanAirSteeringCommand(initialState, steeringStart.input, steeringStart.physics);
+    auto initialSteering = PlanAirSteeringCommand(initialState, steeringStart.input, steeringStart.physics);
+    Expect(initialSteering.valid && initialSteering.count == 1,
+        "Axion planner publishes one wish per command for the existing time-zero replay path");
+    const auto singleAirPlan = MovementRefreshReplaySteeringCommand(press, initialSteering, steeringStart.directions);
+    MovementSubtick singleEvent{}; bool singleActive = false;
+    Expect(singleAirPlan.analogCount == 1 && MovementReplayTransition(singleAirPlan, 0, -0.3f, 0.4f,
+        singleEvent, singleActive) && singleActive && singleEvent.when == 0 &&
+        std::abs(-0.3f + singleEvent.forwardDelta - initialSteering.summary.forward) < 0.00001f &&
+        std::abs(0.4f + singleEvent.leftDelta - initialSteering.summary.left) < 0.00001f,
+        "one time-zero Axion delta replaces historical axes and preserves the separate jump event");
+    // Synthetic legacy-capacity fixture: repeat one fixed wish to exercise all
+    // eight pool slots, ordering and retirement independently of planner count.
+    // Integrating the same wish in fragments still consumes one tick's budget.
+    initialSteering.count = AirSteeringSliceCount;
+    initialSteering.slices.fill(initialSteering.summary);
     auto initialAirPlan = press;
     initialAirPlan = MovementRefreshReplaySteeringCommand(initialAirPlan, initialSteering, steeringStart.directions);
     MovementReplayIntent initialIntent{1, 0, 0, true, keys::Forward};
@@ -437,11 +451,11 @@ int main() {
         timedOwned[MovementReplayJumpEventIndex].address == priorTimedAddresses[MovementReplayJumpEventIndex].address,
         "losing two generated pool entries restores only those entries and leaves all retained analog/jump ownership intact");
 
-    bool fullCommandRefresh = retarget.plan.analogCount == AirSteeringSliceCount && sameJump(initialAirPlan, retarget.plan);
-    for (std::size_t index = 0; index < AirSteeringSliceCount; ++index)
+    bool fullCommandRefresh = retarget.plan.analogCount == expectedCommand.count && sameJump(initialAirPlan, retarget.plan);
+    for (std::size_t index = 0; index < expectedCommand.count; ++index)
         fullCommandRefresh &= near(retarget.plan.analogs[index].forward, expectedCommand.slices[index].forward) &&
             near(retarget.plan.analogs[index].left, expectedCommand.slices[index].left);
-    Expect(fullCommandRefresh, "changed physical intent refreshes all eight frozen-start slices and retains the selected jump edge");
+    Expect(fullCommandRefresh, "changed physical intent replaces legacy slices with one frozen-start Axion wish and retains the jump edge");
     bool retiredSlicesNeutral = releaseRefresh.plan.analogCount == 1;
     unsigned activeAfterRelease = 0;
     for (std::size_t index = 0; index < timedOwned.size(); ++index) {

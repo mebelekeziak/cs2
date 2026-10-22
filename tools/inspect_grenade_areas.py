@@ -12,7 +12,7 @@ from verify_sky_draw import mapped, primary_vtable, require_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game')
-SHA256 = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
+SHA256 = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
 SCHEMA = {
     'C_Inferno': (0x223FE48, 0x223FB30, 24, 0x86A0, {
         'm_firePositions': ('FirePositions', 0x1108),

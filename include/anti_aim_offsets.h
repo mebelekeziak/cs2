@@ -3,6 +3,7 @@
 #include <cstdint>
 
 // Installed AMD64 client; independently verified by tools/inspect_anti_aim.py.
+// Recertified October 21, 2026 for client 2000934 / Steam build 26087496.
 // See tools/CS2_ANTI_AIM_EVIDENCE.md for camera reset ownership and ABI.
 namespace anti_aim_offsets {
 inline constexpr std::ptrdiff_t Input = 0x257B640;

@@ -15,7 +15,7 @@ from verify_sky_draw import mapped, primary_vtable
 ROOT = Path(__file__).resolve().parents[1]
 GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game")
 IDENTITIES = {
-    "client": ("csgo/bin/win64/client.dll", "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"),
+    "client": ("csgo/bin/win64/client.dll", "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"),
     "engine": ("bin/win64/engine2.dll", "6456df18d8f954394024c2c07da8c848df15a5ace74ce7390d78970ceb39ee21"),
     "host": ("csgo/bin/win64/host.dll", "56efa66a333edb347f044c9bcbc5236bd7d006e478623b3364e5d0a7d681b9cc"),
     "resource": ("bin/win64/resourcesystem.dll", "0004439e37b6ffd5a37683f9f288726584be2a3b4ccc6674af8303cde0343027"),

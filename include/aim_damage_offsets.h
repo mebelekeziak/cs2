@@ -2,6 +2,7 @@
 #include <cstddef>
 
 // Installed AMD64 client contracts; see tools/CS2_AIM_DAMAGE_EVIDENCE.md.
+// Reverified unchanged for client 2000934 / Steam build 26087496, October 21, 2026.
 namespace aim_damage_offsets {
 inline constexpr std::ptrdiff_t Damage = 0x820;
 inline constexpr std::ptrdiff_t HeadshotMultiplier = 0x824;

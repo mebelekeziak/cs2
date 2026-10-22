@@ -149,7 +149,7 @@ def main():
     digest = hashlib.sha256(raw).hexdigest()
     if digest != EXPECTED_HASH:
         raise SystemExit("Client changed: repeat anti-aim command/camera investigation")
-    if struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD01314 or len(image) != 0x299D000:
+    if struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD7B41C or len(image) != 0x299D000:
         raise SystemExit("Client PE identity differs")
     require_bytes(image, MOVEMENT_CHECKS)
     require_bytes(image, AIM_CHECKS)

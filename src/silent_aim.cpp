@@ -1,4 +1,5 @@
 #include "silent_aim.h"
+#include "aim_visualization.h"
 #include "menu_input.h"
 #include "silent_aim_command.h"
 #include "silent_aim_target.h"
@@ -161,8 +162,10 @@ struct WeaponSample {
     bool patternAttempted = false;
 };
 bool Reachable(Decision& decision, bool enforceMinimum = true) noexcept;
+bool Current(const Decision& decision) noexcept;
 bool BetterShot(const Decision& candidate, const Decision& current) noexcept;
-Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon, const Decision& best) noexcept {
+Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& weapon, const Decision& best,
+    AimVisualizationFrame* visualization, bool scanOnly) noexcept {
     const auto& settings = result.settings;
     const char* geometryReason = "geometry unavailable";
     const bool geometry = SilentAimReadTargetVolume(result.source, result.target, result.volume, geometryReason);
@@ -181,8 +184,25 @@ Decision EvaluateTarget(Decision result, const AimAngles& view, WeaponSample& we
         result.reason = weaponPrepared ? result.weapon.reason : "weapon model verification unavailable"; return result;
     }
     if (!geometry) { result.reason = geometryReason; return result; }
+    // Damage-path eligibility precedes accuracy and firing timing. This copied
+    // decision cannot acquire attack or movement ownership. Keep the real shot's
+    // later path check independent and fresh.
+    if (visualization && result.weapon.clip > 0 &&
+        std::hypot(result.volume.center.x - result.target.eye.x,
+            result.volume.center.y - result.target.eye.y,
+            result.volume.center.z - result.target.eye.z) <= result.weapon.range) {
+        auto scan = result;
+        if (Reachable(scan) && visualization->count < visualization->points.size()) {
+            const auto& p = scan.volume.center;
+            visualization->points[visualization->count++] = {{p.x, p.y, p.z}, scan.target.enemy.pawnHandle};
+            visualization->localPawn = scan.target.local.pawnHandle;
+        }
+    }
+    if (scanOnly) return result;
     // Even a perfect lethal estimate cannot improve this candidate's rank.
     // Use the copied capsule center for angle ties before applying this bound.
+    // Points have already been checked for damage, so both shot-ranking bounds
+    // remain enabled even while visualization collects alternative centers.
     if (best.selected) {
         auto optimistic = result;
         optimistic.chance.percent = 100;
@@ -222,6 +242,8 @@ struct AutofireSelection {
     WeaponSample weapon{};
     float rejectedSeparation = 181;
     bool automatic = true;
+    bool scanOnly = false;
+    AimVisualizationFrame* visualization = nullptr;
 };
 float ExpectedDamage(const Decision& decision) noexcept {
     const int health = decision.target.enemy.health;
@@ -254,7 +276,9 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
     auto candidate = selection.prototype;
     candidate.target = target;
     candidate.selected = true;
-    candidate = EvaluateTarget(candidate, selection.view, selection.weapon, selection.accepted);
+    candidate = EvaluateTarget(candidate, selection.view, selection.weapon, selection.accepted,
+        selection.visualization, selection.scanOnly);
+    if (selection.scanOnly) return false;
     if (candidate.cannotImprove) return false;
     // A candidate cannot do better than a lethal hit at its measured chance.
     // This bound preserves the complete ranking, including health/angle ties.
@@ -296,17 +320,30 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
     }
     return false;
 }
-Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool selectEligible = false) noexcept {
+struct VisualizationEvaluation {
+    AimVisualizationFrame frame{};
+    bool enabled = AimVisualizationBegin(frame);
+    ~VisualizationEvaluation() noexcept {
+        if (enabled) AimVisualizationPublish(frame, GetTickCount64());
+    }
+};
+struct VisualizationCommand {
+    bool evaluated = false;
+    ~VisualizationCommand() noexcept { if (!evaluated) AimVisualizationClear(); }
+};
+Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool selectEligible = false,
+    bool visualOnly = false) noexcept {
     MeasureEvaluation measure;
+    VisualizationEvaluation visualization;
+    visualization.frame.criteria = settings;
     Decision result{};
     result.settings = settings;
     ++decisions;
     if (!Source(result.source)) {
         ++sourceRejected; result.reason = "local source unavailable"; return result;
     }
-    // Automatic scans cannot request a shot or brake during cooldown. Observe
-    // the current weapon once before enumerating any actors/capsules. Manual
-    // shot history retains its independent aiming path, including cooldown.
+    // Automatic shots/braking still stop during cooldown. Visualization can
+    // continue its damage scan without accuracy estimates or attack ownership.
     AimWeaponSnapshot readyWeapon{};
     bool readyRead = false;
     if (selectEligible) {
@@ -315,17 +352,28 @@ Decision Evaluate(const AimAngles& view, const SilentAimSettings& settings, bool
             result.weapon = readyWeapon;
             result.reason = weaponPrepared ? readyWeapon.reason : "weapon model verification unavailable";
             ++performance.cooldownSkips;
-            targetDiagnostics = {}; targetDiagnostics.stage = "weapon not ready; target scan skipped";
-            return result;
+            targetDiagnostics = {}; targetDiagnostics.stage = "weapon not ready; shot scan skipped";
+            if (!readyRead || !visualization.enabled || readyWeapon.clip <= 0) return result;
         }
     }
     AutofireSelection selection{};
     selection.prototype = result;
     selection.view = view;
     selection.automatic = selectEligible;
+    selection.scanOnly = visualOnly || (selectEligible && !readyWeapon.ready);
+    if (visualization.enabled) selection.visualization = &visualization.frame;
     if (selectEligible) { selection.weapon.value = readyWeapon; selection.weapon.read = true; selection.weapon.valid = readyRead; }
     const bool found = SilentAimSelectTarget(result.source, view, settings.fov, settings.hitgroups, bones,
         result.target, &targetDiagnostics, &EligibleTarget, &selection);
+    if (selection.visualization && (!SameSource(result.source) || !active.load(std::memory_order_acquire) ||
+        !Foreground() || !(SilentAimGetSettings() == settings) ||
+        (selection.weapon.valid && !AimWeaponStillCurrent(weaponContext, result.source, selection.weapon.value)) ||
+        (selection.accepted.selected && !Current(selection.accepted))))
+        visualization.frame.count = 0;
+    if (selection.scanOnly) {
+        if (visualOnly) result.reason = "damage-path preview; manual fire unchanged";
+        return result;
+    }
     if (found) { ++selected; return selection.accepted; }
     if (selection.brake.selected) { ++selected; return selection.brake; }
     if (selection.rejected.selected) { ++selected; return selection.rejected; }
@@ -612,6 +660,7 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
     ShotLoggingPump();
     AcquireSRWLockExclusive(&mutationLock);
     ++prepareCalls;
+    VisualizationCommand visualizationCommand;
     bool movementHandled = false;
     if (!commandReady) {
         stopping = false;
@@ -638,13 +687,16 @@ void SilentAimPrepareCommand(void* input, void* command, bool commandReady) noex
         const auto settings = SilentAimGetSettings();
         AimAngles view{};
         if (!settings.enabled) { prepareStage = "disabled"; Status("disabled"); }
-        else if (!settings.autofire) { prepareStage = "manual_history_only"; Status("manual mode awaiting primary-fire history"); }
+        else if (!settings.autofire && !AimVisualizationGetSettings().enabled) {
+            prepareStage = "manual_history_only"; Status("manual mode awaiting primary-fire history");
+        }
         else if (!SilentAimReadView(address, view, &viewDiagnostics)) {
             ++viewRejected; prepareStage = viewDiagnostics.reason; Status("native physical view unavailable");
         }
         else {
             ++prepareEvaluated;
-            auto decision = Evaluate(view, settings, settings.autofire);
+            auto decision = Evaluate(view, settings, settings.autofire, !settings.autofire);
+            visualizationCommand.evaluated = true;
             const char* action = decision.reason;
             const bool wantsStop = settings.autofire && settings.quickstop && autofirePrepared && finalizerReady &&
                 request && (decision.quickstopEligible || (decision.automaticEligible && SameStopCycle(decision)));
@@ -684,6 +736,7 @@ void SilentAimStop(const char* reason) noexcept {
     active.store(false, std::memory_order_release);
     AcquireSRWLockExclusive(&mutationLock);
     stopped = true;
+    AimVisualizationClear();
     stopping = false;
     active.store(false, std::memory_order_release);
     Status("stopped and resident");

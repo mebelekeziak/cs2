@@ -1,5 +1,30 @@
 # Native client autowall
 
+## Current static recertification, October 21, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
+Steam build `26087496`, Source revision `11150591`, version date October 20,
+2026, 11:41:22. Installation/executable remain the paths below. Client SHA-256
+is `5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`.
+
+A separate scratch contract copy selected the new hash before the frozen
+contract changed. All fourteen complete native windows, runtime header arrays
+and addresses, weapon penetration schema and independently decoded operands
+passed unchanged. Fresh Capstone 5.0.9 disassembly and an independent byte/hash
+audit remain in `logs/research/26087496/aim_ballistics/`. Constructor, destructor,
+trace, segment-step and extractor ABI/storage contracts are unchanged; no RVA,
+field, budget or buffer ownership rule needed adjustment. The frozen JSON
+client hash is updated, with unknown binary hashes still rejected.
+
+`python tools/inspect_autowall.py` passes. Temporary mutations to `Trace`,
+`Penetration`, `DirectionVector` and `InitializeBytes` each fail for their actual
+header mismatch. The scratch output and sixteen-case shared negative report
+are retained in the research directory. Runtime behavior was unchanged. No
+client/server process was launched or opened, and no installed file changed.
+Live penetration/damage behavior remains unobserved on this build. The original
+investigation below describes the preceding build and is historical.
+
 Investigated October 20, 2026 for the Windows AMD64 client, using the installation
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
 Executable: `bin/win64/cs2.exe`. Installed patch 1.41.9.1, client/server 2000933,

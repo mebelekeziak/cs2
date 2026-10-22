@@ -1,4 +1,5 @@
 #include "public_menu.h"
+#include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
@@ -599,6 +600,8 @@ void DrawPublicMenu() {
             else if (changed) WorldSetSettings(settings);
         } else if (selectedTab == 4) {
             auto settings = SilentAimGetSettings();
+            auto visualization = AimVisualizationGetSettings();
+            bool visualizationChanged = false;
             auto antiAim = AntiAimGetSettings();
             auto shotLog = ShotLogGetSettings();
             bool changed = false;
@@ -606,6 +609,14 @@ void DrawPublicMenu() {
             bool shotLogChanged = false;
             if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
+                visualizationChanged |= FeatureCheckbox("Visualize ragebot", visualization.enabled);
+                ImGui::BeginDisabled(!visualization.enabled);
+                ImGui::TextUnformatted("Point color");
+                ImGui::SetNextItemWidth(-1);
+                visualizationChanged |= ImGui::ColorEdit4("##AimPointColor", visualization.color,
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf);
+                ImGui::EndDisabled();
+                ImGui::TextWrapped("Shows hitbox centers with a valid damage path before hitchance and firing timing, including while moving or waiting to shoot.");
                 ImGui::BeginDisabled(!settings.enabled);
                 ImGui::TextUnformatted("Hitgroups");
                 constexpr const char* hitgroups[]{"Head", "Chest", "Stomach", "Pelvis", "Arms", "Hands", "Legs", "Feet"};
@@ -662,6 +673,7 @@ void DrawPublicMenu() {
             }
             ImGui::EndChild();
             if (changed) SilentAimSetSettings(settings);
+            if (visualizationChanged) AimVisualizationSetSettings(visualization);
             if (antiAimChanged) AntiAimSetSettings(antiAim);
             if (shotLogChanged) ShotLogSetSettings(shotLog);
         } else if (selectedTab == 5) {

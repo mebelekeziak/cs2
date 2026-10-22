@@ -1,5 +1,31 @@
 # Named animated aim landmarks
 
+## October 21, 2026 recertification — client 2000934
+
+Installed AMD64 client `1.41.9.1` / `2000934`, Source revision `11150591`,
+Steam build `26087496`; SHA-256
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`, at the same installed path
+below. The separate pre-pin investigation
+`logs/research/26087496/aim_targets/recheck.py` passes all ten native instruction
+windows, three named schema registrations, RTTI/vtable/zero-offset inheritance,
+constructor ownership and decoded model/bone layout checks without alteration.
+All addresses, slot values, members, bone names and entry fingerprints remain
+unchanged. The SAS authored model remains SHA-256
+`7312ab88d05bea67b06f3a945d06dc1e5fc5511d4849bc05bc05aec25380eb22`.
+
+Final frozen command `python tools/inspect_silent_aim_hitboxes.py` passes;
+full output is `logs/research/26087496/aim_targets/inspect_silent_aim_hitboxes.json`.
+
+The matching temporary-header negative checks reject wrong `LookupBone`,
+`PlayerSkeletonVtable`, `BoneCount` and `LookupBoneBytes`; see `negative.json`
+in that research directory. The frozen verifier retains its strict client pin
+through `inspect_cs2.py`. No native lifecycle or invocation behavior changed.
+No client/server was launched and no live landmarks or aim were observed for
+this build. Earlier build identities and live observations below are historical.
+
+## Historical implementation and observations
+
 **October 20 extension:** multi-selection now includes torso and bilateral limb
 capsules. Stomach uses the verified `spine_0` stomach region, replacing the
 historical `spine_2` landmark below. See

@@ -12,7 +12,7 @@ import struct
 from verify_sky_draw import DEFAULT, mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
+EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
 ANIMATION_HASH = 'fb2b4cd71468e880c3b3845e8e7a18c9d550dd3c4504e4a257a2110fb91c1235'
 SCHEMA = {
     'CCSWeaponBaseVData': (0x221AAE8, 0x2219F80, 83,

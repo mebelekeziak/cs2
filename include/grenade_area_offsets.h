@@ -2,10 +2,10 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed AMD64 client.dll, verified October 20, 2026.
+// Installed AMD64 client.dll, recertified October 21, 2026 (client 2000934).
 // tools/inspect_grenade_areas.py and tools/CS2_GRENADE_AREAS_EVIDENCE.md.
 namespace grenade_area_offsets {
-inline constexpr std::uint32_t ClientTimestamp = 0x6AD01314;
+inline constexpr std::uint32_t ClientTimestamp = 0x6AD7B41C;
 inline constexpr std::uint32_t ClientImageSize = 0x299D000;
 inline constexpr std::ptrdiff_t InfernoVtable = 0x1CAC6F0;
 inline constexpr std::ptrdiff_t SmokeVtable = 0x1BD2190;

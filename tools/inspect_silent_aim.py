@@ -12,7 +12,7 @@ import struct
 from verify_sky_draw import mapped, require_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
+EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
 CHECKS = {
     "builder": (0xD02130, "488bc44c894018488948085553574155488da808ffffff4881ecd8010000"),
     "caller": (0xB66A36, "498b078bd34c8b442430498bcfff90c8000000"),
@@ -113,7 +113,7 @@ def main():
     if digest != EXPECTED_HASH:
         raise SystemExit("Client changed: repeat input-history investigation.")
     timestamp = struct.unpack_from("<I", raw, nt + 8)[0]
-    if timestamp != 0x6AD01314 or len(image) != 0x299D000:
+    if timestamp != 0x6AD7B41C or len(image) != 0x299D000:
         raise SystemExit("Client PE identity differs")
     require_bytes(image, CHECKS)
     # Native down state is the first uint64 at the shared movement command

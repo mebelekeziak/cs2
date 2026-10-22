@@ -1,5 +1,30 @@
 # Installed CS2 sky draw evidence
 
+## Current recertification, October 21, 2026
+
+Installed client/server `2000934`, Source revision `11150591`, Steam build
+`26087496`, patch `1.41.9.1` (version October 20, 2026, 11:41:22).
+The AMD64 client image is still `0x299D000` bytes; timestamp changes from
+`0x6AD01314` to `0x6AD7B41C`, SHA-256 from the historical value below to
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`.
+The complete scenesystem hash/identity below is unchanged.
+
+Scratch investigation before frozen-pin updates rechecked all twenty exact
+scene/client code windows, RTTI-derived descriptor/vtable slots, the unique
+lighting-kind store, surrounding material creation/output flow and every decoded
+source constant. All original RVAs, seven render arguments, parameter-copy ABI,
+kind values and lifecycle contracts remain unchanged. Research and decoded
+output: `logs/research/26087496/core/investigate.py` and `sky-contracts.json`.
+Only the sky header's client timestamp and verifier's client SHA-256 changed.
+
+`python tools/verify_sky_draw.py` verifies the real header. Wrong producer RVA,
+scene member, producer bytes and old client timestamp are all rejected through
+`--header` copies (`logs/research/26087496/core/negative.json`). Strict binary
+hash rejection remains. No live rendering was observed or client/server
+launched. See `docs/CS2_UPDATE_26087496.md` for combined verification/builds.
+
+## Historical baseline, October 15, 2026
+
 Recertified October 15, 2026 against installed Windows x64 patch 1.41.9.1,
 client/server 2000932, source revision 11131657, Steam build 25947352,
 version date October 14, 2026, 16:57:53. Original investigation used 1.41.9.0.

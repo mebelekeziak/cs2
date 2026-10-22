@@ -13,6 +13,7 @@
 #include <imgui_internal.h>
 #include <imgui_impl_dx11.h>
 #include "public_menu.h"
+#include "aim_visualization.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
 #include "silent_aim_settings.h"
@@ -76,13 +77,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers.\n");
         std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 16 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 16.\n");
+    if (selectedTab < 0 || selectedTab > 17 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 17 (17 = eligible aim points).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -129,7 +131,10 @@ int wmain(int argc, wchar_t** argv) {
     io.DisplaySize = { static_cast<float>(width), static_cast<float>(height) };
     io.DeltaTime = 1.0f / 60.0f;
     ConfigurePublicMenuStyle();
-    if (selectedTab == 4) SilentAimSetSettings({true, 5, AimHitbox::Chest, true, 70, 256});
+    if (selectedTab == 4) {
+        SilentAimSetSettings({true, 5, AimHitbox::Chest, true, 70, 256});
+        AimVisualizationSetSettings({true, {.3f, .85f, 1, 1}});
+    }
     if (selectedTab == 9 || selectedTab == 10) {
         AntiAimSettings antiAim;
         antiAim.enabled = true;
@@ -164,6 +169,31 @@ int wmain(int argc, wchar_t** argv) {
         if (selectedTab == 11 || selectedTab == 12)
             ScopedCrosshairDraw({true, .0005f, selectedTab == 12 ? .04f : .001f, 1},
                 io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);
+        else if (selectedTab == 17) {
+            auto* draw = ImGui::GetBackgroundDrawList();
+            draw->AddText({24,24}, IM_COL32(225,230,240,255), "RAGEBOT VISUALIZATION / SYNTHETIC DAMAGE-PATH CENTERS");
+            draw->AddText({24,48}, IM_COL32(150,165,180,255), "Damage-path candidates before hitchance and firing timing");
+            EspPlayerSnapshot actors[2]{};
+            actors[0].handle = 1; actors[0].health = 100; actors[0].team = 2; actors[0].localPlayer = true;
+            actors[1].handle = 2; actors[1].health = 100; actors[1].team = 3;
+            EspFrameSnapshot players{}; players.players = actors; players.playerCount = 2; players.localTeam = 2;
+            players.valid = players.matrixValid = true;
+            players.worldToClip.m[0][0] = players.worldToClip.m[1][1] = players.worldToClip.m[3][3] = 1;
+            AimVisualizationFrame points{}; points.localPawn = 1;
+            const EspVec3 centers[]{{0,.60f,0},{0,.35f,0},{0,.15f,0},{0,-.05f,0},
+                {-.18f,.3f,0},{.18f,.3f,0},{-.25f,.10f,0},{.25f,.10f,0},
+                {-.3f,-.1f,0},{.3f,-.1f,0},{-.1f,-.3f,0},{.1f,-.3f,0},{-.12f,-.55f,0},{.12f,-.55f,0}};
+            const auto screen = [&](float x, float y) { return ImVec2{(1+x)*io.DisplaySize.x*.5f,(1-y)*io.DisplaySize.y*.5f}; };
+            const auto body = IM_COL32(45,70,100,255);
+            draw->AddCircleFilled(screen(0,.60f), io.DisplaySize.y*.055f, body, 32);
+            draw->AddLine(screen(0,.4f),screen(0,-.1f),body,io.DisplaySize.x*.14f);
+            for (float side : {-1.0f,1.0f}) {
+                draw->AddLine(screen(side*.14f,.35f),screen(side*.3f,-.1f),body,io.DisplaySize.x*.045f);
+                draw->AddLine(screen(side*.08f,-.05f),screen(side*.12f,-.62f),body,io.DisplaySize.x*.055f);
+            }
+            for (const auto& center : centers) points.points[points.count++] = {center,2};
+            AimVisualizationDraw(points, players, io.DisplaySize.x, io.DisplaySize.y, {true,{.3f,.85f,1,1}});
+        }
         else if (selectedTab == 16) {
             // Synthetic copied footprints, rendered by the production aura path.
             // This checks drawing only, without claiming native gameplay output.

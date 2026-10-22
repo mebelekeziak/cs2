@@ -1,5 +1,38 @@
 # Player chams native ownership and packet contracts
 
+## Static recertification, October 21, 2026
+
+Current installed Windows AMD64 client: patch `1.41.9.1`, client/server
+`2000934`, Source revision `11150591`, Steam build `26087496`; version date
+October 20, 2026, 11:41:22. The installation path below is unchanged.
+`client.dll` SHA-256 is now
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+timestamp changed `0x6AD01314` -> `0x6AD7B41C`; image size stays `0x299D000`.
+The full scene/material/tier0 identities and eight shader/texture assets remain
+unchanged. The shared ESP verifier supplies the new strict client pin.
+
+All three client scene-ownership instruction windows and all 20 scene windows
+match exactly. Named descriptor lookup, RTTI-derived generation vtable/slot,
+owner-handle reconstruction, skeleton-interface association, packet layout,
+material ABI and complete sort-order evidence retain their existing values.
+The material verifier also passes all frozen native windows and assets; see
+[material recertification](CS2_PLAYER_CHAMS_MATERIAL_EVIDENCE.md).
+`player_chams_offsets.h` requires no changes. The callback's four-argument ABI,
+native-first generation, per-callback borrowed-pointer lifetime, and cooperative
+resident-stop guarantees remain as documented below.
+
+The full contract bodies passed in scratch research before changing pins:
+`logs/research/26087496/render_grenade/initial-contract-checks.json`.
+`python tools/verify_player_chams.py` subsequently passes normally. Four wrong
+header copies (owner member, descriptor vtable, packet stride, entry bytes) and
+a readable workspace client copy with one changed byte all reject. Details are
+in `verification-and-negative.json` in that directory. Build/CTest results are
+owned by the integrating update. No client/server was launched or opened;
+actual player appearance, animation and occluded rendering were not observed
+on this build.
+
+## Historical October 18 baseline
+
 Read-only installed-file investigation, October 18, 2026. Windows AMD64 CS2
 client 1.41.9.1, Microsoft x64 ABI, existing D3D11 overlay. No game process or
 server was started. Installed game files were only read. Run

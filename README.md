@@ -11,6 +11,76 @@ reports under `logs/compatibility/`:
 python tools/check_compatibility.py
 ```
 
+**CS2 update, October 21, 2026:** compatibility is recertified for installed
+patch **1.41.9.1**, client/server **2000934**, Steam build **26087496**. All
+**27/27 installed-file checks pass**. No consumed runtime addresses, layouts or
+hook fingerprints changed. Updated exact build identities and three scope
+consumer verification windows whose native data references moved. Public and
+diagnostic x64 Release builds succeed without project warnings; both pass
+**56/56 CTest suites**. Both DLLs retain zero static TLS/delay imports. See the
+[update record](docs/CS2_UPDATE_26087496.md) for evidence and validation. No
+client/server was launched; live behavior on this build remains unobserved.
+Use the existing **Load Overlay.cmd** workflow, restarting CS2 normally first
+if an older DLL is resident. Stopped and resident is not physically unloaded.
+
+## Visualize ragebot
+
+Under **Aim**, enable **Visualize ragebot** and choose **Point color**, including
+opacity. The option starts disabled with white points and saves in local
+configs as `aim.visualize` and `aim.visualize_color.0` through `.3`. Older
+presets restore these defaults.
+
+Small outlined dots show the **damage-path scan**, before hitchance and firing
+timing: a selected hitbox center must be in aim FOV/range, have a valid bullet
+path and meet minimum predicted damage. With **Autowall** enabled, penetrable
+cover uses the existing native penetration/damage checks. Blocked or insufficient
+damage points stay hidden. Reachable points can appear while moving, below
+hitchance, braking, or waiting for weapon cooldown. They indicate potential
+damage, not permission to fire this command. All markers use one chosen color;
+multipoints are not added. Points work with chams and ESP disabled.
+
+The visualization shares the command-owner target enumeration and weapon sample.
+It checks copied candidates for damage before shot-ranking shortcuts, including
+lower-ranked alternatives. This adds path/damage work while enabled; both
+shot-ranking shortcuts and final shot rechecks remain in place. The preview
+does not synthesize attack, change angles or acquire quickstop movement.
+
+Enable **Silent aim** alongside visualization. Damage scans run before a shot
+with **Autofire** either on or off, and continue during cooldown with a supported
+loaded weapon. Preview-only commands skip hitchance sampling. The actual
+autofire/manual-shot gates retain their existing behavior. Empty clips,
+unavailable weapon data, empty scans, focus loss, local pawn replacement/death,
+visualization disable and cooperative stop clear or hide the points. Copied
+centers expire after 100 ms if callbacks stop; rendering also checks current
+serialized player handles and hides snapshots made with different shot settings.
+No native pointers cross into the point renderer.
+
+Use the existing build and **Load Overlay.cmd** workflow. Restart CS2 normally
+before loading the rebuilt DLL if an older copy is resident: **stopped and
+resident is not physically unloaded**. Software D3D11 previews, without CS2:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\aim-visualization-menu.bmp 4
+.\build\Release\public_menu_preview.exe .\logs\aim-visualization-points.bmp 17 0 1000 600
+```
+
+The point preview uses a synthetic silhouette and copied centers; it checks
+the production point renderer, not live game appearance.
+
+The standalone preview supplies synthetic damage-path centers directly to the
+draw path. Integrated pipeline fixtures separately verify path filtering and
+visibility before firing. The reference investigation and the distinction from
+shot readiness are recorded in [visualization notes](docs/AIM_VISUALIZATION.md).
+
+**Verification, October 20, 2026:** public and diagnostic x64 Release builds
+succeed without project warnings and each pass **56/56 CTest suites**. The aim
+pipeline passes 299 checks, including visibility before manual trigger input,
+below hitchance, during quickstop/cooldown, and unchanged input/attack ownership.
+Blocked, insufficient-damage, empty-clip and stale candidates are covered. The
+visualization suite passes 23 checks; RGBA/config tests and software D3D11
+previews pass. Both DLLs retain zero static TLS/delay imports. No CS2 client or
+server was launched; live point appearance remains unobserved.
+
 ## Ragebot autowall
 
 Under **Aim**, enable **Autowall** alongside **Autofire** to allow shots through
@@ -1424,20 +1494,48 @@ isolate jumping. Logs identify `MOVE_IMPLEMENTATION revision=9`, and
 `MOVE_REPLAY` includes `clock_corrections` with the current/prior command clocks.
 See [movement evidence](tools/CS2_MOVEMENT_EVIDENCE.md#october-16-revision-9-prediction-correction-fix).
 
-Autostrafe uses full normalized input and eight timed direction updates per air
-command. Each fragment spends only its share of that command's acceleration,
-then replans against its predicted velocity. This avoids leaving one wish
-direction capped for the rest of the tick. Near the requested heading it selects
-a maximum-gain impulse; sharper corrections maximize direction capture and can
-sacrifice speed. Intent behind the current velocity applies the available impulse
-directly toward that requested axis, instead of taking a wide half-turn orbit.
-There is no positive-gain requirement during corrections, retained entry-speed
-ceiling or fixed 15-degree heading envelope. Reachable intermediate headings use
-a bounded projection solve. Heading excursions scale with current physics/speed.
-It changes normalized movement and direction buttons without rotating the camera.
-Releasing WASD restores ordinary axes before integration and leaves coasting alone.
-The first ground slice restores physical WASD axes after assisted air movement;
-ground movement otherwise stays under ordinary game input control.
+**October 22, revision 10: Axion autostrafe port.** Autostrafe now uses the
+MIT-licensed Axion steering algorithm: `atan2(15, horizontal speed)` with a
+45-degree clamp, velocity-yaw correction above speed 80, and command-sequence
+parity to alternate near the requested heading. Smoothing is now **50**, giving
+correction `2 * ideal angle` (the initial port used Axion's default 99, or
+`0.04 * ideal angle`). At speed 250 that changes correction from about 0.137
+degrees to 6.867 degrees. Larger corrections steer more aggressively and can
+spend more momentum during a turn. The threshold for returning to alternating
+strafes also widens; movement near an aligned heading keeps the same ideal angle.
+This replaces the previous
+eight-fragment solver with **one full-input wish per command**, emitted at time
+zero through the existing analog transition path. It follows Axion's turning
+behavior, including its wide-turn correction for behind-velocity intent; it no
+longer applies the prior solver's direct reversal braking.
+
+The port fixes Axion's W-only early return, uses our physical WASD arbitration
+and positive-left input convention, and avoids its hardcoded command ring and
+retained static keys. It changes normalized movement and direction buttons
+without rotating the camera. Rebuilds preserve sequence parity, refresh steering
+from frozen command-start input, and keep the selected jump edge. Releasing WASD
+restores ordinary axes before integration; landing restores physical ground
+input. Replay retains capacity to neutralize retired analog events. The existing
+bunnyhop implementation is unchanged. License and exact source revision are in
+[Axion provenance](third_party/Axion-CS2-RAGE-CHEAT-PROVENANCE.txt) and
+[MIT license](third_party/Axion-CS2-RAGE-CHEAT-LICENSE.txt).
+
+Build and load using the existing commands and **Load Overlay.cmd**. Restart CS2
+normally before loading the rebuilt DLL if an older copy is resident. Logs
+identify `revision=10`, `steering=axion_wasd`, `smooth=50`, `subticks=command1`.
+Stopped and resident is not physically unloaded. Standalone verification does
+not establish whether this port feels better in actual offline/private gameplay.
+
+**Initial port verification, October 22 (smoothing 99):** public and diagnostic x64 Release builds succeed;
+both pass **56/56 CTest suites**, including Axion angle/branch fixtures,
+independent analog-physics integration, directional trajectories and replay/
+handoff regressions. Installed movement contracts pass. Both DLLs retain zero
+static TLS and delay imports. No client or server was launched.
+
+**Smoothing-50 verification, October 22:** rebuilt both public and diagnostic
+Release DLLs; all six movement, jump, steering, benchmark, memory and replay
+CTest suites pass in each build. Updated correction fixtures match the new
+setting. No game was launched; live feel at 50 remains unverified.
 
 Air acceleration, air wish-speed cap, surface friction, effective server/weapon
 speed limit, surface speed factor, stamina, jump cooldown and engine tick quantum come from the current engine
@@ -1750,17 +1848,18 @@ Computer UI control was stopped with Escape; the active DLL is independent of it
 
 Client: `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe`.
 
-On October 15, 2026, `game/csgo/steam.inf` reports patch **1.41.9.1**,
-client/server **2000932**, source revision **11131657**, version date October 14,
-2026. Steam appmanifest build ID: **25947352**. Steam's UpToDateCheck API reports
-client version 2000932 as current. Executable SHA-256:
+On October 21, 2026, `game/csgo/steam.inf` reports patch **1.41.9.1**,
+client/server **2000934**, source revision **11150591**, version date October 20,
+2026, 11:41:22. Steam appmanifest build ID: **26087496**. Steam's UpToDateCheck API
+reports client version 2000934 as current. Executable SHA-256:
 `8614097AAA2761B0A7157C0045861713E769FB1E8235F50FC68F411294DD60CF`;
 client DLL SHA-256:
-`659940C1DB362ED981D1DF10637CEC8C2A3D99409B77FC3B73E435E4649E36B0`.
+`5A46A09B521BBD607012146364DAFAE2ABFA50364246638391990D4C7DFB9D49`.
 Installation hashes and the API response are recorded in
-`logs/compat-installation-20261015.json` and `logs/compat-steam-version-20261015.json`.
+`logs/compatibility/26087496-final/summary.json` and
+`logs/research/26087496/core/steam-current.json`.
 
-Both D3D11 and Vulkan renderers exist. The launched client (PID 5980) loaded `rendersystemdx11.dll`, `d3d11.dll`, `dxgi.dll`, and the game-local `D3DCOMPILER_47.dll`. This establishes D3D11 for that run. Live graphics objects are verified in DLL callbacks rather than inferred from installed DLL names. Loaded MSVC runtime modules included VCRUNTIME140 version 14.51.36247.0 and Windows UCRT; this does not identify the compiler used to build all game modules.
+Both D3D11 and Vulkan renderers exist. Historically, the launched client (PID 5980) loaded `rendersystemdx11.dll`, `d3d11.dll`, `dxgi.dll`, and the game-local `D3DCOMPILER_47.dll`. This establishes D3D11 for that run. Live graphics objects are verified in DLL callbacks rather than inferred from installed DLL names. Loaded MSVC runtime modules included VCRUNTIME140 version 14.51.36247.0 and Windows UCRT; this does not identify the compiler used to build all game modules. This update made no fresh runtime/graphics observation.
 
 The October 15 executable/client/engine/D3D11 PE inventory also confirms AMD64
 PE32+ (`logs/compat-pe-20261015.json`). The user's latest PID 26684 log records

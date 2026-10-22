@@ -1,4 +1,5 @@
 #include "public_menu.h"
+#include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
 #include "silent_aim_settings.h"
@@ -701,6 +702,28 @@ int main() {
     Expect(Body() && std::strstr(Body()->Name, "##AimSettings") && !SilentAimGetSettings().enabled,
            "Aim tab opens with silent aim disabled");
     Expect(!AntiAimGetSettings().enabled, "Aim tab opens with anti aim disabled");
+    ClickControl("Visualize ragebot");
+    Expect(AimVisualizationGetSettings().enabled && !SilentAimGetSettings().enabled,
+        "visualization toggle responds independently without enabling aim");
+    const auto aimBeforeColor = SilentAimGetSettings();
+    ClickControl("point color swatch", .5f, Body(), ImHashStr("##ColorButton", 0, Body()->GetID("##AimPointColor")));
+    auto& pointContext = *ImGui::GetCurrentContext();
+    const bool pointPickerOpen = !pointContext.OpenPopupStack.empty() && pointContext.OpenPopupStack.back().Window;
+    Expect(pointPickerOpen, "visualization color swatch opens RGBA picker");
+    if (pointPickerOpen) {
+        auto* popup = pointContext.OpenPopupStack.back().Window;
+        const auto picker = popup->GetID("##picker");
+        const auto sv = ControlRect("point saturation/value", popup, ImHashStr("sv", 0, picker));
+        Click({sv.Min.x + sv.GetWidth()*.7f, sv.Min.y + sv.GetHeight()*.3f});
+        const auto alpha = ControlRect("point alpha", popup, ImHashStr("alpha", 0, picker));
+        Click({alpha.GetCenter().x, alpha.Min.y + alpha.GetHeight()*.75f});
+        const auto edited = AimVisualizationGetSettings();
+        Expect(edited.color[0] != 1 && edited.color[3] > .15f && edited.color[3] < .35f &&
+            SilentAimGetSettings() == aimBeforeColor, "RGBA picker customizes points without changing aim behavior");
+        Click({Menu()->Pos.x + 5, Menu()->Pos.y + 5});
+    }
+    ClickControl("Visualize ragebot");
+    Expect(!AimVisualizationGetSettings().enabled, "visualization toggle can be disabled");
     Expect(!ConsoleControlOnlyOwn(), "native console filtering starts disabled");
     ConsoleControlSetAvailable(true);
     ClickControl("Our logs only");

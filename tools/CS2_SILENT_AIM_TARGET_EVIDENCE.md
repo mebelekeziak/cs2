@@ -1,5 +1,33 @@
 # Basic aim target acquisition evidence
 
+## October 21, 2026 recertification — client 2000934
+
+Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
+Source revision `11150591`, Steam build `26087496`. The installed path below
+is unchanged. New client SHA-256:
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`.
+
+The separate scratch investigation
+`logs/research/26087496/aim_targets/recheck.py` ran the complete schema, eight
+instruction-window, decoded view-offset/transform and source-header checks
+against the new image before changing build pins. All pass unchanged:
+`m_vecViewOffset` remains `0xF60`, the named class template/array and native
+eye/handle consumers retain their previous RVAs and bytes. Contiguous float3,
+scene rotation/scale, origin sum and full serialized handle contracts therefore
+retain the evidence below. No new eye getter or engine call is introduced.
+
+Final frozen command `python tools/inspect_silent_aim_targets.py` passes;
+full output is `logs/research/26087496/aim_targets/inspect_silent_aim_targets.json`.
+
+`negative.py` in that research directory rejects a temporary header with
+`ViewOffset=0xF64`. The frozen verifier continues to import the strict client
+hash pin from `inspect_cs2.py`. This recertification is installed-file evidence
+only; no CS2 process, server, live target or shot was observed. Earlier build
+identities and live observations below are historical.
+
+## Historical investigation — client 2000932
+
 This concerns the installed Windows AMD64 **client**, patch **1.41.9.1**,
 client/server **2000932**, Steam build **25947352**, inspected October 15, 2026.
 Installed client path:

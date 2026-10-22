@@ -1,5 +1,45 @@
 # Basic silent aim: installed-client evidence
 
+## Static recertification — October 21, 2026
+
+Target: Windows AMD64 client at
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
+Installed metadata: patch **1.41.9.1**, client/server **2000934**, Steam build
+**26087496**, Source revision **11150591**, version date October 20, 2026,
+11:41:22. Client SHA-256:
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+PE timestamp **0x6AD7B41C**, SizeOfImage **0x299D000**, machine **0x8664**.
+The prior client SHA-256 was
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,
+timestamp `0x6AD01314`. The patch changed that identity; the contracts below
+were checked independently before updating the frozen hash/timestamp.
+
+All **25** frozen history/shot instruction windows match at their original RVAs.
+The constructor, input RTTI and slot-25 target, before/after-finalizer ordering,
+producer/consumer field operands, native primary-attack enum and protobuf
+field descriptors were checked again. **No source address, member, presence
+mask, runtime fingerprint or argument/ownership contract changed**. Input stays
+`0x257B640`, InputVtable `0x1C9DB20`, HistoryBuilder `0xD02130`; arena-owned
+history and synchronous callback scope retain their existing contracts.
+
+Verification: `python tools/inspect_silent_aim.py`. Rejected header changes:
+`Input`, `command::HistorySize`, `HistoryBuilderBytes`.
+
+Research is retained under `logs/research/26087496/movement_input/`:
+`contract_recheck.json` records every original exact instruction window, native
+body hash and decoded result before freezing; `silent_aim.json` records the updated
+verifier run. The frozen verifier continues to reject every unfamiliar hash.
+Three temporary header copies for this component independently changed a global,
+a member/layout field and a runtime entry fingerprint; all were rejected.
+`negative_headers.json` contains the nine results across these three components.
+
+No CS2 process was launched/opened, no server was contacted and no installed
+file was changed. This is static contract evidence; current gameplay, movement
+and camera behavior remain unobserved. Build/CTest results are recorded in the
+main update handoff. Earlier dated evidence below describes its original build;
+its unchanged contract details remain applicable where rechecked here.
+
+
 Static investigation on October 15, 2026. Installed client is AMD64,
 `game/csgo/bin/win64/client.dll`, patch 1.41.9.1, client/server 2000932,
 PE timestamp `0x6AD01314`, image size `0x299D000`, SHA256

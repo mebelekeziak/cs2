@@ -1,8 +1,9 @@
 # Updating CS2 compatibility
 
 Start here after a game update. This project targets the Windows AMD64 **client**
-and its D3D11 overlay. Current verified baseline: **1.41.9.1 / client 2000933 /
-Steam build 25966348**, checked October 18, 2026.
+and its D3D11 overlay. Current verified baseline: **1.41.9.1 / client 2000934 /
+Steam build 26087496**, checked October 21, 2026. See the
+[update record](CS2_UPDATE_26087496.md) for evidence and observation limits.
 
 Use the [address index](RE_ADDRESS_INDEX.md) to find a symbol's module, meaning,
 rediscovery anchor, owning header and verifier. Headers are the executable source
@@ -157,7 +158,7 @@ ctest --test-dir build-diagnostic -C Release --output-on-failure
 ```
 
 For first-time configuration, see the [README build instructions](../README.md).
-The current baseline has 47 CTest suites per variant. Passing these tests does
+The current baseline has 56 CTest suites per variant. Passing these tests does
 not certify a new binary or a successful hop/rendered player.
 
 Use a fresh normal client process and the documented launcher. Loading at the

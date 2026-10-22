@@ -1,5 +1,35 @@
 # Installed smoke and flash rendering evidence
 
+## Static recertification, October 21, 2026
+
+The unchanged client path below now contains Windows AMD64 patch `1.41.9.1`,
+client/server `2000934`, Source revision `11150591`, Steam build `26087496`.
+Version date is October 20, 2026, 11:41:22. SHA-256 changed to
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+PE timestamp changed `0x6AD01314` -> `0x6AD7B41C`, with the same `0x299D000`
+image size. Runtime uses the shared `cs2_offsets.h` build identity. The removal
+header needs no address or byte-array changes; the verifier's strict client
+hash pin was updated only after its full contract body passed on the new image.
+
+All five complete frozen rendering windows retain their exact hashes. RTTI
+still derives smoke descriptor `0x1CA82E8`, slot 1 still targets `0xD20410`, and
+both mask/normal dispatches match. The opacity call, return ABI and native
+publication match; both flash keys, alpha operands, writer calls and return
+sites match. Every consumed RVA, key and entry byte remains unchanged. The
+seven-argument smoke ABI, float opacity return, synchronous float4-copy
+ownership and cooperative resident-stop behavior documented below are retained.
+
+The pre-edit research result is
+`logs/research/26087496/render_grenade/initial-contract-checks.json`.
+`python tools/inspect_grenade_effects.py` passes with the new pin. Four altered
+headers (draw RVA, flash key, opacity return and draw fingerprint) reject, and
+a workspace client copy with one changed byte rejects at the full-hash check.
+See `verification-and-negative.json` in that directory. Builds/CTest are
+reported by the integrating update. No process was launched or opened; live
+smoke/flash appearance on this build remains unobserved.
+
+## Historical October 20 baseline
+
 Investigated October 20, 2026 from the local AMD64 PE32+ client:
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
 SHA-256 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,

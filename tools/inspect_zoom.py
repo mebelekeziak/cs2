@@ -11,7 +11,7 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
+EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
 SCHEMA = {
     'CBasePlayerController': (0x2223A38, 0x2223800, 17, {'m_iDesiredFOV': 0x794}),
     'C_BasePlayerPawn': (0x21F4588, 0x21F41F0, 28, {'m_pWeaponServices': 0x12F0,

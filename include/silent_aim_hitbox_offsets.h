@@ -2,7 +2,8 @@
 
 #include <cstddef>
 
-// Installed 1.41.9.1 AMD64 client; dynamic named animated bone landmarks.
+// Installed 1.41.9.1 / 2000934 AMD64 client, recertified October 21, 2026.
+// Dynamic named animated bone landmarks.
 // No fixed bone indices or authored hitbox-volume centers are assumed.
 // tools/inspect_silent_aim_hitboxes.py checks all constants and fingerprints.
 namespace silent_aim_hitbox_offsets {

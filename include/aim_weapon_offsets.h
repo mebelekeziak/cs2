@@ -2,7 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed AMD64 client contracts; see tools/CS2_AIM_WEAPON_EVIDENCE.md.
+// Installed AMD64 client 2000934, recertified October 21, 2026.
+// Contracts: tools/CS2_AIM_WEAPON_EVIDENCE.md.
 namespace aim_weapon_offsets {
 inline constexpr std::ptrdiff_t Spread = 0x80D490;
 inline constexpr std::ptrdiff_t Inaccuracy = 0x80C1A0;

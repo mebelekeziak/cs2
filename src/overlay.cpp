@@ -27,6 +27,7 @@
 #include "grenade_effects.h"
 #include "movement.h"
 #include "silent_aim.h"
+#include "aim_visualization.h"
 #include "aim_console.h"
 #include "console_control.h"
 #include "shot_log_settings.h"
@@ -562,6 +563,10 @@ void DrawFrame(IDXGISwapChain* chain) {
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
     GrenadeVisualsDraw(players.worldToClip, players.matrixValid, io.DisplaySize.x, io.DisplaySize.y);
+    const auto aimSettings = SilentAimGetSettings();
+    if (foreground && aimSettings.enabled)
+        AimVisualizationDraw(AimVisualizationCapture(GetTickCount64(), &aimSettings), players,
+            io.DisplaySize.x, io.DisplaySize.y, AimVisualizationGetSettings());
     const auto crosshair = ScopedCrosshairCaptureForDraw();
     ScopedCrosshairDraw({foreground && crosshair.visible, crosshair.spread, crosshair.inaccuracy, crosshair.sourceKey},
         io.DisplaySize.x, io.DisplaySize.y, io.DeltaTime);

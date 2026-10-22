@@ -1,5 +1,30 @@
 # Authored capsule geometry and sampled hitchance
 
+## October 21, 2026 recertification — client 2000934
+
+Installed Windows AMD64 client `1.41.9.1` / `2000934`, Source revision
+`11150591`, Steam build `26087496`; SHA-256
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`, at the same installed path
+below. Scratch `logs/research/26087496/aim_targets/recheck.py` re-runs all nine
+native code windows, client skeleton/model schema, animation CHitBox/CHitBoxSet
+schema, decoded operand and source-header checks before refreshing build pins.
+Every consumed RVA, field, stride, transform flag and capsule shape remains
+unchanged. `animationsystem.dll` and the SAS authored asset retain their exact
+hashes recorded below. Cached pose ownership, unit-scale requirement and capsule
+endpoint/radius interpretation therefore retain the existing evidence.
+
+Final frozen command `python tools/inspect_aim_geometry.py` passes; full output
+is `logs/research/26087496/aim_targets/inspect_aim_geometry.json`.
+
+Research `negative.py` rejects temporary headers with wrong `HitboxSet`,
+`BoxStride` and `Radius`. The frozen verifier keeps strict client, animation and
+asset hashes, with the shared client pin supplied by `inspect_cs2.py`. This is
+static file verification only: no native resource method, client/server run,
+live capsule or shot was observed. Older build details below are historical.
+
+## Historical implementation evidence
+
 The October 20 [multi-hitgroup extension](CS2_AIM_MULTIHITGROUP_EVIDENCE.md)
 reuses these resource/pose contracts for verified torso and bilateral limb
 names. The historical `spine_2` lower-torso landmark below is chest group 2;

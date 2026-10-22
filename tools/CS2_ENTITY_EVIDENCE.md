@@ -1,5 +1,32 @@
 # Installed-client entity layout evidence
 
+## Current recertification, October 21, 2026
+
+Installed Windows AMD64 PE32+ client: patch `1.41.9.1`, client/server
+`2000934`, Source revision `11150591`, Steam build `26087496`, version date
+October 20, 2026, 11:41:22. `client.dll` SHA-256 is
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`. Installation remains the
+Steam game path below. The previous timestamp was `0x6AD01314`.
+
+Before changing frozen pins, `logs/research/26087496/core/investigate.py`
+executed the existing static decoder against the new installed file. All
+eleven exact machine windows, nine class registration templates, named fields,
+global RIP-relative operands and entity-table layout matched at their original
+RVAs. `entity-contracts.json` records the independently decoded values. All
+consumed globals, schema members, handle layout and ownership relationships
+remain unchanged. Only the shared header's PE timestamp and verifier SHA-256
+pin changed; unrelated source changes were preserved.
+
+`python tools/inspect_cs2.py` verifies the real header. Four alternate headers
+with a wrong matrix global, health member, identity stride or old timestamp
+are rejected (`logs/research/26087496/core/negative.json`). Unknown binary
+hashes still reject before offsets are trusted. No client process was opened,
+launched or injected; ESP appearance on this build remains unobserved. Combined
+verification/build results are recorded in `docs/CS2_UPDATE_26087496.md`.
+
+## Historical baseline
+
 ## Current static recertification, October 15, 2026
 
 This concerns the Windows AMD64 CS2 client. The installed game now reports patch

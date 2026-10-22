@@ -1,5 +1,30 @@
 # Native primary-request integration
 
+## Current static recertification, October 21, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
+Steam build `26087496`, Source revision `11150591`, version date October 20,
+2026, 11:41:22. The installation/executable remain unchanged. Client SHA-256 is
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, SizeOfImage `0x299D000`.
+
+Before editing the frozen verifier, a scratch module changed only its build
+identity and reran all twenty-seven existing instruction/data checks, named
+`IN_ATTACK` enumeration, independently decoded source constants, sparse angle
+presence, native default object and allocation/clear relationships. All passed.
+An independent audit confirmed all frozen bytes unchanged, and Capstone 5.0.9
+disassembly plus decoded `0xD02171 -> 0xD055C0` recorder call are retained in
+`logs/research/26087496/aim_ballistics/`. Recorder ABI, event/history layouts,
+native ownership, sparse angle lifecycle, RVAs and entry fingerprint are unchanged.
+
+Only the frozen client hash/PE timestamp pins change. Unknown binary hashes
+remain rejected. `python tools/inspect_autofire.py` passes. Temporary changes to
+`RecordHistory`, `InputEvents`, `BaseAnglesPresent` and `RecordHistoryBytes`
+each fail for their specific source mismatch; see the sixteen-case shared
+negative report in the research directory. No client/server was launched or
+opened, and no installed file changed. Actual shot publication on this build
+remains unobserved. Earlier dated sections below retain historical evidence.
+
 Static investigation, October 16, 2026. Target: the installed AMD64 CS2 client
 at `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
 Patch 1.41.9.1, PE timestamp `0x6AD01314`, image size `0x299D000`, SHA256

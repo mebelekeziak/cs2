@@ -1,4 +1,5 @@
 #include "silent_aim.h"
+#include "aim_visualization.h"
 #include "menu_input.h"
 #include "silent_aim_command.h"
 #include "silent_aim_settings.h"
@@ -40,6 +41,7 @@ std::vector<bool> quickstopBrakes;
 std::vector<void*> quickstopCommands;
 std::uint32_t selectedPawnHandle = 0x8004, localPawnHandle = 0x8003;
 unsigned traceCalls = 0;
+unsigned changeOnTraceCall = 0;
 bool multipleTargets = false, reverseCandidates = false;
 int rejectedCandidate = 0; // 1 cover, 2 range/chance, 3 missing geometry.
 unsigned weaponReads = 0;
@@ -191,6 +193,7 @@ struct World {
         weaponAvailable = weaponCurrent = checksumAvailable = true;
         badHistory = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
+        changeOnTraceCall = 0;
         penetrationClear = true; penetrationChange = false; penetrationCalls = 0;
         multipleTargets = reverseCandidates = false; rejectedCandidate = 0; weaponReads = 0;
         selectionCalls = volumeReads = 0;
@@ -858,7 +861,7 @@ bool AimDamageStillCurrent(const AimDamageContext&, const AimSource&, const AimT
 bool AimOcclusionPrepare(std::uintptr_t client, AimOcclusionContext& context) noexcept { context = {client, true}; return true; }
 AimOcclusionResult AimOcclusionCheck(const AimOcclusionContext&, const AimSource&, const AimTarget& target, const AimTargetVolume&) noexcept {
     ++traceCalls;
-    if (changeDuringTrace) weaponCurrent = false;
+    if (changeDuringTrace || (changeOnTraceCall && traceCalls == changeOnTraceCall)) weaponCurrent = false;
     if (damageChangeDuringTrace) damageCurrent = false;
     if (healthChangeDuringTrace) targetHealth = 40;
     const int group = target.hitbox == AimHitbox::Head ? 0 : 1;
@@ -1221,6 +1224,141 @@ void MenuCaptureChecks(World& world) {
         "closing menu restores automatic command processing without changing feature settings");
 }
 
+void VisualizationChecks(World& world) {
+    for (int rejection = 0; rejection < 15; ++rejection) {
+        world.Reset();
+        AimVisualizationSetSettings({true, {.2f, .7f, 1, .9f}});
+        if (rejection == 0) weapon.range = 50;
+        if (rejection == 1) pathClear = false;
+        if (rejection == 2) predictedHp = 0;
+        if (rejection == 3) changeDuringTrace = true;
+        if (rejection == 4) {
+            performanceEnemies = 5; targetHealth = 1;
+            auto settings = SilentAimGetSettings(); settings.hitgroups = AimAllHitgroups; settings.fov = 180;
+            SilentAimSetSettings(settings);
+        }
+        if (rejection == 5) weapon.ready = false;
+        if (rejection == 6) {
+            auto settings = SilentAimGetSettings(); settings.hitgroups = 0; SilentAimSetSettings(settings);
+        }
+        if (rejection == 7) selectAvailable = false;
+        if (rejection == 8) volumeAvailable = false;
+        if (rejection == 9) weaponAvailable = false;
+        if (rejection == 10) damageAvailable = false;
+        if (rejection == 11) pathAvailable = false;
+        if (rejection == 12) SilentAimActivate(false);
+        if (rejection == 13) weapon.clip = 0;
+        if (rejection == 14) weapon.inaccuracy = .2f;
+        Command command;
+        world.Prepare(command);
+        const auto frame = AimVisualizationCapture(GetTickCount64());
+        Expect(frame.count == (rejection == 4 ? 30u : rejection == 5 || rejection == 12 || rejection == 14 ? 1u : 0u),
+            "damage-path markers ignore cooldown/hitchance/fire contract but respect path/data/range; case " + std::to_string(rejection));
+        if (frame.count) Expect(frame.points[0].center.x == 100,
+            "eligible visualization uses authored capsule centers even for lower-ranked alternatives");
+    }
+    for (bool reversed : {false, true}) for (int mixed = 0; mixed < 10; ++mixed) {
+        world.Reset(); multiHitgroups = true; reverseHitgroups = reversed;
+        AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings();
+        settings.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest);
+        if (mixed == 0 || mixed == 5 || mixed == 6) coveredGroup = 0;
+        if (mixed == 1) settings.minDamage = 70;
+        if (mixed == 2) { weapon.inaccuracy = .1f; groupRadius = {1, 20}; settings.hitchance = 70; }
+        if (mixed == 3) unavailableGroup = 0;
+        if (mixed == 5 || mixed == 6) settings.autowall = true;
+        if (mixed == 6) penetrationClear = false;
+        if (mixed == 7) settings.minDamage = 100;
+        if (mixed == 8) settings.fov = 7;
+        if (mixed == 9) settings.hitgroups = AimHitgroupBit(AimHitgroup::Head);
+        SilentAimSetSettings(settings);
+        Command command; world.Prepare(command);
+        const auto frame = AimVisualizationCapture(GetTickCount64(), &settings);
+        const std::size_t expected = mixed == 2 || mixed == 4 || mixed == 5 ? 2 : mixed == 7 ? 0 : 1;
+        Expect(frame.count == expected, "only damage-path hitboxes on a mixed target appear before hitchance; case " +
+            std::to_string(mixed) + " reversed=" + std::to_string(reversed));
+        if (frame.count == 1) Expect(frame.points[0].center.y ==
+            (mixed == 1 || mixed == 8 || mixed == 9 ? 10.0f : 20.0f),
+            "marker belongs to the eligible hitbox, not every hitbox on its target");
+    }
+    world.Reset(); AimVisualizationSetSettings({true});
+    auto brakingSettings = SilentAimGetSettings(); brakingSettings.quickstop = true;
+    SilentAimSetSettings(brakingSettings); weapon.inaccuracy = .2f;
+    Command braking; world.Prepare(braking);
+    Expect(LastBrake(true) && recorderCalls == 0 && AimVisualizationCapture(GetTickCount64()).count == 1,
+        "reachable quickstop point is visible while braking before accuracy permits a shot");
+    world.Reset(); multiHitgroups = true; AimVisualizationSetSettings({true});
+    auto changedSettings = SilentAimGetSettings(); changedSettings.hitgroups = AimAllHitgroups;
+    SilentAimSetSettings(changedSettings); changeOnTraceCall = 2;
+    Command changedDuringAlternatives; world.Prepare(changedDuringAlternatives);
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 0,
+        "weapon change while checking alternatives invalidates earlier eligible points");
+
+    // Collecting alternatives must preserve the shot the ordinary scan chooses.
+    int baselineGroup = 0; float baselineChance = 0;
+    for (bool enabled : {false, true}) {
+        world.Reset(); multiHitgroups = true;
+        AimVisualizationSetSettings({enabled});
+        auto settings = SilentAimGetSettings(); settings.hitgroups = AimAllHitgroups;
+        SilentAimSetSettings(settings);
+        Command command; world.Prepare(command); world.History(command);
+        Expect(shotMetadata.size() == 1, "visualization preserves automatic publication");
+        if (shotMetadata.size() == 1) {
+            if (!enabled) { baselineGroup = shotMetadata[0].predictedHitgroup; baselineChance = shotMetadata[0].hitchance; }
+            else Expect(shotMetadata[0].predictedHitgroup == baselineGroup && shotMetadata[0].hitchance == baselineChance,
+                "collecting eligible alternative points preserves winner and hitchance");
+        }
+    }
+    world.Reset(); AimVisualizationSetSettings({true});
+    Command first; world.Prepare(first);
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 1, "eligible pre-fire scan publishes a center");
+    weapon.ready = false;
+    Command cooldown(38); world.Prepare(cooldown);
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 1 && recorderCalls == 1 && LastBrake(false),
+        "damage-path point remains visible during cooldown without another attack or brake");
+    for (bool ready : {false, true}) {
+        world.Reset(); AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings(); settings.autofire = false;
+        SilentAimSetSettings(settings); weapon.ready = ready; weapon.inaccuracy = .2f;
+        SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+        Command preview;
+        const auto beforeCommand = preview.command;
+        const auto beforeInput = world.InputBytes();
+        world.Prepare(preview);
+        SilentAimFlushTelemetry();
+        bool noChanceEstimates = false;
+        for (const auto& message : telemetry) if (message.find("AIM_PERFORMANCE") != std::string::npos &&
+            message.find("estimates=0 ") != std::string::npos && message.find("spread_patterns=0 ") != std::string::npos)
+            noChanceEstimates = true;
+        Expect(AimVisualizationCapture(GetTickCount64()).count == 1 && recorderCalls == 0 &&
+            checksumCalls == 0 && shotMetadata.empty() && preview.command == beforeCommand && world.InputBytes() == beforeInput &&
+            LastBrake(false) && noChanceEstimates,
+            "manual-mode preview appears before any shot with no command writes, braking or hitchance work; ready=" + std::to_string(ready));
+    }
+    world.Reset(); AimVisualizationSetSettings({true});
+    Command visible; world.Prepare(visible);
+    pathClear = false;
+    Command newlyCovered(38); world.Prepare(newlyCovered);
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 0, "losing the bullet path removes previous eligible markers");
+    world.Reset(); AimVisualizationSetSettings({true});
+    Command next; world.Prepare(next);
+    SilentAimTestForeground(false);
+    Command unfocused(38); world.Prepare(unfocused);
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 0, "focus loss clears previous points");
+    SilentAimTestForeground(true);
+    world.Reset(); AimVisualizationSetSettings({true});
+    Command pending; world.Prepare(pending);
+    AimVisualizationSetSettings({true, {1, .2f, .3f, .7f}});
+    world.History(pending);
+    Expect(shotMetadata.size() == 1 && pending.Index() == 0,
+        "changing visualization color does not cancel a pending shot");
+    world.Reset(); AimVisualizationSetSettings({true});
+    Command active; world.Prepare(active);
+    SilentAimStop("visualization check");
+    Expect(AimVisualizationCapture(GetTickCount64()).count == 0, "cooperative stop clears previous points");
+    AimVisualizationSetSettings({});
+}
+
 int main() {
     World world;
     GateChecks(world);
@@ -1235,6 +1373,7 @@ int main() {
     MultihitgroupChecks(world);
     PerformanceChecks(world);
     MenuCaptureChecks(world);
+    VisualizationChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

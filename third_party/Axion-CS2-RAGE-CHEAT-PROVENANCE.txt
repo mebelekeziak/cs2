@@ -1,0 +1,26 @@
+Axion-CS2-RAGE-CHEAT autostrafe provenance
+
+Upstream: https://github.com/T1GxR/Axion-CS2-RAGE-CHEAT
+Local source: C:\Users\dawid\Desktop\Axion-CS2-RAGE-CHEAT
+Git HEAD: 5e174c1f07b96f5bcaa5c9a09045d0c082325d93
+Files examined: cstrike/features/misc/movement.cpp, cstrike/core/variables.h
+Ported routine: F::MISC::MOVEMENT::AutoStrafe (lines 335-502)
+License: MIT, Copyright (c) 2024 T1GXR; see adjacent LICENSE file.
+Upstream README identifies an Asphyxia base and Pandora-derived features.
+
+Adapted October 22, 2026 into src/movement_steering.cpp:
+- Preserve atan2(15, horizontal speed), 0..45-degree ideal-angle clamp,
+  >80 speed correction branches, >170-degree branch and sequence parity.
+- Initial port preserved default autostrafe_smooth=99 (correction=0.04*ideal).
+  Subsequently tuned to 50 at the user's request (correction=2*ideal).
+- Camera-relative WASD/diagonals use existing physical-key arbitration.
+- Fix the reference W-only zero-offset early return; release remains neutral.
+- Use the supplied command sequence, no global command-ring access or static keys.
+- Convert rotation to the verified native positive-left analog convention.
+- Publish one wish at time zero for the full command, replacing the prior
+  eight-slice steering solver. Retain replay capacity for safe event retirement.
+- Keep live-physics prediction, lifecycle reset and existing ownership/handoff.
+- Do not port reference engine structures, offsets, movement fix, bhop or UI.
+
+This is an adapted algorithm, not a byte-for-byte copy or a claim that the
+reference's full movement implementation works on the installed client.

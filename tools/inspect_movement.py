@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import struct
 
-EXPECTED_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
+EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
 CHECKS = {
     "command_inline_presence": (0xB66117, "488b7c24304885ff74064883c710eb03488bfa834f1001488b4730"),
     "command_viewangles_pointer": (0xCECFB1, "488b4a40488d7a40"),
@@ -337,7 +337,7 @@ def main():
         section = optional + optional_size + index * 40
         rva, size, start = struct.unpack_from("<III", raw, section + 12)
         image[rva:rva + size] = raw[start:start + size]
-    assert (machine, timestamp, image_size) == (0x8664, 0x6AD01314, 0x299D000)
+    assert (machine, timestamp, image_size) == (0x8664, 0x6AD7B41C, 0x299D000)
     for name, (rva, expected) in CHECKS.items():
         want = bytes.fromhex(expected)
         if bytes(image[rva:rva + len(want)]) != want:

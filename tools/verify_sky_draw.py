@@ -91,7 +91,7 @@ def main():
     require_bytes(image, checks)
     client_raw, client, _, client_nt = mapped(args.game / 'csgo/bin/win64/client.dll')
     client_digest = hashlib.sha256(client_raw).hexdigest()
-    if client_digest != '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0':
+    if client_digest != '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49':
         raise SystemExit('Changed client.dll: repeat lighting discriminator investigation.')
     producer_bytes = bytes.fromhex('c780c40000009eee8108')
     producer = client.find(producer_bytes)

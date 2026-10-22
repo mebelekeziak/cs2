@@ -10,7 +10,7 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
+EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
 SCHEMA = {'C_BasePlayerPawn': (35603848, 35602928, 28, {'m_pWeaponServices': 4848}),
  'CPlayer_WeaponServices': (35831240, 35831088, 4, {'m_hActiveWeapon': 96}),
  'CCSPlayer_WeaponServices': (35792008, 35791824, 5, {'m_flNextAttack': 208}),

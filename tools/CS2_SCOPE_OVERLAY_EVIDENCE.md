@@ -1,5 +1,64 @@
 # Native first-person scope overlay
 
+## Build 2000934 recertification — October 21, 2026
+
+Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,
+client/server `2000934`, Steam build `26087496`, Source revision `11150591`.
+`csgo/bin/win64/client.dll` changed from SHA-256
+`659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0` to
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+its PE timestamp changed `0x6AD01314 -> 0x6AD7B41C`, with AMD64 and
+SizeOfImage `0x299D000` unchanged. Installation and executable paths remain
+as documented below. This was file-only investigation: no client/server
+launch, process access, graphics-runtime observation or installed-file change.
+
+All runtime RVAs, fields, return sites and source fingerprints remain unchanged.
+Ten of thirteen complete native windows are byte-identical. Three windows have
+nineteen changed references to native read-only data: three in the legacy scope
+consumer, fourteen in the iron-sight graph and two in sniper stencil setup.
+Each independently compared displacement moved its data target by `+0x20`;
+no blanket function relocation was applied. Replacing only those nineteen
+instruction displacements with the preserved old encodings reproduces **all
+three previous frozen SHA-256 hashes exactly**, proving there are no other
+byte changes in those complete windows.
+
+| Native window | RVA / size | New complete-window SHA-256 |
+| --- | --- | --- |
+| Legacy consumer | `0x11EC870` / `0x453` | `d659a1ca91a26af3cde49ed3e8407b36ffe5c8d40a7038dc518b05a5fad360a6` |
+| Iron-sight graph | `0x11F9940` / `0x10FD` | `96325fbdee288211a00de6eaa45e2e0d339b8bd8df4c379300cffaa328a69959` |
+| Sniper stencil | `0x11FCAC5` / `0x83` | `ca93af7edbf011a8acae879046d10cbb46a532146b869dfd63ef365bf6ea2f1b` |
+
+The frozen verifier now also independently decodes ten moved name references:
+`postprocess_target`, `Health Boost Effect`, `Legacy Sniper Scope`, both
+`IronSightQuarterRes` resources, `IronSightResolve`, both blur passes,
+`IronSightToScreen` and `SniperZoomStencil`. At `0x11FCAF4`, the native LEA
+resolves `0x1D2B3C8`, independently identified as the primary
+`CSniperZoomStencilRenderer` RTTI vtable. The schema/owner operands, boolean
+producer, full caller argument setup, both resource-free false-result exits,
+health-boost preservation and view/FOV separation still pass unchanged.
+The native Microsoft x64 ABI and temporary/graph resource ownership are
+unchanged. No runtime header or implementation edit was required.
+
+Research used Capstone `5.0.9` from the existing ignored dependency directory;
+the final verifier remains standard-library-only. Reproduce the exact old-window
+reconstruction with
+`python logs/research/26087496/view_model/recertify_scope_windows.py`.
+`scope_recertification.json` and `scope_graph_full_comparison.json` in that
+directory record all decoded changes and old/new hashes. The preserved original
+scope disassembly remains under `logs/research/scope-*.txt`.
+
+Reproduce frozen checks with `python tools/inspect_scope_overlay.py`.
+`verified_scope_overlay.json` records success. Temporary wrong `RenderReturn`,
+`DrawScope` and `ProducerBytes` headers reject. Mutations of the consumer window,
+iron-sight graph window, `IronSightResolve` name and stencil renderer binding
+also reject; `negative_checks.json` records their specific diagnostics.
+
+No fresh live appearance is claimed. Build/CTest integration results are recorded
+in the project update handoff and README. The earlier investigation below is
+historical provenance; its old module identity is superseded above.
+
+## Earlier baseline investigation
+
 Investigated October 20, 2026 from installed Windows AMD64 client.dll at
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
 SHA-256 `659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0`,

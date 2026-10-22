@@ -12,7 +12,7 @@ import struct
 from verify_sky_draw import mapped, require_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = "659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0"
+EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
 CHECKS = {
     "recorder": (0xD055C0, "4053574881ecc800000080b9bd0b0000008bda488bf90f8543060000"),
     "normal_recorder_call": (0xD02171, "e84a340000"),
@@ -135,7 +135,7 @@ def main():
     digest = hashlib.sha256(raw).hexdigest()
     if digest != EXPECTED_HASH:
         raise SystemExit("Client changed: repeat native attack-request investigation.")
-    if struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD01314 or len(image) != 0x299D000:
+    if struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD7B41C or len(image) != 0x299D000:
         raise SystemExit("Client PE identity differs")
     require_bytes(image, CHECKS)
     # The native named enumeration, independently of C++ or event constants.

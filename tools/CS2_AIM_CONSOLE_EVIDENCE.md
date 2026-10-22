@@ -1,5 +1,41 @@
 # Native aim telemetry console sink
 
+## Current recertification — October 21, 2026
+
+Installed Windows AMD64 client: patch **1.41.9.1**, client/server **2000934**,
+Steam build **26087496**, Source revision **11150591**, version date
+October 20, 2026, 11:41:22. Installation and executable paths remain those
+listed below. New client SHA-256 is
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`,
+PE timestamp `0x6AD7B41C`, image size `0x299D000`. The tier0 identity below
+is unchanged.
+
+Scratch investigation in `logs/research/26087496/events_console/` searched the
+new image for all three exact native caller anchors and rediscovered their
+original sites. The Msg and ConColorMsg import slots, format-string targets,
+argument registers, named tier0 exports and all eleven callee instruction
+windows pass unchanged. `discover.py` records the anchor matches and decoded
+instructions in `discovery.json` (Capstone 5.0.9); `probe.py` runs the existing
+full verifier with candidate identities only in memory, before production pins
+were changed. `probe-result.txt` retains the successful evidence.
+
+Only the verifier's exact client hash changes; **no console source constant,
+export RVA, fingerprint, ABI or ownership contract changes**. This rechecks
+the caller/callee contracts described below, including synchronous formatting,
+four-byte copied RGBA and temporary module-reference lifetime. Unfamiliar hashes
+still reject. The older client identity below is historical evidence.
+
+`python tools/inspect_aim_console.py --output
+logs/research/26087496/events_console/console-final.json` passes. Temporary
+source mutations to Msg RVA, tier0 timestamp and Msg prologue all reject;
+a deliberately unfamiliar client hash also rejects. Exact diagnostics are in
+`negative.json`. No game/server process was started or opened, installed files
+were not changed, and live console visibility remains unobserved. Repository
+build/CTest results are reported with the combined update, separately from
+these static checks.
+
+## Original October 18 investigation
+
 Static verification date: October 18, 2026. Client feature; no dedicated server
 or plugin framework is involved. No game was started or installed file changed.
 

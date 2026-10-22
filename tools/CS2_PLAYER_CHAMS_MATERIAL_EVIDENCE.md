@@ -1,5 +1,36 @@
 # Player material creation and shader contracts
 
+## Static recertification, October 21, 2026
+
+Installed Windows AMD64 client at the unchanged installation path now reports
+patch `1.41.9.1`, client/server `2000934`, Source revision `11150591`, Steam
+build `26087496`, version date October 20, 2026, 11:41:22. New client SHA-256:
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`.
+PE timestamp changed `0x6AD01314` -> `0x6AD7B41C`; image size remains
+`0x299D000`. Only `player_chams_material_offsets.h::ClientTimestamp` and the
+verifier's exact client hash pin changed.
+
+All six frozen client windows (constructor, deleting/nondeleting destructor,
+root getter, pool constructor and native parser caller) retain their hashes.
+The independently decoded arena allocation size `0x1190`, root `+0x78`, named
+generic format ID and native lifecycle call targets match. The complete
+material, tier0 and scene identities/windows, RTTI/vtable ABI, asynchronous
+shader-load selection, retained binding ownership and all eight exact installed
+shader/texture hashes match. No entry bytes, addresses, layout or material
+recipes changed; the native KV3 lifetime and ownership guarantees below remain.
+
+Research ran full contract bodies with only in-memory research identity pins
+and a workspace-only adjusted header before editing frozen files. See
+`logs/research/26087496/render_grenade/initial-contract-checks.json`.
+`python tools/verify_player_chams_materials.py` subsequently passes normally.
+Four wrong header copies (timestamp, arena size, create RVA and constructor
+fingerprint) reject, as does a workspace client copy with one changed byte.
+See `verification-and-negative.json` in that directory. Integration owns the
+build/CTest report. Installed assets were read only; no client/server process
+was launched or opened, and live material appearance remains unobserved.
+
+## Historical October 18 baseline
+
 Installed Windows AMD64 **client**, patch 1.41.9.1, client 2000933, Source revision
 11133601, Steam build 25966348 (current installed steam.inf). Static analysis
 and file verification, October 18, 2026.

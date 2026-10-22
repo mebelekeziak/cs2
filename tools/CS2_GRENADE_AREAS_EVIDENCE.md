@@ -1,5 +1,36 @@
 # Landed smoke and inferno area geometry
 
+## Static recertification, October 21, 2026
+
+Current installed Windows AMD64 client: patch `1.41.9.1`, client/server
+`2000934`, Source revision `11150591`, Steam build `26087496`; version date
+October 20, 2026, 11:41:22. The client path below is unchanged. SHA-256 is now
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49`;
+PE timestamp changed `0x6AD01314` -> `0x6AD7B41C`; SizeOfImage remains
+`0x299D000`. `include/grenade_area_offsets.h::ClientTimestamp` and the frozen
+verifier hash were updated after checking the new image.
+
+All 17 existing instruction windows match byte-for-byte, including smoke
+initialization, current occupancy/other-buffer density selection, Morton/world
+coordinate conversion, inferno live positions/burning selection and bounds.
+The exact named schema records, object sizes, field counts and RTTI-derived
+vtables also match. Every consumed RVA, member, width, stride and constant is
+unchanged; no relocation or new layout was assumed. The copied-data capture
+ownership and lifecycle described below remain applicable.
+
+Research ran the full frozen verifier body with the new independently read
+identity and a workspace-only timestamp-adjusted header before editing source
+pins. Results are in
+`logs/research/26087496/render_grenade/initial-contract-checks.json`.
+`python tools/inspect_grenade_areas.py` then passed normally. Four incorrect
+header copies (timestamp, smoke vtable, buffer selector, fire-position member)
+were rejected, as was an otherwise readable client copy with one byte changed.
+See `verification-and-negative.json` in the same research directory. Build and
+CTest results belong to the integrating update report. No client/server was
+launched or opened; live aura appearance remains unobserved for this build.
+
+## Historical October 20 baseline
+
 Verified October 20, 2026 against the installed AMD64 client:
 
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`

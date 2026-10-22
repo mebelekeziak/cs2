@@ -8,7 +8,7 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '659940c1db362ed981d1df10637cec8c2a3d99409b77fc3b73e435e4649e36b0'
+EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
 WINDOWS = {
     'smoke_draw': (0xD20410, 0xEE, '612409cbd3e21fa6e1b7d11a103bd97a3bb3a2b746d7ca49ad4e5d2b55be7647'),
     'flash_resolve': (0x1211C80, 0x77, 'd80924f32261780a93f665fd17d3000e943d03b7aad20c42110615d842120e54'),

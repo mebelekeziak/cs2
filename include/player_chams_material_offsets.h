@@ -2,9 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed Windows AMD64 contracts; verify_player_chams_materials.py.
+// Installed Windows AMD64 client 2000934; verify_player_chams_materials.py.
 namespace player_chams_material_offsets {
-inline constexpr std::uintptr_t ClientTimestamp = 0x6AD01314;
+inline constexpr std::uintptr_t ClientTimestamp = 0x6AD7B41C;
 inline constexpr std::uintptr_t ClientImageSize = 0x299D000;
 inline constexpr std::uintptr_t MaterialTimestamp = 0x6ACFCC60;
 inline constexpr std::uintptr_t MaterialImageSize = 0x186000;
