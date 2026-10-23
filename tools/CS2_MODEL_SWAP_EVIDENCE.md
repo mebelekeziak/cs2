@@ -1,5 +1,71 @@
 # Native local-player model swap evidence
 
+## Build 2000935 update — October 23, 2026
+
+Verified the installed Windows AMD64 **client**, patch `1.41.9.2`,
+client/server `2000935`, Steam build `26144732`. Client SHA-256 is
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`. The installation remains
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+This supersedes the runtime values in historical sections below.
+
+Header `model_swap_offsets.h` changes, relative to build 26087496:
+
+| Source symbol | Previous | Current |
+| --- | --- | --- |
+| `FrameStage` | `0xb6d700` | `0xb6e540` |
+| `FrameVtable` | `0x1c630f0` | `0x1c65030` |
+| `SetModel` | `0x9643c0` | `0x9651f0` |
+| `SetModelBinding` | `0x964400` | `0x965230` |
+| `ModelInterface` | `0x2560eb0` | `0x2562e60` |
+| `ModelNameGetter` | `0x17762b0` | `0x1778510` |
+| `HostTimestamp` | `0x6acfcca7` | `0x6ada3394` |
+| `ResourceSystemTimestamp` | `0x6acfcc17` | `0x6ada32b3` |
+| `Tier0Timestamp` | `0x6acfcbf4` | `0x6ada3248` |
+| `EngineTimestamp` | `0x6acfcd53` | `0x6ada3418` |
+| `EngineImageSize` | `0x971000` | `0xa15000` |
+
+Rediscovery used `CSource2Client` primary RTTI slot 36, its native previous-job
+barrier and jump table, plus five independently located engine stage producers.
+Stages 4/5/6/7/8 now load engine interface slot `0x7340F8` at
+`0x482BF / 0x48457 / 0x4863B / 0x486C9 / 0x487BE`, pass the stage in EDX and
+call byte slot `+0x120`. Client stage 8 dispatches to `0xB6E96F`; stage 10's
+worker submission remains the distinct `0xB6E6C4` branch. The callback still
+waits/releases/clears `this+0x4B0` before dispatch. Apart from relocated references,
+jump-table entries and source-line immediates, this owner's contract is unchanged.
+
+`GameModelInfo001` independently binds the setter's interface slot, whose
+`+0x60` method resolves through host RTTI. Named skeleton/model-state schema and
+native getters retain skeleton `+0x1E0 -> binding -> CModel+8 -> path`.
+Strong reference acquisition/release remain atomic operations at binding `+0x20`.
+Setter remains `void(entity*, const char*)`; project code does not manually
+retain/release the returned engine-owned model binding.
+
+Host initializer/resolver and tier0 purge windows are byte-identical. Resource
+system RTTI and slots remain at the prior RVAs; changed complete windows were
+decoded again. The blocking loader constructs a one-name manifest, writes
+blocking flags `01 00` at stack `+0x50`, calls its `+0xB0` slot resolving to
+`0x1AA80 -> 0x1AA90` (R8B=1 synchronous thunk), preserves native JIT-manifest
+retention/release at `+0xC8`, and resolves the result through `+0x278`. The exact
+blocking-loader diagnostic string, name hash/type members, native name flags and
+named `CBufferString::Purge` export all pass. Native loading ownership and
+stage-owner restoration behavior remain unchanged.
+
+The frozen verifier still rejects unknown module hashes before using its sites,
+and checks complete new windows, independently decoded operands/identities,
+header constants and all fingerprints. Research/disassembly and the passing
+`python tools/inspect_model_swap.py` report are under
+`logs/research/26144732/view_model/` (`refined.json`, `addresses.json`,
+`schemas.json`, `verified_model_swap.json`). All **40/40** temporary
+header scalar/array mutations reject; this verifier also rejects a one-byte
+changed workspace client copy. See `negative_checks.json` and
+`unknown_hash_checks.json` there. No installed file was changed.
+
+Static verification does not establish live appearance or gameplay behavior.
+No client/server was launched, no process was accessed, and no graphics runtime
+was observed in this pass. Build/CTest integration is recorded by the project
+update record; stopped callbacks remain resident until normal process exit.
+
 ## Build 2000934 recertification — October 21, 2026
 
 Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,

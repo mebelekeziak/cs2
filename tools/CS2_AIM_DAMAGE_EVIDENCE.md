@@ -1,6 +1,47 @@
 # Direct bullet damage contracts
 
-## Current static recertification, October 21, 2026
+## Current static recertification, October 23, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.2`, client/server `2000935`,
+Steam build `26144732`, Source revision `11162119`, version date October 22,
+2026, 14:13:16. Installation and executable remain the documented Steam paths.
+Client SHA-256 is `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Investigation read installed files only. Independent scratch code located new
+native windows, decoded them with Capstone 5.0.9, and compared instruction and
+data contracts with the preserved preceding image. Relative instruction operands
+were decoded, and jump tables, schema members, numeric constants and named
+registrations were checked separately. No uniform relocation was assumed.
+Research, all 71 current native windows, complete disassembly and a sixteen-case
+negative-header report are retained under `logs/research/26144732/ballistics/`.
+Unknown file hashes remain rejected. No client/server process was launched or
+opened, and no installed file changed. Live behavior remains unobserved.
+
+Named schema rediscovery and native armor coverage both establish
+`C_CSPlayerPawn::m_ArmorValue` moved `0x1EC8 -> 0x1ED0`. Weapon damage inputs,
+helmet/service fields, immunity, healthshot expiry and hitgroup layout stay
+unchanged. Item-services primary RTTI table moves `0x1C10DD0 -> 0x1C12D60`.
+The five damage-rule registrations stay at their old code addresses; named
+wrapper consumers independently resolve headshot-only `0x24BEAC8`, CT body/head
+`0x24BEAD8/0x24BEAE8`, and T body/head `0x24BEAF8/0x24BEB08`.
+The trace unknown-hitbox slot moves `0x2733DC0 -> 0x2735D60`.
+
+The weapon-input producer is now `0xD25193`, damage scales `0x89E821`, head/body
+switch `0x89E978`, jump table `0x89ECE0`, armor coverage `0x8D9B20`, ordinary
+armor calculation `0x8A0E82`, and range falloff `0x8A26AD`. Decoded jump-table
+targets retain all eight group's multiplier/armor branches. Falloff divisor 500,
+ordinary armor factor 0.5, stomach 1.25, leg 0.75 and named `tier0!V_powf` IAT
+`0x1AAF528` remain semantically unchanged. The authored CHitBox schema is now at
+animationsystem `0x81D6B8`, fields `0x81D510`; `m_nGroupId = 0x38` is unchanged.
+Animation SHA-256 is
+`8aa57d0c5b90cb49ad5fd9f141004710180a601b08159e50e93c4470142ea132`.
+
+`python tools/inspect_aim_damage.py` passes all 20 windows and schema, RTTI,
+rule, import and runtime-header checks. Negative changes to `Damage`,
+`DamageScaleCtBody`, `TraceHitbox` and `WeaponDamageInputsBytes` reject.
+
+## Historical static recertification, October 21, 2026
 
 Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
 Steam build `26087496`, Source revision `11150591`, version date October 20,

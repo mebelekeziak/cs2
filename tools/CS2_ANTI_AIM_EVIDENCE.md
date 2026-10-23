@@ -1,5 +1,95 @@
 # Anti aim command and local view evidence
 
+## Static update — October 23, 2026, Steam build 26144732
+
+Target: installed Windows AMD64 **client**, patch **1.41.9.2**, client/server
+**2000935**, Source revision **11162119**, version date October 22, 2026,
+14:13:16. Executable remains `game/bin/win64/cs2.exe`; inspected module:
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
+Client SHA-256 changed from
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49` to
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6AD7B41C -> 0x6ADA7340`, SizeOfImage
+`0x299D000 -> 0x29A0000`, machine remains `0x8664`.
+
+All **37** anti-aim windows and shared **53** movement/**25** history windows
+were rediscovered. All **10** native side-effect body windows were compared
+instruction-by-instruction before replacing their exact hashes. Nine retain
+identical non-relative instructions; raw hashes differ where calls/RIP targets
+relocated. History has one internal flag-member change:
+`cmp byte ptr [rbx+0x1EC4],0` at old `0xD0293E` becomes
+`cmp byte ptr [rbx+0x1ECC],0` at `0xD03F9E`; surrounding branch and command
+presence writes remain equivalent. Its window ends partway through a CALL;
+the complete CALL at new `0xD04427` was separately decoded to `0x7B16F0`.
+The final verifier pins the new entire byte window, including those bytes.
+All 53 direct CALL edges in those windows were also decoded. Complete
+instruction prefixes retain their non-relative operations; the two CRT
+memset/memcpy helpers change module-base indexed dispatch tables
+`0x1EB7520/0x1EB7470 -> 0x1EB9520/0x1EB9470`. All sixteen small-size cases
+in each table retain identical operations through their native return.
+`native_call_edges.json` preserves this additional caller/callee comparison.
+
+Slot8 of RTTI-owned input vtable `0x1C9FA58` points to `0xCEB8E0`, whose direct
+CALL at `0xCEB8E9` resolves native reset `0xB6D7C0`. Replay ABI remains
+void(input*, int); reset copies the physical camera before clearing history
+counters. Camera pitch/yaw/roll stores `0xB6D88D` remain input+0x688/+0x690;
+producer `0xB67730` consumes current/previous buttons at +0x258/+0x250.
+Reset's lookup call `0xB6D7FC` resolves `0x9452D0`; sequence validation and
+controller ring ownership remain intact. Replay's source prefix changed only
+its relative CALL displacement and is updated accordingly.
+
+Named `C_CSGameRules` registration `0x2214C38`, field table `0x2213F50`, count98
+still supplies `m_bFreezePeriod=0x40`; native MOV `0x818DD0` independently derives
+GameRules slot `0x2567188`. Named enum records `0x1B2ADB0/0x1B2AE50/0x1B2AEF0`
+retain attack/use/secondary masks1/0x20/0x800. Physical base-angle sparse
+presence, time-zero analog integration, historical axes, digital dispatch,
+flat air vectors, clone/reset/shift and finalizer/history ordering retain their
+verified contracts. No new producer or replay ownership assumptions were added.
+
+Source runtime changes in `include/anti_aim_offsets.h` (all values below are module RVAs):
+
+| Symbol | Previous 26087496 | Current 26144732 |
+| --- | --- | --- |
+| `Input` | `0x257B640` | `0x257D780` |
+| `InputVtable` | `0x1C9DB20` | `0x1C9FA58` |
+| `Replay` | `0xCEA280` | `0xCEB8E0` |
+| `CommandLookup` | `0x9444A0` | `0x9452D0` |
+| `GameRules` | `0x25651D0` | `0x2567188` |
+
+All other consumed member offsets, presence/button masks, strides and vtable
+indices in this header were independently rechecked and remain unchanged.
+The frozen verifier retains exact unknown-hash rejection and uses the newly
+decoded instructions/schema operands to check the source header. Discovery
+used Capstone 5.0.7 locally; the final verifier uses Python's standard library.
+Only RIP-relative addressing and decoded relative branch/call operands were
+ignored during candidate discovery. Every final instruction window is exact;
+no wildcard or relocation-delta fallback is accepted by the frozen verifier.
+
+Research is under `logs/research/26144732/input/`: `window_candidates.json`,
+`function_mapping.json`, `resolved_mapping.json`, `new_contract_disassembly.txt`
+and `native_windows.json` preserve the candidates, operand derivations and
+body comparisons. The preserved prior test fixture's full hash differs from
+the prior installed hash, so it was used only for scoped comparison where all
+53 movement, 25 history, 37 anti-aim windows and all ten previous native body
+hashes match their previously frozen evidence. It was not used to certify a
+whole prior binary. Initial all-component rejection is retained separately in
+`logs/compatibility/20261023T131613316408Z/`.
+
+Validation: `python tools/inspect_anti_aim.py` passes; `anti_aim.json` records the report.
+`negative_headers.json` records rejection of temporary header mutations to
+`Input`, `InputAngles`, `ReplayBytes`, plus rejection of the unfamiliar fixture hash. The nine header
+mutations across these three components and three unknown-hash checks all fail
+as intended. Build/CTest results belong to the primary update record.
+
+No game process was launched/opened, no server was contacted and no installed
+file was changed. Initialization, command-owner mutation, pointer lifetimes,
+restoration and cooperative stop behavior are unchanged. Stopped code remains
+resident until normal process exit. Current runtime/graphics API, hopping,
+steering, shot behavior and camera appearance remain unobserved; this update
+establishes static compatibility only. Earlier sections retain historical
+build-specific addresses and observations.
+
+
 ## Static recertification — October 21, 2026
 
 Target: Windows AMD64 client at

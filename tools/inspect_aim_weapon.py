@@ -10,36 +10,44 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
-SCHEMA = {'C_BasePlayerPawn': (35603848, 35602928, 28, {'m_pWeaponServices': 4848}),
- 'CPlayer_WeaponServices': (35831240, 35831088, 4, {'m_hActiveWeapon': 96}),
- 'CCSPlayer_WeaponServices': (35792008, 35791824, 5, {'m_flNextAttack': 208}),
- 'C_CSWeaponBase': (35761304,
-                    35762048,
+EXPECTED_HASH = 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'
+SCHEMA = {'C_BasePlayerPawn': (0x21F67E8, 0x21F6450, 28, {'m_pWeaponServices': 4848}),
+ 'CPlayer_WeaponServices': (0x222DDC8, 0x222DD30, 4, {'m_hActiveWeapon': 96}),
+ 'CCSPlayer_WeaponServices': (0x2224758, 0x2224670, 5, {'m_flNextAttack': 208}),
+ 'C_CSWeaponBase': (0x221CEB8,
+                    0x221D1B0,
                     57,
-                    {'m_weaponMode': 6656, 'm_flRecoilIndex': 6696, 'm_bInReload': 6716, 'm_bBurstMode': 6700}),
- 'C_CSWeaponBaseGun': (35766088, 35764992, 7, {'m_iBurstShotsRemaining': 7972}),
- 'C_BasePlayerWeapon': (35798840,
-                        35798592,
+                    {'m_weaponMode': 6656,
+                     'm_flRecoilIndex': 6696,
+                     'm_bInReload': 6716,
+                     'm_bBurstMode': 6700}),
+ 'C_CSWeaponBaseGun': (0x221E168, 0x221DD20, 7, {'m_iBurstShotsRemaining': 7972}),
+ 'C_BasePlayerWeapon': (0x22261B8,
+                        0x22260C0,
                         7,
-                        {'m_iClip1': 6440, 'm_nNextPrimaryAttackTick': 6424, 'm_flNextPrimaryAttackTickRatio': 6428}),
- 'CCSWeaponBaseVData': (35760872,
-                        35757952,
+                        {'m_iClip1': 6440,
+                         'm_nNextPrimaryAttackTick': 6424,
+                         'm_flNextPrimaryAttackTickRatio': 6428}),
+ 'CCSWeaponBaseVData': (0x221CD08,
+                        0x221C1A0,
                         83,
                         {'m_nNumBullets': 1840,
                          'm_bIsFullAuto': 1837,
                          'm_flRange': 2096,
                          'm_bIsRevolver': 1822,
                          'm_flSpread': 1872}),
- 'C_CSPlayerPawn': (35887720,
-                    35884304,
+ 'C_CSPlayerPawn': (0x223BAC8,
+                    0x223AD40,
                     105,
-                    {'m_pAimPunchServices': 5528, 'm_bIsDefusing': 7834, 'm_bWaitForNoAttack': 7868, 'm_iShotsFired': 7856}),
- 'C_CSPlayerPawnBase': (35882168, 35887856, 26, {'m_iPlayerState': 5348}),
- 'C_CSGameRules': (35727992, 35724832, 98, {'m_bFreezePeriod': 64}),
- 'C_BaseEntity': (35605480, 35599040, 82, {'m_fFlags': 1012}),
- 'CCSPlayer_AimPunchServices': (35779480,
-                                35779264,
+                    {'m_pAimPunchServices': 5528,
+                     'm_bIsDefusing': 7842,
+                     'm_bWaitForNoAttack': 7876,
+                     'm_iShotsFired': 7864, 'm_bIsWalking': 7808}),
+ 'C_CSPlayerPawnBase': (0x223A4D8, 0x223BB80, 26, {'m_iPlayerState': 5348}),
+ 'C_CSGameRules': (0x2214C38, 0x2213F50, 98, {'m_bFreezePeriod': 64}),
+ 'C_BaseEntity': (0x21F6E78, 0x21F5550, 82, {'m_fFlags': 1012}),
+ 'CCSPlayer_AimPunchServices': (0x2221398,
+                                0x22212C0,
                                 6,
                                 {'m_predictableBaseTick': 72,
                                  'm_predictableBaseTickInterpAmount': 76,
@@ -47,55 +55,57 @@ SCHEMA = {'C_BasePlayerPawn': (35603848, 35602928, 28, {'m_pWeaponServices': 484
                                  'm_predictableBaseAngleVel': 92,
                                  'm_unpredictableBaseTick': 160,
                                  'm_unpredictableBaseAngle': 164})}
-TABLES = {'C_AK47': 29219872,
- 'C_WeaponAug': 29223688,
- 'C_WeaponAWP': 29227416,
- 'C_WeaponBizon': 29231144,
- 'C_WeaponFamas': 29234872,
- 'C_WeaponFiveSeven': 29238600,
- 'C_WeaponG3SG1': 29242328,
- 'C_WeaponGalilAR': 29246056,
- 'C_WeaponGlock': 29249784,
- 'C_WeaponHKP2000': 29253512,
- 'C_WeaponUSPSilencer': 29257240,
- 'C_WeaponM4A1': 29260984,
- 'C_WeaponM4A1Silencer': 29264712,
- 'C_WeaponMAC10': 29268456,
- 'C_WeaponMP5SD': 29275912,
- 'C_WeaponMP7': 29279640,
- 'C_WeaponMP9': 29283368,
- 'C_WeaponNegev': 29287096,
- 'C_WeaponP250': 29290824,
- 'C_WeaponP90': 29294552,
- 'C_WeaponSCAR20': 29298280,
- 'C_WeaponSG556': 29302008,
- 'C_WeaponSSG08': 29305736,
- 'C_WeaponTec9': 29309464,
- 'C_WeaponUMP45': 29313192,
- 'C_WeaponM249': 29316920,
- 'C_WeaponCZ75a': 29340064,
- 'C_DEagle': 29343888,
- 'C_WeaponElite': 29354528}
-WINDOWS = {'spread_getter': (8443024, 43, '25fe2c8f08c83dfa604e353a2324870533fb2f5ca497ba181eb48215cbe42561'),
- 'current_inaccuracy': (8438176, 796, '6a6ae4b60028839f258f6927849a4b7ecc45cdcb254de1492df3f7a80266bce6'),
- 'primary_cooldown': (9756256, 166, 'f92dede76bb2daabc5a6df6c9c8254f7c159d59c7f47ea4d51d3a3ca893d5963'),
- 'current_time': (7721552, 120, '6cb2a9bf9925d40b5085e184f543aa69464b42ea67e5f78fabb35e533d655367'),
- 'native_punch_current_query': (8726192, 219, 'a3b2fcbed5782c0e86ef381e8bbb46d6f41ff29e41ad1b5a7bb0091d180eeb0a'),
- 'native_punch_time_resolution': (8726624, 304, '88767ba59ec224e2c7db3c599f3f34783b85289d0054f550c89590dd9e0d7334'),
- 'native_punch_evaluator_and_memoization': (8706224, 2446, 'c3709d2b8f64d138297bb70a5942d55c389353e3eba2b8bdd1d90bd2471ec1d2'),
- 'native_punch_shot_query': (8725984, 206, '48cfdeb4f95611258a9e7cccd36252dc2ab1fef846875b319264ebcdd8f59bd1'),
- 'shot_punch_add': (8446776, 73, '91c99d54d6b1f68428b72812f4bde6756fb1a48a4baee3470b63aa4bdcedf8c7'),
- 'current_punch_pawn_wrapper': (9226784, 30, 'dce07ab01bb46e80a2a5d0d2d4cba639038eb5d801e75e4c39c12b4f7c06b275'),
- 'shot_native_model_inputs': (8404283, 223, '480c577d48ac3a71215b73c42703ce5cec8fd74d9a1574b554c6912b1f8b86af'),
- 'shot_spread_distribution': (13778912, 1420, '3f2193f622797106ae1f692f98951cc4449294241bf888c954e69e9aa53b3079'),
- 'shot_single_projectile_spread_fallback': (8182811, 138, 'f9109fab92aef397a90015c2a819ab618d88def20018d894d929f4232c670111'),
- 'shotgun_disabled_for_single_projectile': (8172050, 39, 'e6f643801a3c28af6cf4cf5af7c1edffe93fe9c293483c2b8754496c3d2f41b7'),
- 'service_deadline_consumer': (9447519, 102, '5db53701b0a8c9b034b069251e6239fb08d496800e536526de79922cc9abfdf1'),
- 'primary_action_readiness': (8486718, 208, '4eb43a8721a34fec78889a44b52c4a1ffd55f423efe1aa7b776ccb3d7c103c3a'),
- 'debug_max_radius_registration': (1006243, 128, 'a4b4ce00b9487c34c81d733f03e1e97c3c7d7ed0d1414da7d5b6511cd2efc2b7'),
- 'debug_fixed_angle_registration': (1006067, 128, 'be127ac6f10ac3bb80443f00cef3d3d01a4f1a5cfa455828e4442e8b8462090c'),
- 'shot_angle_basis': (0x1742AF0, 0x178, '23326b17d2cb04023d27e7a6bad00260c72723bff6590387d7e55b1a12b13e1f'),
- 'shot_direction_and_range': (0x887D8E, 0x197, '6b5153ceb26173cc21d8d143d31b4389a022271cc89294f40f006a8e5b1feb19')}
+TABLES = {'C_AK47': 0x1BDFBB0,
+ 'C_WeaponAug': 0x1BE0A98,
+ 'C_WeaponAWP': 0x1BE1928,
+ 'C_WeaponBizon': 0x1BE27B8,
+ 'C_WeaponFamas': 0x1BE3648,
+ 'C_WeaponFiveSeven': 0x1BE44D8,
+ 'C_WeaponG3SG1': 0x1BE5368,
+ 'C_WeaponGalilAR': 0x1BE61F8,
+ 'C_WeaponGlock': 0x1BE7088,
+ 'C_WeaponHKP2000': 0x1BE7F18,
+ 'C_WeaponUSPSilencer': 0x1BE8DA8,
+ 'C_WeaponM4A1': 0x1BE9C48,
+ 'C_WeaponM4A1Silencer': 0x1BEAAD8,
+ 'C_WeaponMAC10': 0x1BEB978,
+ 'C_WeaponMP5SD': 0x1BED698,
+ 'C_WeaponMP7': 0x1BEE528,
+ 'C_WeaponMP9': 0x1BEF3B8,
+ 'C_WeaponNegev': 0x1BF0248,
+ 'C_WeaponP250': 0x1BF10D8,
+ 'C_WeaponP90': 0x1BF1F68,
+ 'C_WeaponSCAR20': 0x1BF2DF8,
+ 'C_WeaponSG556': 0x1BF3C88,
+ 'C_WeaponSSG08': 0x1BF4B18,
+ 'C_WeaponTec9': 0x1BF59A8,
+ 'C_WeaponUMP45': 0x1BF6838,
+ 'C_WeaponM249': 0x1BF76C8,
+ 'C_WeaponCZ75a': 0x1BFD130,
+ 'C_DEagle': 0x1BFE020,
+ 'C_WeaponElite': 0x1C009B0}
+WINDOWS = {
+    'spread_getter': (0x80E2C0, 43, '25fe2c8f08c83dfa604e353a2324870533fb2f5ca497ba181eb48215cbe42561'),
+    'current_inaccuracy': (0x80CFD0, 796, '1054ae1b18c90cab613e7536aaed31318e24e381c2ce5084d3c36fef421cfa9e'),
+    'primary_cooldown': (0x94EC90, 166, '88e672f4119eb12cfa6e0b44b43d514b4c24fc9326e7b519de0343aeb3e6203e'),
+    'current_time': (0x75E050, 120, 'b874b2f990e5f2f34b82bf517732cc02955b91237c91b8de3b3628bbdbc29990'),
+    'native_punch_current_query': (0x8534E0, 219, 'f01208c234523476f5ccd199fb5838fd0b7954f7e38ff65a84acb438c2b18fe2'),
+    'native_punch_time_resolution': (0x853690, 304, '836723ca9d4b2d3b9b264e88aabad9f2f05c2d6b2b205c3ea6fe1859e9799b7a'),
+    'native_punch_evaluator_and_memoization': (0x84E6E0, 2446, '5bb435e5c457bebbee2b449f6be708f469f836e21d84086978853f7cda7ac8ac'),
+    'native_punch_shot_query': (0x853410, 206, '8607d641d2416e400811a15c3336cf9257d957b0d5ed613ebc863b0de78288ef'),
+    'shot_punch_add': (0x80F168, 73, '91c99d54d6b1f68428b72812f4bde6756fb1a48a4baee3470b63aa4bdcedf8c7'),
+    'current_punch_pawn_wrapper': (0x8CD850, 30, 'dce07ab01bb46e80a2a5d0d2d4cba639038eb5d801e75e4c39c12b4f7c06b275'),
+    'shot_native_model_inputs': (0x804B6B, 223, '12326217c2839b9ce3e2c2fac780b95b999126d59fe94f54b133d53acbfc2059'),
+    'shot_spread_distribution': (0xD25630, 1420, 'ad1abc396b82ec66dba50abd83371b0b2b9db84d718c3d044e241f80c90ff349'),
+    'shot_single_projectile_spread_fallback': (0x7CEA70, 198, '0b5fb705e53eac1458d052ec676bd6f4d4f6746262915d3d3868f6168e664901'),
+    'shotgun_disabled_for_single_projectile': (0x7CC1C0, 84, '8afc878c42c1c55fc9a711a71fac0f4f660ce6a81ab0a29db9010103d26717c7'),
+    'service_deadline_consumer': (0x90368F, 102, '98d998f369b1398db9ff5e7313944ed908a09e864d6deb5e083b8427763ded3c'),
+    'primary_action_readiness': (0x818D6E, 208, '6ec4c95150ba77b3d98401222b02d380a8d4e316c79c80dc9ba593214630aaba'),
+    'debug_max_radius_registration': (0xF5AA3, 128, '351b4a81aa7182349e8be4b22b1e42606660f7a145d196f32f4f3492ec9a8b75'),
+    'debug_fixed_angle_registration': (0xF59F3, 128, '48234ce43615a743255f283d870302c86f4313418feee08bf9f68d10c3ba38ef'),
+    'shot_angle_basis': (0x1744D50, 376, '16f0b386c892cc0bc0351e22847c248a406a1df756acca385043ba43b3f6e4b9'),
+    'shot_direction_and_range': (0x888BBE, 407, '60509e558ab57b90dd13934c7072b807af3555dca52456707b95e62d287f9d4e'),
+}
 
 
 def verify(image, base, nt, raw, header):
@@ -124,7 +134,7 @@ def verify(image, base, nt, raw, header):
     for name, table in TABLES.items():
         if primary_vtable(image, base, ('.?AV'+name+'@@').encode()) != table:
             raise SystemExit(f'Changed weapon RTTI ownership: {name}')
-        if ptr(table + 0xBD0) != 0x80D490 or ptr(table + 0xCF8) != 0x80C1A0:
+        if ptr(table + 0xBD0) != 0x80E2C0 or ptr(table + 0xCF8) != 0x80CFD0:
             raise SystemExit(f'Changed native spread/inaccuracy slots: {name}')
     schema_constants = {
         'WeaponServices': ('C_BasePlayerPawn', 'm_pWeaponServices'),
@@ -144,24 +154,42 @@ def verify(image, base, nt, raw, header):
     expected = {name: fields[owner][field] for name, (owner, field) in schema_constants.items()}
     expected.update({
         'Spread': ptr(TABLES['C_AK47'] + 0xBD0), 'Inaccuracy': ptr(TABLES['C_AK47'] + 0xCF8),
-        'PrimaryCooldown': call(0x817F56), 'CurrentTime': call(0x902879), 'AimPunch': call(0x8CCA30),
-        'SpreadSlot': u32(0x803D43), 'InaccuracySlot': u32(0x803D57),
-        'Data': u32(0x80D49A), 'ServicePawn': image[0x8527AC], 'IdentityScene': image[0x94DE74],
+        'PrimaryCooldown': call(0x818D86), 'CurrentTime': call(0x9036A9), 'AimPunch': call(0x8CD860),
+        'SpreadSlot': u32(0x804B73), 'InaccuracySlot': u32(0x804B87),
+        'Data': u32(0x80E2CA), 'ServicePawn': image[0x8535DC], 'IdentityScene': image[0x94ECA4],
         'ServicesVtable': primary_vtable(image, base, b'.?AVCCSPlayer_WeaponServices@@'),
         'PunchVtable': primary_vtable(image, base, b'.?AVCCSPlayer_AimPunchServices@@'),
-        'GameRules': rip(0x817FA0), 'DebugMaxRadius': rip(0xF5B17), 'DebugFixedAngle': rip(0xF5A67),
-        'CvarValuePointer': 8, 'CvarValue': image[0xD24028],
+        'GameRules': rip(0x818DD0), 'DebugMaxRadius': rip(0xF5B17), 'DebugFixedAngle': rip(0xF5A67),
+        'CvarValuePointer': 8, 'CvarValue': image[0xD25678],
     })
-    if rip(0xD2400E) != expected['DebugMaxRadius'] + expected['CvarValuePointer'] or rip(0xD24029) != expected['DebugFixedAngle'] + 8:
+    if rip(0xD2565E) != expected['DebugMaxRadius'] + expected['CvarValuePointer'] or rip(0xD25679) != expected['DebugFixedAngle'] + 8:
         raise SystemExit('Debug wrapper constructor/native-consumer disagreement')
     if string(rip(0xF5B10)) != 'weapon_debug_max_inaccuracy' or string(rip(0xF5A60)) != 'weapon_debug_inaccuracy_only_up':
         raise SystemExit('Changed debug distribution registration names')
-    if u32(0x8CCA29) != expected['PunchServices'] or u32(0x80D493) != expected['Mode'] or u32(0x80D4AD) != fields['CCSWeaponBaseVData']['m_flSpread']:
+    if u32(0x8CD859) != expected['PunchServices'] or u32(0x80E2C3) != expected['Mode'] or u32(0x80E2DD) != fields['CCSWeaponBaseVData']['m_flSpread']:
         raise SystemExit('Independent native data/punch operands disagree with schema')
-    if string(ptr(rip(0xD244DB))) != 'weapon_revolver' or string(ptr(rip(0xD24536))) != 'weapon_negev':
+    if string(ptr(rip(0xD25B2B))) != 'weapon_revolver' or string(ptr(rip(0xD25B86))) != 'weapon_negev':
         raise SystemExit('Changed special spread item-name identities')
-    for at, value in [(0x1AC6074, 1.0), (0x1AC607C, 3.0), (0x1C0E8CC, 1.5707963705062866), (0x1B06564, 6.2831854820251465)]:
+    for at, value in [(0x1AC8084, 1.0), (0x1AC808C, 3.0), (0x1C1085C, 1.5707963705062866), (0x1B085A4, 6.2831854820251465)]:
         if struct.unpack_from('<f', image, at)[0] != value: raise SystemExit('Changed native radial/angle constant')
+    # The update changed pawn walking/readiness members and recompiled the
+    # cached shotgun helper. Tie these operands to named schema and native
+    # callers, rather than accepting entry similarity or a relocation delta.
+    pawn_fields = fields['C_CSPlayerPawn']
+    if (u32(0x80D0C9) != pawn_fields['m_bIsWalking'] or
+            u32(0x818DE3) != expected['Defusing'] or
+            u32(0x818E00) != expected['ShotsFired'] or
+            u32(0x818E33) != expected['WaitForNoAttack']):
+        raise SystemExit('Native walking/readiness operands disagree with pawn schema')
+    if (call(0xD258D6) != 0x7CEA70 or call(0x7CEAA5) != 0x7CC0E0 or
+            call(0x7CC1BB) != 0x7CC330 or call(0x7CC1E8) != 0x378D80 or
+            u32(0x7CC1F8) != expected['NumBullets']):
+        raise SystemExit('Changed native single-projectile fallback/initializer chain')
+    # FF /2 RIP-indirect calls have six bytes; both draws use named RandomFloat.
+    draws = [at + 6 + struct.unpack_from('<i', image, at + 2)[0]
+             for at in (0x7CEAFD, 0x7CEB17)]
+    if draws != [0x1AAF670, 0x1AAF670]:
+        raise SystemExit('Single-projectile fallback no longer uses the two native uniform draws')
     # Bind the native draws and trigonometry to named imports, not guessed ABI.
     imports = {}
     descriptors = struct.unpack_from('<I', raw, nt + 24 + 112 + 8)[0]
@@ -173,7 +201,7 @@ def verify(image, base, nt, raw, header):
             target = struct.unpack_from('<Q', image, original+i*8)[0]
             if not target: break
             imports[iat+i*8] = (string(name), '#'+str(target&0xFFFF) if target>>63 else string(target+2))
-    required_imports = {0x1AACEA8: 'RandomSeed', 0x1AAD678: 'RandomFloat', 0x1AAD8B0: 'V_cosf', 0x1AAD8A8: 'V_sinf'}
+    required_imports = {0x1AAEEA0: 'RandomSeed', 0x1AAF670: 'RandomFloat', 0x1AAF8A8: 'V_cosf', 0x1AAF8A0: 'V_sinf'}
     if any(imports.get(at) != ('tier0.dll', name) for at, name in required_imports.items()):
         raise SystemExit('Changed native RNG or trigonometry imports')
     source = re.sub(r'//[^\n]*|/\*.*?\*/', '', header.read_text(encoding='utf-8-sig'), flags=re.S)

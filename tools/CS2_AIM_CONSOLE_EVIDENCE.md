@@ -1,5 +1,30 @@
 # Native aim telemetry console sink
 
+## Current recertification — October 23, 2026
+
+Installed client **1.41.9.2 / 2000935 / Steam 26144732**. Native AMD64 tier0
+SHA-256 `f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d`,
+timestamp `0x6ADA3248`, image size `0x401000`; client identity is recorded in
+`docs/CS2_UPDATE_26144732.md`.
+
+Named exports independently still resolve Msg `0x7EE60` and ConColorMsg
+`0x7F710`. All eleven complete checked printf/varargs/copy/dispatch instruction
+windows remain byte-identical. Native client Msg string callers relocated to
+`0x153C2F` and `0x153C52`, with LEA sites `0x153C32`/`0x153C55`, retaining the
+named `T     %s\n` and `UWT1  %s\n` formats and the named tier0 import slot.
+The stack-color caller uniquely relocates as a complete function to `0x1C6120`;
+its checked RGBA setup begins at `0x1C6129`, imported call at `0x1C613D`.
+RCX/RDX/R8 argument ownership, four-byte copied RGBA, temporary formatted line
+and 0x800-byte formatting buffer contracts remain unchanged.
+
+Only runtime tier0 timestamp changes in `src/aim_console.cpp`; named export
+lookup and exact prologues remain enforced. Frozen hashes/caller sites were
+updated after scratch decoding in `logs/research/26144732/core/`.
+`inspect_aim_console.py` passes; incorrect timestamp, RVA and color prologue
+source copies reject (`negative.json`). No native console output was observed.
+Build/test evidence is separate in `docs/CS2_UPDATE_26144732.md`. Earlier
+sections are historical.
+
 ## Current recertification — October 21, 2026
 
 Installed Windows AMD64 client: patch **1.41.9.1**, client/server **2000934**,

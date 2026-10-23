@@ -1,4 +1,43 @@
-# Native local-light GPU radiance, installed CS2 1.41.9.1
+# Native local-light GPU radiance evidence
+
+## Current recertification, October 23, 2026
+
+Installed client **1.41.9.2 / 2000935**, Source revision **11162119**, Steam
+build **26144732**. Read-only AMD64
+`game/bin/win64/scenesystem.dll` SHA-256:
+`0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b`;
+timestamp **`0x6ADA337D`**, size **`0x978000`**. Installation is unchanged.
+
+Independent `CLightBinnerGPU` primary RTTI locates table **`0x5FE678`**,
+formerly `0x5FE688`. Slot `+0x70` still resolves thunk `0x1B14A0`, whose decoded
+branch reaches pack `0x1B14B0`. The upload caller still returns to `0x1B2537`,
+with RCX binner, RDX native source, R8 fresh output; full RAX remains forwarded.
+GPU stride `0x1E0`, radiance `+0xA0`, contiguous RGB stores and native sun removal
+remain unchanged. All 29 frozen machine windows pass.
+
+Complete function scopes were re-disassembled before pinning. Comparison of
+775 preserved pack instructions and 939 preserved area-gather instructions
+found 26 and 11 changed instructions respectively; every changed byte belongs
+to a decoded RIP displacement, preserving opcode, registers, sizes, members,
+calls and control flow. Targets were examined independently, including the
+native one load now pointing at `0x5FFF80` (float 1). These include relocated
+constant vectors, tables and static synchronization data; this is not blanket
+byte masking. Exact whole-scope hashes were renewed for pack and area gather.
+The full upload and selected-sun-removal hashes still match their prior values.
+
+`include/world_lighting_offsets.h` changes only timestamp and binner table.
+`verify_world_lighting.py` additionally resolves RTTI independently and retains
+all four exact function-scope checks. Positive verification passes. Temporary
+timestamp, table, `GpuRadiance` and `PackBytes` changes all fail; an unknown
+scene image fails. Evidence is in `logs/research/26144732/world/`: `compare.json`,
+`contracts.json`, full pack/upload/sun/gather disassemblies,
+`verify_world_lighting-verified.json`, and `validation.json`.
+Scratch disassembly uses Capstone 5.0.9; frozen verification uses stdlib only.
+No client/server launch or fresh runtime/visual observation was performed.
+Build/CTest results are reported by the overall update; earlier observations
+and shader coverage limits below remain historical.
+
+## Historical 1.41.9.1 investigation
 
 Read-only installed-binary and shader research, corrected October 15, 2026.
 Canonical verifier: `python tools/verify_world_lighting.py`. Module RVAs

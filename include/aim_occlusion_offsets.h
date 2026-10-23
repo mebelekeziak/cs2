@@ -4,9 +4,9 @@
 
 // Installed AMD64 client; tools/inspect_aim_occlusion.py independently checks
 // the native BulletServices filter producer and result consumers.
-// Reverified unchanged for client 2000934 / Steam build 26087496, October 21, 2026.
+// Reverified for client 2000935 / Steam build 26144732, October 23, 2026.
 namespace aim_occlusion_offsets {
-inline constexpr std::ptrdiff_t InitializeFilter = 0x352920;
+inline constexpr std::ptrdiff_t InitializeFilter = 0x352cc0;
 inline constexpr std::uint64_t ShotMask = 0x1C300B;
 inline constexpr std::uint64_t ShotExclude = 0x4000000000;
 inline constexpr std::uint8_t ShotLayer = 3;

@@ -11,18 +11,19 @@ import struct
 from inspect_world import load_image
 
 DEFAULT_GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game")
-# October 15, 2026: all frozen sites and full historical callback/copy/upload
-# disassemblies compared unchanged before accepting the 1.41.9.1 PE metadata.
-EXPECTED_SCENE = "040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5"
+# October 23, 2026: full builder/copy/upload scopes re-disassembled; relocated
+# registration strings and native float-one load independently decoded.
+EXPECTED_SCENE = "0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b"
 CHECKS = {
-    "baked_cvar_registration": (0x8799, "488d1560675e00488d0d71a59100"),
+    "baked_cvar_registration": (0x8799, "488d15a0675e00488d0d71a59100"),
     "baked_cvar_consumer": (0x5499B, "488b057ee38c0040387058750b"),
     "baked_bind_call": (0x549AE, "e80d550200"),
     "baked_bind_helper": (0x79EC0, "48895c240848896c241048897424185741544155415641574883ec40"),
-    "directional_lightmaps_registration": (0x11659, "488d15c0af5e00488d0dd9259100"),
+    "directional_lightmaps_registration": (0x11659, "488d15f0af5e00488d0dd9259100"),
     "directional_lightmaps_value": (0x1AF917, "488b052a4377008078580074050f57c0eb04"),
     "directional_lightmaps_stack_store": (0x1AF939, "f30f114510"),
-    "native_one_constant": (0x5FFF40, "0000803f"),
+    "native_one_load": (0x1AF849, "f3440f102d2e074500"),
+    "native_one_constant": (0x5FFF80, "0000803f"),
     "selected_sun_copy": (0x1A7B3E, "e8cd54eeff"),
     "sun_rgb_source_r": (0x1AFA8C, "f30f1087cc000000"),
     "sun_rgb_store_r": (0x1AFA9C, "f30f118570790000"),
@@ -44,10 +45,13 @@ def main():
         expected = bytes.fromhex(hexbytes)
         if image[rva:rva + len(expected)] != expected:
             raise SystemExit(f"{name}: installed bytes differ at 0x{rva:X}")
-    for rva, text in [(0x5EEF00, b"sc_disable_baked_lighting\0"),
-                      (0x5FC620, b"r_directional_lightmaps\0")]:
+    for rva, text in [(0x5EEF40, b"sc_disable_baked_lighting\0"),
+                      (0x5FC650, b"r_directional_lightmaps\0")]:
         if image[rva:rva + len(text)] != text:
             raise SystemExit("Lighting cvar identification changed")
+    one = 0x1AF849 + 9 + struct.unpack_from("<i", image, 0x1AF84E)[0]
+    if one != 0x5FFF80 or struct.unpack_from("<f", image, one)[0] != 1.0:
+        raise SystemExit("Directional producer does not load the verified native one")
     target = 0x1B0CCC + 5 + struct.unpack_from("<i", image, 0x1B0CCD)[0]
     assert target == 0x569120
     print(json.dumps({"path": str(path), "sha256": digest,

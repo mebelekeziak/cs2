@@ -13,7 +13,7 @@ import struct
 from verify_sky_draw import mapped, require_bytes
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-VERIFIED_CLIENT_SHA256 = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
+VERIFIED_CLIENT_SHA256 = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
 FIELDS = {
     "CEntityInstance": ["m_pEntity"],
     "CEntityIdentity": ["m_designerName", "m_flags"],
@@ -30,31 +30,31 @@ FIELDS = {
 # field count+0x1C, field array+0x28. These precede runtime class binding.
 # Array records are 0x20 bytes: field name pointer+0, byte offset+0x10.
 SCHEMA = {
-    "CEntityInstance": (0x226AEF8, 0x226AE90, 3),
-    "CEntityIdentity": (0x226B2C8, 0x226B140, 12),
-    "C_BaseEntity": (0x21F4BE8, 0x21F32C0, 82),
-    "CBasePlayerController": (0x2223A38, 0x2223800, 17),
-    "CCSPlayerController": (0x2220498, 0x221F810, 70),
-    "CGameSceneNode": (0x21FB988, 0x21FB540, 34),
-    "CCollisionProperty": (0x21CC828, 0x21CC4D0, 17),
-    "C_CSPlayerPawn": (0x2239A68, 0x2238D10, 105),
-    "C_BasePlayerPawn": (0x21F4588, 0x21F41F0, 28),
+    "CEntityInstance": (0x226CF28, 0x226CEC0, 3),
+    "CEntityIdentity": (0x226D2F8, 0x226D170, 12),
+    "C_BaseEntity": (0x21F6E78, 0x21F5550, 82),
+    "CBasePlayerController": (0x2225C98, 0x2225A60, 17),
+    "CCSPlayerController": (0x2222498, 0x2221810, 70),
+    "CGameSceneNode": (0x21FDA88, 0x21FD640, 34),
+    "CCollisionProperty": (0x21CECB8, 0x21CE960, 17),
+    "C_CSPlayerPawn": (0x223BAC8, 0x223AD40, 105),
+    "C_BasePlayerPawn": (0x21F67E8, 0x21F6450, 28),
 }
 
 
 def static_evidence(image, base):
     checks = {
-        "entity_global_store": (0x15BCD49, "48890db8db1501e99bbfffff"),
-        "entity_global_load": (0xA17AFB, "488b1d062ed00148891d1f41b3014c63b3"),
-        "controller_global": (0x933E80, "488b05f18cc0014189becc060000"),
-        "prediction_address": (0xBF7240, "488d05d9e39601c3"),
-        "pawn_pointer_slot": (0xBD0625, "4c39b6f800000074114488bef10000004c893f4c89bef8000000"),
-        "view_matrix": (0xC14173, "488d0da66e950148c1e0064803c1c3"),
-        "diagnostic_highest_index": (0x9F7D2D, "ff81202100004885d27456"),
-        "table_initialization": (0x15B8D6F, "488d43104533ff48891dcb2ae0004885db490f44c7488905e56cdb00"),
-        "table_initializer_argument": (0x15B8D04, "488bd9"),
-        "handle_lookup": (0x39B903, "418bd281e2ff7f00008bca48c1e9094d8b0cc84d85c9741b8bca81e1ff010000486bd1704903d1740a44395210490f45d5"),
-        "lookup_object_pointer": (0x39B93E, "488b0a"),
+        "entity_global_store": (0x15BEFA9, "48890d08d91501e99bbfffff"),
+        "entity_global_load": (0xA1892B, "488b1d863fd00148891ddf52b3014c63b3"),
+        "controller_global": (0x934CB0, "488b0541a2c0014189becc060000"),
+        "prediction_address": (0xBF8080, "488d0559f59601c3"),
+        "pawn_pointer_slot": (0xBD1465, "4c39b6f800000074114488bef10000004c893f4c89bef8000000"),
+        "view_matrix": (0xC14FB3, "488d0d2680950148c1e0064803c1c3"),
+        "diagnostic_highest_index": (0x9F8B5D, "ff81202100004885d27456"),
+        "table_initialization": (0x15BAFCF, "488d43104533ff48891d9b28e0004885db490f44c7488905856adb00"),
+        "table_initializer_argument": (0x15BAF64, "488bd9"),
+        "handle_lookup": (0x39C703, "418bd281e2ff7f00008bca48c1e9094d8b0cc84d85c9741b8bca81e1ff010000486bd1704903d1740a44395210490f45d5"),
+        "lookup_object_pointer": (0x39C73E, "488b0a"),
     }
     require_bytes(image, checks)
     def u32(p): return struct.unpack_from('<I', image, p)[0]
@@ -81,32 +81,32 @@ def static_evidence(image, base):
             records[field] = u32(record + 0x10)
         fields[name] = {field: records[field] for field in FIELDS[name]}
         registrations[name] = {"registration": hex(registration), "fields": hex(array), "field_count": count}
-    system = rip(0x15BCD49)
-    if system != rip(0xA17AFB):
+    system = rip(0x15BEFA9)
+    if system != rip(0xA1892B):
         raise SystemExit("Entity-system load/store disagree")
-    table_offset = image[0x15B8D72]
-    table_global = rip(0x15B8D84)
-    initializer = 0x15BCD50 + 5 + struct.unpack_from('<i', image, 0x15BCD51)[0]
-    if initializer != 0x15B8CF0 or rip(0x39B8E0) != table_global:
+    table_offset = image[0x15BAFD2]
+    table_global = rip(0x15BAFE4)
+    initializer = 0x15BEFB0 + 5 + struct.unpack_from('<i', image, 0x15BEFB1)[0]
+    if initializer != 0x15BAF50 or rip(0x39C6E0) != table_global:
         raise SystemExit("Entity table initialization/lookup disagree")
     layout = {
         "TableOffset": table_offset,
-        "IdentityStride": image[0x39B926],
+        "IdentityStride": image[0x39C726],
         "EntityPointerOffset": 0,  # MOV RCX,[RDX] checked above, no displacement
-        "HandleOffset": image[0x39B92F],
-        "IndexMask": u32(0x39B908),
-        "BucketShift": image[0x39B911],
-        "BucketMask": u32(0x39B91F),
+        "HandleOffset": image[0x39C72F],
+        "IndexMask": u32(0x39C708),
+        "BucketShift": image[0x39C711],
+        "BucketMask": u32(0x39C71F),
     }
     layout["BucketCount"] = (layout["IndexMask"] >> layout["BucketShift"]) + 1
     if u32(SCHEMA['CEntityIdentity'][0] + 0x18) != layout['IdentityStride']:
         raise SystemExit("Identity schema size differs from lookup stride")
     globals_ = {
         "dwEntityList": system, "dwGameEntitySystem": system,
-        "dwGameEntitySystem_highestEntityIndex": u32(0x9F7D2F),
-        "dwLocalPlayerController": rip(0x933E80),
-        "dwLocalPlayerPawn": rip(0xBF7240) + u32(0xBD0628),
-        "dwViewMatrix": rip(0xC14173),
+        "dwGameEntitySystem_highestEntityIndex": u32(0x9F8B5F),
+        "dwLocalPlayerController": rip(0x934CB0),
+        "dwLocalPlayerPawn": rip(0xBF8080) + u32(0xBD1468),
+        "dwViewMatrix": rip(0xC14FB3),
     }
     return globals_, fields, layout, registrations, checks
 

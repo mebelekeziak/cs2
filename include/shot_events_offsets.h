@@ -5,19 +5,19 @@
 // Installed AMD64 client; tools/inspect_shot_events.py independently verifies
 // RTTI, native registration/dispatch/getters and generated pawn-handle fields.
 namespace shot_events_offsets {
-inline constexpr std::ptrdiff_t Manager = 0x254BC08;
-inline constexpr std::ptrdiff_t ManagerVtable = 0x1C31878;
-inline constexpr std::ptrdiff_t EventVtable = 0x1C315C0;
-inline constexpr std::ptrdiff_t AddListener = 0x9C9D30;
-inline constexpr std::ptrdiff_t FindListener = 0x9E1BF0;
-inline constexpr std::ptrdiff_t FireClient = 0x9E2960;
-inline constexpr std::ptrdiff_t Name = 0x9E7E50;
-inline constexpr std::ptrdiff_t Empty = 0x9F1770;
-inline constexpr std::ptrdiff_t Boolean = 0x9E3E60;
-inline constexpr std::ptrdiff_t Integer = 0x9E7120;
-inline constexpr std::ptrdiff_t Float = 0x9E6D40;
-inline constexpr std::ptrdiff_t String = 0x9E9550;
-inline constexpr std::ptrdiff_t Handle = 0x9E4620;
+inline constexpr std::ptrdiff_t Manager = 0x254DC00;
+inline constexpr std::ptrdiff_t ManagerVtable = 0x1C337A8;
+inline constexpr std::ptrdiff_t EventVtable = 0x1C334F0;
+inline constexpr std::ptrdiff_t AddListener = 0x9CAB60;
+inline constexpr std::ptrdiff_t FindListener = 0x9E2A20;
+inline constexpr std::ptrdiff_t FireClient = 0x9E3790;
+inline constexpr std::ptrdiff_t Name = 0x9E8C80;
+inline constexpr std::ptrdiff_t Empty = 0x9F25A0;
+inline constexpr std::ptrdiff_t Boolean = 0x9E4C90;
+inline constexpr std::ptrdiff_t Integer = 0x9E7F50;
+inline constexpr std::ptrdiff_t Float = 0x9E7B70;
+inline constexpr std::ptrdiff_t String = 0x9EA380;
+inline constexpr std::ptrdiff_t Handle = 0x9E5450;
 inline constexpr std::ptrdiff_t AddListenerSlot = 0x18;
 inline constexpr std::ptrdiff_t FindListenerSlot = 0x20;
 inline constexpr std::ptrdiff_t FireClientSlot = 0x40;

@@ -7,7 +7,7 @@
 namespace {
 // Frozen from the installed AMD64 tier0.dll. tools/inspect_aim_console.py checks
 // the named export, complete printf-varargs prologue, and native client callers.
-constexpr DWORD Tier0Timestamp = 0x6ACFCBF4;
+constexpr DWORD Tier0Timestamp = 0x6ADA3248;
 constexpr DWORD Tier0ImageSize = 0x401000;
 constexpr std::uintptr_t MsgRva = 0x7EE60;
 constexpr unsigned char MsgPrologue[]{

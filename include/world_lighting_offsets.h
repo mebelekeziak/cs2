@@ -2,14 +2,14 @@
 #include <cstddef>
 #include <cstdint>
 // Installed AMD64 scenesystem.dll fingerprint and operands verified from disk.
-// CS2 1.41.9.1, recertified October 15, 2026.
-// SHA256 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
+// CS2 1.41.9.2, recertified October 23, 2026.
+// SHA256 0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b.
 namespace world_lighting_offsets {
-inline constexpr std::uint32_t Timestamp = 0x6ACFCD4F, ImageSize = 0x978000;
+inline constexpr std::uint32_t Timestamp = 0x6ADA337D, ImageSize = 0x978000;
 inline constexpr std::uintptr_t PackLocalLight = 0x1B14B0;
 inline constexpr std::uintptr_t PackThunk = 0x1B14A0;
 inline constexpr std::uintptr_t PackReturn = 0x1B2537;
-inline constexpr std::uintptr_t BinnerVtable = 0x5FE688;
+inline constexpr std::uintptr_t BinnerVtable = 0x5FE678;
 inline constexpr std::size_t PackSlot = 0x70;
 inline constexpr std::size_t GpuStride = 0x1E0, GpuRadiance = 0xA0;
 inline constexpr std::uintptr_t OutputStrideInstruction = 0x1B2519;

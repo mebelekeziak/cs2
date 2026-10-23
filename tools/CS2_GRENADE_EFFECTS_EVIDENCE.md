@@ -119,3 +119,53 @@ reentrant cooperative stop, stale client identity and unchanged caller bytes.
 These checks and installed-file evidence do not establish actual appearance.
 Live volume/inside-haze/flash disappearance still needs observation in the
 authorized offline/private client environment.
+
+## October 23, 2026 recertification: Steam build 26144732
+
+Installed Windows AMD64 client patch **1.41.9.2**, client/server **2000935**.
+Read-only investigation used the documented Steam game installation; no game
+process was opened or launched, and no installed files were changed.
+
+| Module | PE timestamp / image size | SHA-256 |
+| --- | --- | --- |
+| client.dll | `0x6ADA7340` / `0x29A0000` | `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5` |
+| scenesystem.dll | `0x6ADA337D` / `0x978000` | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` |
+| materialsystem2.dll | `0x6ADA32D5` / `0x186000` | `2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69` |
+| tier0.dll | `0x6ADA3248` / `0x401000` | `f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d` |
+
+Research scripts, candidate searches, decoded current instruction windows and
+positive/negative JSON reports are retained under
+`logs/research/26144732/render_grenade/`. Optional discovery used Capstone
+**5.0.9**; the frozen verifiers remain standard-library Python and reject
+unrecognized complete module hashes before checking contracts. Discovery
+masked only instruction-decoded RIP-relative displacements and relative branch
+immediates to locate candidates; the final frozen checks contain exact current
+bytes/hashes and unmasked independently decoded operands.
+
+Smoke descriptor RTTI moved `0x1CA82E8 -> 0x1CAA228`; render slot 1 now
+resolves `0xD20410 -> 0xD21A60`. The complete `0xEE` byte render window retains
+all seven Microsoft-x64 arguments, early native pass dispatch and forwarding.
+DrawMask dispatch at `0xD21AE7` reaches `0xD22F90`; normal dispatch at
+`0xD21B30` reaches `0xD21B50`. Supporting screenshot resolver RTTI now resolves
+`0x1213EE0`, and its full `0x77` byte window is pinned. The runtime still hooks
+the actual volume descriptor and transient alpha inputs.
+
+The only direct call to independently found opacity getter
+`0xCA06E0 -> 0xCA1FE0` is at `0xC69936`; caller window moves
+`0xC689C3 -> 0xC69933`, return site `0xC689CB -> 0xC6993B`.
+Its full caller and `0x557` byte getter remain pinned. XMM0 return and native
+previous/current smoke opacity publication `+0x1530` remain unchanged.
+
+Flash key `0x47DC283C` locates the new producer
+`0x11D9BE0 -> 0x11DBE10`. Its complete `0x6B` byte window still broadcasts
+the pawn `+0x1504` white-overlay alpha and `+0x1500` screenshot alpha into
+stack float4 inputs. Both calls now reach writer `0x16AE20 -> 0x16AE00`;
+returns are `0x11DBE4B` and `0x11DBE7B`, with unchanged screenshot key
+`0xF0372CC4`. Runtime entry and entire producer fingerprints were refreshed.
+No persistent entity/simulation writes or new lifecycle behavior were added.
+
+`python tools/inspect_grenade_effects.py` passes. **17** individual bad-header
+variants reject: all 12 numeric constants and five entry/producer/caller arrays.
+Reports are `effects-verified.json` and `negative-results.json` in the research
+directory above. Actual smoke/haze/flash appearance remains unobserved;
+static contracts, builds and live observations remain separate claims.

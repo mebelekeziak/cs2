@@ -1,6 +1,45 @@
 # Autofire direct line of fire
 
-## Current static recertification, October 21, 2026
+## Current static recertification, October 23, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.2`, client/server `2000935`,
+Steam build `26144732`, Source revision `11162119`, version date October 22,
+2026, 14:13:16. Installation and executable remain the documented Steam paths.
+Client SHA-256 is `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Investigation read installed files only. Independent scratch code located new
+native windows, decoded them with Capstone 5.0.9, and compared instruction and
+data contracts with the preserved preceding image. Relative instruction operands
+were decoded, and jump tables, schema members, numeric constants and named
+registrations were checked separately. No uniform relocation was assumed.
+Research, all 71 current native windows, complete disassembly and a sixteen-case
+negative-header report are retained under `logs/research/26144732/ballistics/`.
+Unknown file hashes remain rejected. No client/server process was launched or
+opened, and no installed file changed. Live behavior remains unobserved.
+
+The bullet-filter producer relocates `0x887F56 -> 0x888D86` and its call at
+`0x888DA1` independently resolves constructor `0x352920 -> 0x352CC0`.
+All native mask/layer/flag/exclusion operands and serial ownership are unchanged.
+The complete constructor remains synchronous with the same five-argument ABI.
+
+Zero-bounds ray initialization relocates `0x36DDB0 -> 0x36E880`, DidHit
+`0x360720 -> 0x360D00`, and result initializer `0x17794AE -> 0x177B70E`.
+The selected entity consumer is `0x9A25C5`; trace entity `+8`, flag `+0xBB`,
+fraction `+0xAC`, result size `0xC0` and ray kind zero stay unchanged.
+Complete TraceShape (1294 bytes, including its chained unwind fragments) at
+`0xA1AE30..0xA1B33E` and InitializeTrace (600 bytes) at
+`0x177B560..0x177B7B8` retain the preceding build's complete instruction
+contracts after decoding relative/RIP operands, with no other byte changes.
+Both complete functions are now frozen in the occlusion verifier as additional
+checks. The shared third-person verifier independently establishes trace manager,
+six-argument trace ABI, shape/result constructors and header contracts.
+
+`python tools/inspect_aim_occlusion.py` passes all 10 native windows and shared
+checks. Negative changes to `InitializeFilter`, `ShotMask`, `TraceEntity` and
+`InitializeFilterBytes` reject.
+
+## Historical static recertification, October 21, 2026
 
 Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
 Steam build `26087496`, Source revision `11150591`, version date October 20,

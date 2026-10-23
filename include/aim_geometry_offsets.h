@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 
-// Installed AMD64 client 2000934, recertified October 21, 2026.
+// Installed AMD64 client 2000935, recertified October 23, 2026.
 // Client and animationsystem schema; see inspect_aim_geometry.py.
 // These are read-only resource layouts, not cached player bone indices/radii.
 namespace aim_geometry_offsets {

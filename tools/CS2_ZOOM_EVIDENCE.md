@@ -1,5 +1,64 @@
 # Scoped weapon zoom and native view FOV
 
+## Build 2000935 update — October 23, 2026
+
+Verified the installed Windows AMD64 **client**, patch `1.41.9.2`,
+client/server `2000935`, Steam build `26144732`. Client SHA-256 is
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`. The installation remains
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+This supersedes the runtime values in historical sections below.
+
+Header `zoom_offsets.h` changes, relative to build 26087496:
+
+| Source symbol | Previous | Current |
+| --- | --- | --- |
+| `OverrideView` | `0xd02e30` | `0xd04490` |
+| `ModeVtable` | `0x1c9fc20` | `0x1ca1b50` |
+| `BaselineFov` | `0x93fc40` | `0x940a70` |
+| `Scoped` | `0x1e98` | `0x1ea0` |
+| `MouseConvert` | `0xba6ed0` | `0xba7d10` |
+| `MouseConvertAlternate` | `0xba6d00` | `0xba7b40` |
+| `MouseInput` | `0x257b640` | `0x257d780` |
+| `MouseInputVtable` | `0x1c9db20` | `0x1c9fa58` |
+| `MouseScale` | `0xb80180` | `0xb80fc0` |
+| `MouseScaleUnit` | `0x1ac6074` | `0x1ac8084` |
+| `MouseCaller` | `0xb655c3` | `0xb66403` |
+| `MouseScopeDispatch` | `0xba68da` | `0xba771a` |
+
+Rediscovery used all six named scoped-weapon primary RTTI tables and their
+`+0xBF0` zoom-FOV method, `ClientModeCSNormal` slot 16, named schema registrations,
+the current native baseline getter and the complete mouse caller/dispatcher/
+conversion chain. `C_CSPlayerPawn::m_bIsScoped` moves `0x1E98 -> 0x1EA0`;
+registration `0x223BAC8`, field array `0x223AD40`, count 105 and the visual
+producer's `cmp byte [rbx+0x1EA0],0` independently establish the new field.
+Weapon-services `+0x12F0`, active handle `+0x60`, weapon zoom-level `+0x1F20`,
+desired FOV `+0x794`, view FOV `+0x498` and sensitivity adjust `+0x149C` remain.
+
+All seventeen windows were fully decoded. FOV selection, projection use and
+mouse argument ABI remain: normal
+`void(int,float,float,float,float*,float*,int*,int*)`, alternate
+`void(int,float,float,float,float,float*,float*)`. The embedded input constructor
+still writes the independently found RTTI table; its literal baseline is 1.0,
+and the dispatcher multiplies positive native scope adjustment before forwarding
+XMM3. Indexed alternate-path Cvar storage moved, without changing this contract.
+No algorithm, ownership or cooperative-stop change.
+
+The frozen verifier still rejects unknown module hashes before using its sites,
+and checks complete new windows, independently decoded operands/identities,
+header constants and all fingerprints. Research/disassembly and the passing
+`python tools/inspect_zoom.py` report are under
+`logs/research/26144732/view_model/` (`refined.json`, `addresses.json`,
+`schemas.json`, `verified_zoom.json`). All **28/28** temporary
+header scalar/array mutations reject; this verifier also rejects a one-byte
+changed workspace client copy. See `negative_checks.json` and
+`unknown_hash_checks.json` there. No installed file was changed.
+
+Static verification does not establish live appearance or gameplay behavior.
+No client/server was launched, no process was accessed, and no graphics runtime
+was observed in this pass. Build/CTest integration is recorded by the project
+update record; stopped callbacks remain resident until normal process exit.
+
 ## Build 2000934 recertification — October 21, 2026
 
 Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,

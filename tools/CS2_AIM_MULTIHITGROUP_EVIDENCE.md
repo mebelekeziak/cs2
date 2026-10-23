@@ -1,5 +1,11 @@
 # Authored landmarks for multi-hitgroup targeting
 
+October 23, 2026: client 2000935 / Steam build 26144732 recertification is
+recorded in [capsule geometry evidence](CS2_AIM_GEOMETRY_EVIDENCE.md) and
+[named landmark evidence](CS2_SILENT_AIM_HITBOX_EVIDENCE.md). The authored
+SAS asset hash and all selected bone/group/shape combinations remain unchanged.
+The following implementation evidence describes the historical build.
+
 Inspected October 20, 2026, from installed files and synthetic fixtures only.
 No CS2 client/server was launched, attached to or injected into for this work.
 The installed client remains native Windows AMD64 (`Machine=0x8664`), with

@@ -1,6 +1,44 @@
 # Native primary-request integration
 
-## Current static recertification, October 21, 2026
+## Current static recertification, October 23, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.2`, client/server `2000935`,
+Steam build `26144732`, Source revision `11162119`, version date October 22,
+2026, 14:13:16. Installation and executable remain the documented Steam paths.
+Client SHA-256 is `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Investigation read installed files only. Independent scratch code located new
+native windows, decoded them with Capstone 5.0.9, and compared instruction and
+data contracts with the preserved preceding image. Relative instruction operands
+were decoded, and jump tables, schema members, numeric constants and named
+registrations were checked separately. No uniform relocation was assumed.
+Research, all 71 current native windows, complete disassembly and a sixteen-case
+negative-header report are retained under `logs/research/26144732/ballistics/`.
+Unknown file hashes remain rejected. No client/server process was launched or
+opened, and no installed file changed. Live behavior remains unobserved.
+
+The native normal-builder recorder call relocates
+`0xD02171 -> 0xD037D1`, and independently resolves the recorder
+`0xD055C0 -> 0xD06C20`. Its entry, temporary event-list producer, recorder
+consumer, history append, primary-index store and builder compaction retain
+their complete instruction/layout/ownership contract. Input fields, button enum
+`IN_ATTACK = 1`, sparse presence masks and all three angle payload offsets are
+unchanged. The named enum now resolves via `0x1B2ADB0` to `0x1B2B018`.
+
+The sparse base-angle producer relocates to `0xB86C36`. CRC/replay consumers
+independently resolve the zero/default object `0x22082E8 -> 0x220A338`.
+Native allocation is `0x6731C0`; the base-angle clear helper `0x4FE670` calls
+the QAngle clear implementation `0x643D80`. This clear implementation moved
+independently of neighboring generated protobuf routines. Zero payload and the
+scalar clear/retain-message lifecycle are unchanged.
+
+`python tools/inspect_autofire.py` passes all 27 native/data checks, named enum,
+decoded source offsets, shared default object and native clear/allocation edges.
+Negative changes to `RecordHistory`, `InputEvents`, `BaseAnglesPresent` and
+`RecordHistoryBytes` reject.
+
+## Historical static recertification, October 21, 2026
 
 Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
 Steam build `26087496`, Source revision `11150591`, version date October 20,

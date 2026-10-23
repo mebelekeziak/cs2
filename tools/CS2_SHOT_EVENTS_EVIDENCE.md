@@ -1,5 +1,41 @@
 # Native shot-event observations
 
+## Current recertification — October 23, 2026
+
+Installed AMD64 client **1.41.9.2 / 2000935 / Steam 26144732**. Client SHA-256
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+timestamp `0x6ADA7340`, size `0x29A0000`. Static server emission image SHA-256
+`2a229dd46c8af0b52c1f49a3e343b99d9ffe946c102c56102a45b00f6a52349c`,
+timestamp `0x6ADA7343`, size `0x257F000`. No server was run or contacted.
+
+Scratch evidence is in `logs/research/26144732/core/`: named RTTI independently
+discovers manager vtable `0x1C337A8`, event vtable `0x1C334F0`, two-method listener
+vtable `0x1ACD678` (destructor `0x190680`, purecall `0x19FD244`). Registration
+for exact `weapon_fire` at `0xC60A52` loads manager slot `0x254DC00`; destructor
+comparison/clear at `0x9C5283` agrees. Add/Find/Fire methods are now
+`0x9CAB60`/`0x9E2A20`/`0x9E3790`. Typed getters are independently selected by
+their RTTI table slots, resolving otherwise structurally similar getter bodies.
+Fifteen frozen windows now cover all relocated native paths and enum records.
+All complete code bodies retain instruction/layout/ownership contracts, with
+decoded relative targets refreshed. HitGroup_t registration `0x21D19D8` points
+at fourteen enum records at `0x1AFABC0`; named values remain unchanged.
+
+Without an old raw server file, comparison used preserved complete disassembly
+and independent named event-string references. Full new producer windows are
+decoded and refrozen: weapon_fire `0xA151AC`, bullet_impact `0xA7DEF3`, hurt
+`0xA9B474`, combined controller/pawn setter `0xC2F2B0`. All normalized
+instructions agree except one native hurt producer member load `+0x150C` to
+`+0x1514`; this is native-only emission evidence, not a runtime adapter field.
+Creation slot +0x30, setter keys/serialized handle normalization, field widths,
+native dispatch/free ownership and broadcast path remain as decoded. The three
+VPK event assets retain exact hashes and schemas; events still have no shot ID
+or native event tick. Earlier address tables below are historical.
+
+`inspect_shot_events.py` passes. Four bad headers (manager, AddListener, getter
+slot, entry bytes) reject (`negative.json`). Exact unknown-build hash rejection
+remains. No callback was registered or observed live; build/test results are
+separate in `docs/CS2_UPDATE_26144732.md`.
+
 ## Current recertification — October 21, 2026
 
 Installed Windows AMD64 client: patch **1.41.9.1**, client/server **2000934**,

@@ -9,13 +9,14 @@ import json
 import re
 import struct
 from pathlib import Path
+from verify_sky_draw import primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64')
 HASHES = {
-    'scenesystem.dll': '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5',
-    'worldrenderer.dll': 'f9eeff50acb10a89ab78c98d2726d3e5e6b5adf7a8b11be2a41cb5ebded11dac',
-    'materialsystem2.dll': 'b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6',
+    'scenesystem.dll': '0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b',
+    'worldrenderer.dll': 'e0b1ed04a652f8268fd9d6b75b5a97910ab57197e2cdb8a0a4966703a5ec8322',
+    'materialsystem2.dll': '2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69',
 }
 
 def mapped(path):
@@ -63,6 +64,8 @@ def main():
         if bytes(image[site:site+len(expected)]) != expected:
             raise SystemExit(f'Instruction evidence differs: {site:#x}')
     callback = struct.unpack_from('<Q',image,literal('AggregateVtable')+0x20)[0]-base
+    if primary_vtable(image, base, b'.?AVCAggregateSceneObjectDesc@@') != rip(0x3A88A,'488d05'):
+        raise SystemExit('Aggregate constructor does not select its primary RTTI table')
     fields = {
         'Timestamp': timestamp, 'ImageSize': len(image),
         'MaterialTimestamp': modules['materialsystem2.dll'][3],
@@ -111,10 +114,11 @@ def main():
     if bytes(world[target:world.find(0,target)]) != b'AggregateSceneObjectDesc':
         raise SystemExit('World descriptor name differs')
     # Independently check the invoked material virtual's two-argument ABI and
-    # selected-variant return. These were re-disassembled before repinning the
-    # 1.41.9.1 DLLs; no offsets or layouts changed in this update.
+    # selected-variant return. Re-disassembled for 1.41.9.2; RTTI table moved,
+    # while the virtual method and selected-variant contract remain unchanged.
     _,material,material_base,_ = modules['materialsystem2.dll']
-    if struct.unpack_from('<Q',material,0x129AD0+0x30)[0]-material_base != 0xBA30:
+    material_table = primary_vtable(material, material_base, b'.?AVCMaterial2@@')
+    if material_table != 0x129AE0 or struct.unpack_from('<Q',material,material_table+0x30)[0]-material_base != 0xBA30:
         raise SystemExit('CMaterial2 native variant virtual differs')
     material_checks = {
         0xBA30:'40534883ec20488bd9e892feffff4885c07509488bc34883c4205bc3488b40284883c4205bc3',

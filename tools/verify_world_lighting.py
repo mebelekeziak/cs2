@@ -5,7 +5,7 @@ import json
 import re
 import struct
 from pathlib import Path
-from verify_sky_draw import mapped, require_bytes
+from verify_sky_draw import mapped, require_bytes, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT = Path(r'C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game')
@@ -18,15 +18,15 @@ def main():
     args = parser.parse_args()
     raw, image, base, nt = mapped(args.game / 'bin/win64/scenesystem.dll')
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
+    if digest != '0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b':
         raise SystemExit('Changed scenesystem.dll: investigate before changing lighting.')
     # These identities and instruction locations are frozen independently of the
     # implementation header. A header edit cannot redefine the expected binary.
     scopes = {
-        'final_gpu_pack': (0x1B14B0, 0x1B244F, '8c26a6a330d6a4fb4315cc748ea1ac45f178f5619b3dca261687ec6f373602ff'),
+        'final_gpu_pack': (0x1B14B0, 0x1B244F, 'bc4994c5c07b3dc4906b337bd56e8ae672b82b60a0cb15674c9089ca5bfa9ee1'),
         'gpu_array_upload': (0x1B2450, 0x1B2612, 'c59b6411baa962e62ba94057c298380d2bd2a88748676470b1bae4a699d20d01'),
         'selected_sun_removal': (0x1A7FD0, 0x1A814B, 'c24ab7cd649d275f8c4f7e15da610b2db9c0f15ed343787aa1f79a58948aad0c'),
-        'registered_light_gather': (0x19FE30, 0x1A0F7C, 'e7e5d936b114ab71e2ccc177b73e54abf6daa35292c3c1eae66bb495d9c10dcf'),
+        'registered_light_gather': (0x19FE30, 0x1A0F7C, '1413e159d1aca46744a5cda7223b190e34e2d8017d65b70b1c39bef0ba1b1c43'),
     }
     for label, (start, end, expected) in scopes.items():
         if hashlib.sha256(image[start:end]).hexdigest() != expected:
@@ -63,7 +63,10 @@ def main():
         'ordinary_upload_call': (0x1B4569, 'e8e2deffff'),
     }
     require_bytes(image, checks)
-    thunk = struct.unpack_from('<Q', image, 0x5FE688 + 0x70)[0] - base
+    table = primary_vtable(image, base, b'.?AVCLightBinnerGPU@@')
+    if table != 0x5FE678:
+        raise SystemExit('Changed CLightBinnerGPU primary RTTI table')
+    thunk = struct.unpack_from('<Q', image, table + 0x70)[0] - base
     if thunk != 0x1B14A0:
         raise SystemExit('Changed CLightBinnerGPU packing vtable target')
     # Decode branch targets, strides, slot and RGB displacements from installed
@@ -74,7 +77,7 @@ def main():
         'PackLocalLight': thunk + 5 + struct.unpack_from('<i', image, thunk + 1)[0],
         'PackThunk': thunk,
         'PackReturn': 0x1B2533 + 4,
-        'BinnerVtable': 0x5FE688,
+        'BinnerVtable': table,
         'PackSlot': image[0x1B2536],
         'GpuStride': struct.unpack_from('<I', image, 0x1B251C)[0],
         'GpuRadiance': struct.unpack_from('<I', image, 0x1B17BF)[0],

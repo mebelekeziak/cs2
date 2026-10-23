@@ -1,5 +1,105 @@
 # Movement evidence for the installed client
 
+## Static update — October 23, 2026, Steam build 26144732
+
+Target: installed Windows AMD64 **client**, patch **1.41.9.2**, client/server
+**2000935**, Source revision **11162119**, version date October 22, 2026,
+14:13:16. Executable remains `game/bin/win64/cs2.exe`; inspected module:
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
+Client SHA-256 changed from
+`5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49` to
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6AD7B41C -> 0x6ADA7340`, SizeOfImage
+`0x299D000 -> 0x29A0000`, machine remains `0x8664`.
+
+All **53** movement windows were rediscovered in the new PE. The embedded
+`CCSGOInput` constructor at `0xEE574/0xEE58C` resolves object `0x257D780` and
+vtable `0x1C9FA58`; the constructor's store independently targets that same
+embedded object. RTTI locator `0x1F256C8`, type descriptor `0x232A400` and
+`.?AVCCSGOInput@@` establish its ownership. Slot 6 resolves to `0xCEE5F0`.
+The producer calls slot 6 at `0xB677A8`; RCX=input/RDX=command and synchronous
+command ownership are preserved.
+
+The modern-jump call at `0x8E057B` passes `services+0x6C8` and calls `0x8C4320`;
+its move-data tick/fraction stay `+0xD4/+0xDC`. Ground-state, velocity and landing
+stamp operands retain their meaning. The native max-speed caller at `0x8A2F61`
+selects the pawn helper `0x8CED20` (RCX=pawn, XMM0=float result). This helper's
+native defusing/hostage/use fields moved `+0x1E9A/+0x1E9B/+0x1E9C` to
+`+0x1EA2/+0x1EA3/+0x1EA4`, matching the new pawn schema; the wrapper still calls
+the native helper rather than reading these internal fields directly.
+
+All ten named Cvar registration functions were resolved by their exact names,
+then their wrapper starts decoded independently from LEA RCX; native selectors
+still use wrapper+8 and value+0x58. All six named schema templates and their
+consumed fields remain compatible. `CCSPlayer_MovementServices` RTTI vtable
+`0x1C12F28`, slot30, selects `0x8EA340 -> 0xA781C0`; this distinguishes the player
+thunk from a second observer thunk with the same target. Ingestion remains
+void(services*, command*). Subtick allocation/append calls at
+`0xB6745C/0xB67467` decode `0x4F82A0/0x1235270`, retaining arena ownership and
+repeated-container layout. Tick quantum is still 0.015625 seconds, stamina
+scale 100 and ground acceleration floor 250.0.
+
+Source runtime changes in `include/movement_offsets.h` (all values below are module RVAs):
+
+| Symbol | Previous 26087496 | Current 26144732 |
+| --- | --- | --- |
+| `Input` | `0x257B640` | `0x257D780` |
+| `InputVtable` | `0x1C9DB20` | `0x1C9FA58` |
+| `Finalize` | `0xCECF90` | `0xCEE5F0` |
+| `ModernJump` | `0x8C34F0` | `0x8C4320` |
+| `EffectiveMaxSpeed` | `0x8CDEF0` | `0x8CED20` |
+| `AirCap` | `0x25325B0` | `0x2534470` |
+| `AirAccelerate` | `0x2564E90` | `0x2566E50` |
+| `GroundAccelerate` | `0x2564E80` | `0x2566E40` |
+| `GroundFriction` | `0x2564EF0` | `0x2566EB0` |
+| `StopSpeed` | `0x2564DF0` | `0x2566DB0` |
+| `GroundAccelerationSpeedFloor` | `0x1BB7194` | `0x1BB90C4` |
+| `AutoBunnyhop` | `0x2532758` | `0x2534618` |
+| `JumpPenalty` | `0x25325A0` | `0x2534460` |
+| `JumpPrecision` | `0x2532640` | `0x2534500` |
+| `LegacyJump` | `0x2532670` | `0x2534530` |
+| `BhopWindow` | `0x25324B0` | `0x2534370` |
+| `Ingest` | `0xA77390` | `0xA781C0` |
+| `AllocateSubtick` | `0x4F74A0` | `0x4F82A0` |
+| `AddAllocatedSubtick` | `0x1233010` | `0x1235270` |
+| `TickIntervalConstant` | `0x1AC6064` | `0x1AC8074` |
+| `StaminaScaleConstant` | `0x1AC6098` | `0x1AC80A8` |
+| `SurfaceManager` | `0x254E100` | `0x2550100` |
+
+All other consumed member offsets, presence/button masks, strides and vtable
+indices in this header were independently rechecked and remain unchanged.
+The frozen verifier retains exact unknown-hash rejection and uses the newly
+decoded instructions/schema operands to check the source header. Discovery
+used Capstone 5.0.7 locally; the final verifier uses Python's standard library.
+Only RIP-relative addressing and decoded relative branch/call operands were
+ignored during candidate discovery. Every final instruction window is exact;
+no wildcard or relocation-delta fallback is accepted by the frozen verifier.
+
+Research is under `logs/research/26144732/input/`: `window_candidates.json`,
+`function_mapping.json`, `resolved_mapping.json`, `new_contract_disassembly.txt`
+and `native_windows.json` preserve the candidates, operand derivations and
+body comparisons. The preserved prior test fixture's full hash differs from
+the prior installed hash, so it was used only for scoped comparison where all
+53 movement, 25 history, 37 anti-aim windows and all ten previous native body
+hashes match their previously frozen evidence. It was not used to certify a
+whole prior binary. Initial all-component rejection is retained separately in
+`logs/compatibility/20261023T131613316408Z/`.
+
+Validation: `python tools/inspect_movement.py` passes; `movement.json` records the report.
+`negative_headers.json` records rejection of temporary header mutations to
+`Input`, `services::Friction`, `FinalizeBytes`, plus rejection of the unfamiliar fixture hash. The nine header
+mutations across these three components and three unknown-hash checks all fail
+as intended. Build/CTest results belong to the primary update record.
+
+No game process was launched/opened, no server was contacted and no installed
+file was changed. Initialization, command-owner mutation, pointer lifetimes,
+restoration and cooperative stop behavior are unchanged. Stopped code remains
+resident until normal process exit. Current runtime/graphics API, hopping,
+steering, shot behavior and camera appearance remain unobserved; this update
+establishes static compatibility only. Earlier sections retain historical
+build-specific addresses and observations.
+
+
 ## October 22 revision 10: Axion steering port
 
 Only the client autostrafe planner changes. `src/movement_steering.cpp` adapts

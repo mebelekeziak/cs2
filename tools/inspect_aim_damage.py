@@ -12,59 +12,62 @@ import struct
 from verify_sky_draw import DEFAULT, mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
-ANIMATION_HASH = 'fb2b4cd71468e880c3b3845e8e7a18c9d550dd3c4504e4a257a2110fb91c1235'
-SCHEMA = {
-    'CCSWeaponBaseVData': (0x221AAE8, 0x2219F80, 83,
-        {'m_nDamage': 0x820, 'm_flHeadshotMultiplier': 0x824, 'm_flArmorRatio': 0x828, 'm_flRangeModifier': 0x834}),
-    'C_CSPlayerPawn': (0x2239A68, 0x2238D10, 105,
-        {'m_ArmorValue': 0x1EC8, 'm_bGunGameImmunity': 0x3508, 'm_flHealthShotBoostExpirationTime': 0x15A8}),
-    'C_BasePlayerPawn': (0x21F4588, 0x21F41F0, 28, {'m_pItemServices': 0x12F8}),
-    'CCSPlayer_ItemServices': (0x2220EC8, 0x2220E70, 2, {'m_bHasHelmet': 0x49}),
-}
+EXPECTED_HASH = 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'
+ANIMATION_HASH = '8aa57d0c5b90cb49ad5fd9f141004710180a601b08159e50e93c4470142ea132'
+SCHEMA = {'CCSWeaponBaseVData': (35769608,
+                        35766688,
+                        83,
+                        {'m_nDamage': 2080,
+                         'm_flHeadshotMultiplier': 2084,
+                         'm_flArmorRatio': 2088,
+                         'm_flRangeModifier': 2100}),
+ 'C_CSPlayerPawn': (35896008,
+                    35892544,
+                    105,
+                    {'m_ArmorValue': 7888, 'm_bGunGameImmunity': 13576, 'm_flHealthShotBoostExpirationTime': 5544}),
+ 'C_BasePlayerPawn': (35612648, 35611728, 28, {'m_pItemServices': 4856}),
+ 'CCSPlayer_ItemServices': (35796808, 35796720, 2, {'m_bHasHelmet': 73})}
 CONSTANTS = {'Damage': 2080,
  'HeadshotMultiplier': 2084,
  'ArmorRatio': 2088,
  'RangeModifier': 2100,
- 'ArmorValue': 7880,
+ 'ArmorValue': 7888,
  'ItemServices': 4856,
  'HasHelmet': 73,
- 'ItemServicesVtable': 29429200,
+ 'ItemServicesVtable': 29437280,
  'ServicePawn': 56,
  'GunGameImmunity': 13576,
- 'DamageScaleCtBody': 38521464,
- 'DamageScaleCtHead': 38521480,
- 'DamageScaleTBody': 38521496,
- 'DamageScaleTHead': 38521512,
- 'HeadshotOnly': 38521448,
+ 'DamageScaleCtBody': 38529752,
+ 'DamageScaleCtHead': 38529768,
+ 'DamageScaleTBody': 38529784,
+ 'DamageScaleTHead': 38529800,
+ 'HeadshotOnly': 38529736,
  'CvarValuePointer': 8,
  'CvarValue': 88,
  'TraceHitbox': 16,
  'HitboxGroup': 56,
- 'UnknownHitboxPointer': 41106880,
+ 'UnknownHitboxPointer': 41114976,
  'HealthShotBoostExpiration': 5544}
-WINDOWS = {'WeaponDamageInputs': (13777731, 41, '0ac47a99a7bd3c08a57543e4ac67262932711193a69a474c223a726ff0e8eaba'),
- 'DamageScales': (9034225, 72, '8e6f04d41d7af873067c487f7467f573dac3726ca2e35e2e44ed569eb9261297'),
- 'HeadAndBodyScale': (9034568, 204, '3352a8992a6b576b6fe7141e616e901fa35f0f87e99ffa5b458a1af913e1e3d0'),
- 'ScaleJumpTable': (9035440, 32, 'a99b2cdadb585496cd6fd31cb5a5c28861dae0933b42b880f40ff1eddb38bc21'),
- 'ArmorCoverage': (9276656, 116, '6317ef95232772cbb6110dd551df839f639e8450344c352819b5cd2fbaac9125'),
- 'ArmorRatioGetter': (8929974, 12, '92bd0b76e4ababda336f9a3cb04e6a34d6984d73413948a246de3c1ecc228f64'),
- 'ArmorCalculation': (9044050, 107, '50080077d7cd16adcfeeb280d86774cd87f6373b21c8f4dee644520d34b2b49b'),
- 'RangeFalloff': (9050237, 40, '6b48bb6ba4cd928b31766bf86a27f894f5a9099f3724e4fd73238bc66aedce93'),
- 'TraceHitgroup': (11198272, 64, '921bf1ff2e3a4f8b08266e296832f4e73ae4a140542a71f0eabc95a8542a37ac'),
- 'TraceUnknownHitbox': (24614240, 15, '93a7118a9740163c3cbb16da32f9d0ac2b6c0c5d449d572f718662e4bfabcaae'),
- 'CtBodyRegistration': (547744, 144, '371d450e3421106fce2ef1d67bb70f4ceeff80430bfe0c32680d3189dc63682b'),
- 'CtHeadRegistration': (547904, 144, 'c377a6af63a2514722c556b14a4a59045bee0054a8b1e3e6fabfe2793740e51f'),
- 'TBodyRegistration': (548064, 144, '00cdc74e6bd88ffddf5d0ccac4dbf05057df369b2b73cf2e4b59531f63e3647c'),
- 'THeadRegistration': (548224, 144, 'b023062daca0501dfefac0c3cf19f37bf6bafc8b731ed6391ea45aa2ba783aa7'),
- 'HeadshotOnlyRegistration': (547568,
-                              166,
-                              'c2a7f05f4e8e455cd26140ba4e47545407beb5d39f28c47dee8a2cc520b014d2'),
- 'HeadshotOnlyConsumer': (9034788, 162, '9a16979c6da86fccaf5a894d7eb44f150b0f103e0841196f55da33bb672614e4'),
- 'HealthshotTimeQuery': (9227504, 91, 'b45c8ceda9dbf08a665b673e7cbf7011f408c37681152b6bae04cda8e34367a0'),
- 'HealthshotDamageScale': (9043556, 36, 'f9fbf8e03013bb2d37641ba38381d266c7c923f44e2ef4b2e3386485c228145f'),
- 'ArmorRatioInitial': (8929632, 24, '7ca2442ce4df9cdf93b8ca0e35eb3a979d7c52e79f3f19ffb9abb81b8d415e9b'),
- 'ArmorBonusInitial': (9044013, 18, 'c6b0236858e055c7c0bad9fae911645d8cf81b67b287781e08757dfc0ad8b330')}
+WINDOWS = {'WeaponDamageInputs': (13783443, 41, 'b42cbe034c28fd2c731cbfbe48ed381a3d5db9e780cbf2712c052da44221c5cd'),
+ 'DamageScales': (9037857, 72, 'df84344aabe1ef19f7939010439b77884c509c92c76fa9a495d707375c4808dd'),
+ 'HeadAndBodyScale': (9038200, 204, '85576439368adf71523759c473d43ad083a8e2b0c8084a33d3b466e9cf9a6f0e'),
+ 'ScaleJumpTable': (9039072, 32, '43e174eeed108a87a59718ca8bff7219d9d08273b97c499d3e9087516eb2b48c'),
+ 'ArmorCoverage': (9280288, 116, '3f642f12b1e3100154f38be9d16f0caa02e71680cbdcd4dd930189c9a4b641bf'),
+ 'ArmorRatioGetter': (8933606, 12, '92bd0b76e4ababda336f9a3cb04e6a34d6984d73413948a246de3c1ecc228f64'),
+ 'ArmorCalculation': (9047682, 107, 'a37427b7911fa19754e0fd8c21e9b87706260cc4afc85c02037fd90d7713e6e2'),
+ 'RangeFalloff': (9053869, 40, '3263dc3ddf6e039f9dc4424ec317cdfebcd7e075f9233d209b48aac545205146'),
+ 'TraceHitgroup': (11201920, 64, 'a4c684bcec8c6393f991f8e177831793f23a6c5747c354e3334501cc88970884'),
+ 'TraceUnknownHitbox': (24623040, 15, 'ec041288f58528dd6a09575c4de504633a67f9699f8425ace15147fe6681e5f7'),
+ 'CtBodyRegistration': (547744, 144, '7f176c087eeddb4734cdfa66e2d0ffbe2f632280b13548343e295a780c3beda2'),
+ 'CtHeadRegistration': (547904, 144, 'ea5e1f8a8b96779847d47bbfb82fb71463eeee0f692accff10b041329640d212'),
+ 'TBodyRegistration': (548064, 144, '17f3899e9a0ec1635ce7846b1a95aa5bb9e05a04b374f7c7dd67f694c2f8d96d'),
+ 'THeadRegistration': (548224, 144, 'b7d3c33dd3f68bc01ecef157862951d72305b4266abc69eedf56790389973ea3'),
+ 'HeadshotOnlyRegistration': (547568, 166, 'd9d78aaf3aafbca05fb1483730fba3e50a73b84fb0f4f2690e920b7158f9d1e9'),
+ 'HeadshotOnlyConsumer': (9038420, 162, '5b4ed658a664c9ea747bd0707455efa9f1ea1a2ddc1027ae2d22f58b1004ca0c'),
+ 'HealthshotTimeQuery': (9231136, 91, '76994e947131f53df1f6cf8f0f64fe7dfe4bfbca826c2b927cf32465aa091e20'),
+ 'HealthshotDamageScale': (9047188, 36, '5a8c0ae7afb9ef4b1d2f41059e6cbc144410cf8900fb63acb655003522be8685'),
+ 'ArmorRatioInitial': (8933264, 24, '5039b340b11dc207b03d9044eddc7a275ae19d381cb968b606ff2f0d7017da2c'),
+ 'ArmorBonusInitial': (9047645, 18, '64f0fe0e3a260f8b25dd04667242adaded39b91de3060165122ed21391a8b6a1')}
 
 
 def verify(game, header):
@@ -91,7 +94,7 @@ def verify(game, header):
             raise SystemExit(f'Changed schema damage fields: {owner}')
         fields[owner] = wanted
     # Independent CHitBox schema validates the trace's copied hitgroup field.
-    reg, arr = 0x81D848, 0x81D6A0
+    reg, arr = 0x81d6b8, 0x81d510
     aptr = lambda at: struct.unpack_from('<Q', anim, at)[0] - anim_base
     astr = lambda at: bytes(anim[at:anim.find(0, at)]).decode('ascii')
     if astr(aptr(reg)) != 'CHitBox' or aptr(reg + 0x28) != arr or struct.unpack_from('<H', anim, reg + 0x1C)[0] != 13:
@@ -104,28 +107,28 @@ def verify(game, header):
     for label, (at, size, digest) in WINDOWS.items():
         if hashlib.sha256(image[at:at+size]).hexdigest() != digest:
             raise SystemExit(f'Changed native damage window: {label}')
-    wrappers = {'DamageScaleCtBody': (0x85BB2, 0x85BBB, 'mp_damage_scale_ct_body'),
-        'DamageScaleCtHead': (0x85C52, 0x85C5B, 'mp_damage_scale_ct_head'),
-        'DamageScaleTBody': (0x85CF2, 0x85CFB, 'mp_damage_scale_t_body'),
-        'DamageScaleTHead': (0x85D92, 0x85D9B, 'mp_damage_scale_t_head'),
-        'HeadshotOnly': (0x85B70, 0x85B77, 'mp_damage_headshot_only')}
+    wrappers = {'DamageScaleCtBody': (0x85bb2, 0x85bbb, 'mp_damage_scale_ct_body'),
+        'DamageScaleCtHead': (0x85c52, 0x85c5b, 'mp_damage_scale_ct_head'),
+        'DamageScaleTBody': (0x85cf2, 0x85cfb, 'mp_damage_scale_t_body'),
+        'DamageScaleTHead': (0x85d92, 0x85d9b, 'mp_damage_scale_t_head'),
+        'HeadshotOnly': (0x85b70, 0x85b77, 'mp_damage_headshot_only')}
     for name, (name_at, wrapper_at, native_name) in wrappers.items():
         if string(rip(name_at)) != native_name or rip(wrapper_at) != CONSTANTS[name]:
             raise SystemExit(f'Changed named damage rule wrapper: {name}')
     # Bind rule consumers to the same wrappers; slot +8 holds current storage.
-    for at, wrapper in [(0x89D9F9,'DamageScaleCtBody'), (0x89DA02,'DamageScaleTBody'),
-                        (0x89DA23,'DamageScaleCtHead'), (0x89DA2C,'DamageScaleTHead'),
-                        (0x89DC24,'HeadshotOnly')]:
+    for at, wrapper in [(0x89e829,'DamageScaleCtBody'), (0x89e832,'DamageScaleTBody'),
+                        (0x89e853,'DamageScaleCtHead'), (0x89e85c,'DamageScaleTHead'),
+                        (0x89ea54,'HeadshotOnly')]:
         if rip(at) != CONSTANTS[wrapper] + CONSTANTS['CvarValuePointer']:
             raise SystemExit('Damage rule registration/consumer disagreement')
-    if rip(0x1779564) != CONSTANTS['UnknownHitboxPointer']:
+    if rip(0x177b7c4) != CONSTANTS['UnknownHitboxPointer']:
         raise SystemExit('Changed unknown trace-hitbox sentinel storage')
     # Full windows establish these operand widths and semantics.
-    if image[0xAADF49] != CONSTANTS['TraceHitbox'] or image[0xAADF5F] != CONSTANTS['HitboxGroup']:
+    if image[0xaaed89] != CONSTANTS['TraceHitbox'] or image[0xaaed9f] != CONSTANTS['HitboxGroup']:
         raise SystemExit('Changed trace hitbox/group operands')
-    if struct.unpack_from('<f', image, 0x1B14FE4)[0] != 500.0 or struct.unpack_from('<f', image, 0x1AC6070)[0] != 0.5:
+    if struct.unpack_from('<f', image, 0x1b17034)[0] != 500.0 or struct.unpack_from('<f', image, 0x1ac8080)[0] != 0.5:
         raise SystemExit('Changed native falloff or ordinary armor constants')
-    if struct.unpack_from('<d', image, 0x1C0E8D8)[0] != 1.25 or struct.unpack_from('<d', image, 0x1C0E8D0)[0] != 0.75:
+    if struct.unpack_from('<d', image, 0x1c10868)[0] != 1.25 or struct.unpack_from('<d', image, 0x1c10860)[0] != 0.75:
         raise SystemExit('Changed native stomach/leg multipliers')
     # Bind the exponent operation to its named import, not a presumed ABI.
     imports = {}
@@ -138,7 +141,7 @@ def verify(game, header):
             target = struct.unpack_from('<Q', image, original+i*8)[0]
             if not target: break
             imports[iat+i*8] = (string(name), '#'+str(target&0xFFFF) if target>>63 else string(target+2))
-    if imports.get(0x1AAD530) != ('tier0.dll', 'V_powf'):
+    if imports.get(0x1aaf528) != ('tier0.dll', 'V_powf'):
         raise SystemExit('Changed native range falloff exponent import')
     source = re.sub(r'//[^\n]*|/\*.*?\*/', '', header.read_text(encoding='utf-8-sig'), flags=re.S)
     for name, value in CONSTANTS.items():

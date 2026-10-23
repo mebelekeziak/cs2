@@ -11,8 +11,8 @@ import re
 import struct
 from verify_sky_draw import DEFAULT, ROOT, mapped, require_bytes
 
-TIER0_HASH = "990ea56bf1626d299ba54b64b423f2e409bd592bb737c7a5edf7972ad5c7143e"
-CLIENT_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
+TIER0_HASH = "f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d"
+CLIENT_HASH = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
 MSG_RVA = 0x7EE60
 COLOR_MSG_RVA = 0x7F710
 COLOR_EXPORT = "?ConColorMsg@@YAXAEBVColor@@PEBDZZ"
@@ -31,11 +31,10 @@ CHECKS = {
     "color_attach_copied_rgba": (0x7F7DB, "894424304c8d4c2440488d4424304889442460"),
     "color_dispatch_formatted_line": (0x7F7EE, "8b15b8dd3200488d842480000000488974242841b802000000488bcd4889442420e8fc850a00"),
 }
-CALLERS = {
-    "client_msg_string_1": (0x153C4F, "488bd0488d0d47209701ff15399d9501"),
-    "client_msg_string_2": (0x153C72, "488bd0488d0d34209701ff15169d9501"),
-    "client_color_stack_rgba_and_format": (0x1C6149, "c744244034ebd5ff488d4c2440488d15438d9001ff1595748e01"),
-}
+CALLERS = {'client_msg_string_1': (1391663, '488bd0488d0d77409701ff1551bd9501'),
+ 'client_msg_string_2': (1391698, '488bd0488d0d64409701ff152ebd9501'),
+ 'client_color_stack_rgba_and_format': (1859881,
+                                        'c744244034ebd5ff488d4c2440488d1573ad9001ff15ad948e01')}
 
 
 def string(image, rva):
@@ -128,14 +127,14 @@ def main():
     slot = import_slot(client, client_raw, client_nt, "tier0.dll", "Msg")
     color_slot = import_slot(client, client_raw, client_nt, "tier0.dll", COLOR_EXPORT)
     require_bytes(client, CALLERS)
-    for lea, call, expected_format in ((0x153C52, 0x153C59, "T     %s\n"), (0x153C75, 0x153C7C, "UWT1  %s\n")):
+    for lea, call, expected_format in ((0x153c32, 0x153c39, "T     %s\n"), (0x153c55, 0x153c5c, "UWT1  %s\n")):
         format_rva = lea + 7 + struct.unpack_from("<i", client, lea + 3)[0]
         target = call + 6 + struct.unpack_from("<i", client, call + 2)[0]
         if target != slot or string(client, format_rva) != expected_format:
             raise SystemExit("Native Msg caller no longer passes RCX=format, RDX=string")
-    if 0x1C615D + 6 + struct.unpack_from("<i", client, 0x1C615D + 2)[0] != color_slot:
+    if 0x1c613d + 6 + struct.unpack_from("<i", client, 0x1c613d + 2)[0] != color_slot:
         raise SystemExit("Native ConColorMsg caller no longer uses the verified import")
-    color_format = 0x1C6156 + 7 + struct.unpack_from("<i", client, 0x1C6156 + 3)[0]
+    color_format = 0x1c6136 + 7 + struct.unpack_from("<i", client, 0x1c6136 + 3)[0]
     result = {
         "status": "pass", "tier0": str(tier0_path), "tier0_sha256": tier0_hash,
         "client": str(client_path), "client_sha256": client_hash,

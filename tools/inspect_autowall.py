@@ -33,17 +33,17 @@ def verify(game, header):
     def u32(at): return struct.unpack_from('<I', image, at)[0]
     def ptr(at): return struct.unpack_from('<Q', image, at)[0] - base
     def string(at): return bytes(image[at:image.index(0, at)]).decode('ascii')
-    registration, fields = 0x221AAE8, 0x2219F80
+    registration, fields = 0x221cd08, 0x221c1a0
     if string(ptr(registration)) != 'CCSWeaponBaseVData' or ptr(registration+0x28) != fields:
         raise SystemExit('Changed weapon schema owner')
     named = {string(ptr(fields+i*32)): u32(fields+i*32+16) for i in range(83)}
     if named.get('m_flPenetration') != contract['constants']['Penetration']:
         raise SystemExit('Changed named weapon penetration field')
     # Independent native operands bind schema, stack layouts and buffer strides.
-    operands = {'Penetration': (0xD23B5F, 4), 'SegmentCount': (0x885755, 4),
-        'Segments': (0x885793, 4), 'HitSize': (0xA19F9A, 1),
-        'SegmentFlags': (0x8A1844, 1), 'SegmentFirst': (0x8A18AE, 1),
-        'SegmentLast': (0x8A1A59, 1)}
+    operands = {'Penetration': (0xd251af, 4), 'SegmentCount': (0x886585, 4),
+        'Segments': (0x8865c3, 4), 'HitSize': (0xa1adca, 1),
+        'SegmentFlags': (0x8a2674, 1), 'SegmentFirst': (0x8a26de, 1),
+        'SegmentLast': (0x8a2889, 1)}
     # Full frozen functions establish semantics; also decode the selected immediates.
     for name, (at, width) in operands.items():
         value = int.from_bytes(image[at:at+width], 'little')

@@ -67,7 +67,7 @@ def main():
     args = parser.parse_args()
     raw, image, base, nt = mapped(args.game / 'bin/win64/scenesystem.dll')
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5':
+    if digest != '0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b':
         raise SystemExit('Changed scenesystem.dll: repeat independent investigation.')
     checks = {
         'render_entry': (0x154FB0, '4585c90f8e1f0700004c8bdc554156498dab58fcffff4881ec98040000'),
@@ -91,16 +91,16 @@ def main():
     require_bytes(image, checks)
     client_raw, client, _, client_nt = mapped(args.game / 'csgo/bin/win64/client.dll')
     client_digest = hashlib.sha256(client_raw).hexdigest()
-    if client_digest != '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49':
+    if client_digest != 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5':
         raise SystemExit('Changed client.dll: repeat lighting discriminator investigation.')
     producer_bytes = bytes.fromhex('c780c40000009eee8108')
     producer = client.find(producer_bytes)
     if producer < 0 or client.find(producer_bytes, producer + 1) >= 0:
         raise SystemExit('Expected one lighting-kind producer')
     require_bytes(client, {
-        'lighting_kind': (0x28269E, producer_bytes.hex()),
-        'lighting_material_create_and_output': (0x282687, '488b93a0100000488b01ff9038010000488983f0100000'),
-        'lighting_updater_entry': (0x282390, '48895c241048897424185557415441554157488bec4883ec70'),
+        'lighting_kind': (0x28267E, producer_bytes.hex()),
+        'lighting_material_create_and_output': (0x282667, '488b93a0100000488b01ff9038010000488983f0100000'),
+        'lighting_updater_entry': (0x282370, '48895c241048897424185557415441554157488bec4883ec70'),
     })
     table = primary_vtable(image, base, b'.?AVCSkyBoxObjectDesc@@')
     if struct.unpack_from('<Q', image, table + 0x20)[0] - base != 0x36C00:

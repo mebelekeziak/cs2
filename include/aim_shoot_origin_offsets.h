@@ -1,20 +1,20 @@
 #pragma once
 #include <cstddef>
 
-// Installed AMD64 client 2000934, investigated October 22, 2026.
+// Installed AMD64 client 2000935, investigated October 23, 2026.
 // tools/CS2_AIM_SHOOT_ORIGIN_EVIDENCE.md and inspect_aim_shoot_origin.py.
 namespace aim_shoot_origin_offsets {
-inline constexpr std::ptrdiff_t Getter = 0xA7FD00;
+inline constexpr std::ptrdiff_t Getter = 0xA80B30;
 inline constexpr std::ptrdiff_t GetterSlot = 0x100;
-inline constexpr std::ptrdiff_t ServicesVtable = 0x1C14C78;
+inline constexpr std::ptrdiff_t ServicesVtable = 0x1C16C08;
 inline constexpr std::ptrdiff_t WeaponServices = 0x12F0;
 inline constexpr std::ptrdiff_t ServicePawn = 0x38;
-inline constexpr std::ptrdiff_t PawnVtable = 0x1C8A138;
-inline constexpr std::ptrdiff_t PawnGetter = 0x93C660;
+inline constexpr std::ptrdiff_t PawnVtable = 0x1C8C068;
+inline constexpr std::ptrdiff_t PawnGetter = 0x93D490;
 inline constexpr std::ptrdiff_t PawnGetterSlot = 0x568;
-inline constexpr std::ptrdiff_t ViewOffsetGetter = 0x160770;
+inline constexpr std::ptrdiff_t ViewOffsetGetter = 0x160750;
 inline constexpr std::ptrdiff_t ViewOffsetSlot = 0x5A0;
-inline constexpr std::ptrdiff_t BaseEye = 0x15FAB0;
+inline constexpr std::ptrdiff_t BaseEye = 0x15FA90;
 inline constexpr std::ptrdiff_t CameraServices = 0x1328;
 inline constexpr std::ptrdiff_t ObserverServices = 0x1308;
 inline constexpr unsigned char GetterBytes[]{0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x49,0x38,0x48,0x8B,0xDA,0x48,0x8B,0x01,0xFF,0x90,0x68,0x05,0x00,0x00,0x48,0x8B,0xC3,0x48,0x83,0xC4,0x20,0x5B,0xC3};

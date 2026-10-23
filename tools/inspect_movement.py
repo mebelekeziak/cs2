@@ -10,61 +10,61 @@ from pathlib import Path
 import re
 import struct
 
-EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
+EXPECTED_HASH = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
 CHECKS = {
-    "command_inline_presence": (0xB66117, "488b7c24304885ff74064883c710eb03488bfa834f1001488b4730"),
-    "command_viewangles_pointer": (0xCECFB1, "488b4a40488d7a40"),
-    "base_viewangles_pointer": (0xCECFCA, "488b4840"),
-    "command_native_buttons": (0xCED0A7, "488b4b60"),
-    "base_forward_presence": (0xB662A1, "83481040f30f117058"),
-    "base_left_presence": (0xB66338, "81481080000000f30f11705c"),
-    "modern_usable_landing_stamps": (0x8C3610, "f30f10571c488d4d678b5718e80fa7d200f30f105724488d4de78b5720"),
-    "modern_jump_observer": (0x8C34F0, "405553565741564157488d6c24d14881ec880000008b9ad40000004c8bf2"),
-    "modern_jump_call": (0x8DF74B, "488d8bc8060000e8993dfeff"),
-    "modern_jump_services": (0x8C3522, "488b4908"),
-    "modern_jump_fraction": (0x8C3516, "f30f10b2dc000000"),
-    "modern_jump_live_ground": (0x8DF766, "488b4338488bd7488bcbf680f403000001"),
-    "modern_jump_velocity_xy": (0x8E8223, "8b47288946388b472c89463c"),
-    "modern_jump_velocity_z": (0x8E84CA, "f30f590b450fb6cf498bcef30f110b"),
-    "command_finalizer": (0xCECF90, "48895c2408488974241048897c24184c8974242055488d6c24e04881ec200100"),
-    "command_finalizer_call": (0xB66968, "498b07498bcf488b542430ff5030"),
-    "effective_maxspeed": (0x8CDEF0, "48895c24084889742420574883ec30488bf9"),
-    "float_cvar_getter": (0x160B10, "488b4108f30f104058c3"),
-    "surface_speed_row": (0x9E3560, "48634110488b0d95abb60148c1e00548034128c3"),
-    "command_ingestion": (0xA77390, "48895424105355565741544155415641574883ec68"),
-    "subtick_allocator": (0x4F74A0, "48895c2410574883ec20"),
-    "subtick_append": (0x1233010, "48895c2408574883ec20"),
-    "controller_simulation_tick": (0x9442A0, "8b81b8060000c3"),
-    "input_constructor_object": (0xEE574, "488d0dc5d04802e860d8a600"),
-    "input_constructor_vtable": (0xEE58C, "488d058df5ba0148890d4edc48024889059fd04802"),
-    "command_native_sequence": (0xB66113, "44897008"),
-    "command_base_presence": (0xB6612A, "834f1001488b4730"),
-    "base_client_tick": (0xB66151, "83481020897054"),
-    "subtick_pool_reuse": (0xB665F7, "488b4828488d70184885c97415486356083b117d0d488b4cd1088d4201894608eb16"),
-    "subtick_allocation_abi": (0xB66619, "488b0ee87f0e99ff488bd0488bcee8e4c96c00488bc8"),
-    "subtick_generated_payloads": (0xB6662F, "8b5110f30f1047f083ca04895110f30f114124488b47f84885c0741883ca0189511083ca02488941180fb607895110884120eb2df30f10070f2ec77a02740b83ca08895110f30f114128f30f1047040f2ec77a02740b83ca10895110f30f11412c4584ff"),
-    "subtick_camera_deltas": (0xB666C8, "83491020f30f114130f30f104708f30f11442448f30f10470cf30f5c44244c0f2ec77a02741483491040f30f114134"),
-    "base_protobuf_constructor": (0x4F8260, "4533c9488bc24883c8024584c0480f44c248894108488d059c53630148890133c048894110488d057c0a1002488951184c8949204c8949284c8949384c8949404c8949484c8949504c8949584c8949604c8949684c8949704c89497844898980000000c78184000000ffffff0048894130488bc1c3"),
-    "subtick_constructor": (0x4F8580, "4533c9488bc24883c8024584c0480f44c248894108488d053c4f630148890133c048894110884120488bc14c8949184c8949244c89492c44894934c3"),
-    "subtick_append_container": (0x1233010, "48895c2408574883ec20488bd9488bfa488b49104885c974078b013b430c7513ba01000000488bcbe843010000488b4b108b01ffc0890148634b08488b431048897cc808488bc7ff4308488b5c24304883c4205fc3"),
-    "command_axis_ingestion": (0xA7762A, "498b4d40488bc24885c9480f45c18b40588986a0010000488bc2498b4d404885c9480f45c18b405c8986a4010000"),
-    "historical_button_state": (0xA77409, "488b46584c8d7638"),
-    "surface_data_operand": (0x8C45D5, "488b8f78020000"),
-    "stamina_scaling": (0x8C46C8, "f30f108f940600000f2ff9774d0f2fcf7648f30f5e0db6192001"),
-    "effective_speed_services": (0x8CDFCC, "488b87301300000f57c9f30f11442448f30f1090ac010000"),
-    "effective_speed_caller": (0x8A2131, "488b4948c745670000803fe8afbd0200488d5567f30f11456f"),
-    "ingestion_forward_thunk": (0x8E9510, "e97bde1800"),
-    "button_state_setter": (0x4C10A0, "48895c2408488bd941ba0000000041f6c001458bca4c8bda4c0f45ca49f7d3498bc3482341084c0bc8488b43104c89490841f6c002418bca480f45ca4923c3480bc8488b431841f6c00448894b104c0f45d24923c34c0bd04c895318488b5c2408c3cccccccccccccccccccccccccccc48895c2408574883ec40488b01488bf9"),
-    "jump_actual_state": (0x8C3588, "f30f105714488d4dcf8b5710"),
-    "ground_friction_cvars": (0x8CC021, "488b05d08ec901440f29442470f3440f104058f3440f59836c020000"),
-    "ground_stop_control": (0x8CC047, "488b4b38e830ef94ff440f2fde488b059d8dc901f30f5f7858"),
-    "pawn_ground_friction_scale": (0x21AF80, "f30f108138050000c3"),
-    "ground_acceleration_floor": (0x8BF09A, "f3440f1025f1802f01"),
-    "ground_acceleration_max": (0x1B9C30, "f30f1001f30f5f02c3"),
-    "ground_acceleration_budget": (0x8BF279, "f30f59f0f3410f108728010000f3410f5ec7f30f59b36c020000f30f5cf0"),
-    "ground_acceleration_addspeed_clamp": (0x8BF29C, "0f28fef3410f59ff410f2ffe760d410f28f6410f28fef3410f5ef7"),
-    "ground_friction_before_acceleration": (0x8EA6B1, "488bd7488bcee89418feff"),
-    "ground_walk_accelerate": (0x8EA6F7, "488b058aa7c7014c8d442460410f28d9488bd7488bcef30f104058f30f11442420e87347fdff"),
+    "command_inline_presence": (0xB66F57, "488b7c24304885ff74064883c710eb03488bfa834f1001488b4730"),
+    "command_viewangles_pointer": (0xCEE611, "488b4a40488d7a40"),
+    "base_viewangles_pointer": (0xCEE62A, "488b4840"),
+    "command_native_buttons": (0xCEE707, "488b4b60"),
+    "base_forward_presence": (0xB670E1, "83481040f30f117058"),
+    "base_left_presence": (0xB67178, "81481080000000f30f11705c"),
+    "modern_usable_landing_stamps": (0x8C4440, "f30f10571c488d4d678b5718e83fbbd200f30f105724488d4de78b5720"),
+    "modern_jump_observer": (0x8C4320, "405553565741564157488d6c24d14881ec880000008b9ad40000004c8bf2"),
+    "modern_jump_call": (0x8E057B, "488d8bc8060000e8993dfeff"),
+    "modern_jump_services": (0x8C4352, "488b4908"),
+    "modern_jump_fraction": (0x8C4346, "f30f10b2dc000000"),
+    "modern_jump_live_ground": (0x8E0596, "488b4338488bd7488bcbf680f403000001"),
+    "modern_jump_velocity_xy": (0x8E9053, "8b47288946388b472c89463c"),
+    "modern_jump_velocity_z": (0x8E92FA, "f30f590b450fb6cf498bcef30f110b"),
+    "command_finalizer": (0xCEE5F0, "48895c2408488974241048897c24184c8974242055488d6c24e04881ec200100"),
+    "command_finalizer_call": (0xB677A8, "498b07498bcf488b542430ff5030"),
+    "effective_maxspeed": (0x8CED20, "48895c24084889742420574883ec30488bf9"),
+    "float_cvar_getter": (0x160AF0, "488b4108f30f104058c3"),
+    "surface_speed_row": (0x9E4390, "48634110488b0d65bdb60148c1e00548034128c3"),
+    "command_ingestion": (0xA781C0, "48895424105355565741544155415641574883ec68"),
+    "subtick_allocator": (0x4F82A0, "48895c2410574883ec20"),
+    "subtick_append": (0x1235270, "48895c2408574883ec20"),
+    "controller_simulation_tick": (0x9450D0, "8b81b8060000c3"),
+    "input_constructor_object": (0xEE574, "488d0d05f24802e8a0e6a600"),
+    "input_constructor_vtable": (0xEE58C, "488d05c514bb0148890d8efd4802488905dff14802"),
+    "command_native_sequence": (0xB66F53, "44897008"),
+    "command_base_presence": (0xB66F6A, "834f1001488b4730"),
+    "base_client_tick": (0xB66F91, "83481020897054"),
+    "subtick_pool_reuse": (0xB67437, "488b4828488d70184885c97415486356083b117d0d488b4cd1088d4201894608eb16"),
+    "subtick_allocation_abi": (0xB67459, "488b0ee83f0e99ff488bd0488bcee804de6c00488bc8"),
+    "subtick_generated_payloads": (0xB6746F, "8b5110f30f1047f083ca04895110f30f114124488b47f84885c0741883ca0189511083ca02488941180fb607895110884120eb2df30f10070f2ec77a02740b83ca08895110f30f114128f30f1047040f2ec77a02740b83ca10895110f30f11412c4584ff"),
+    "subtick_camera_deltas": (0xB67508, "83491020f30f114130f30f104708f30f11442448f30f10470cf30f5c44244c0f2ec77a02741483491040f30f114134"),
+    "base_protobuf_constructor": (0x4F9060, "4533c9488bc24883c8024584c0480f44c248894108488d054c65630148890133c048894110488d052c1c1002488951184c8949204c8949284c8949384c8949404c8949484c8949504c8949584c8949604c8949684c8949704c89497844898980000000c78184000000ffffff0048894130488bc1c3"),
+    "subtick_constructor": (0x4F9380, "4533c9488bc24883c8024584c0480f44c248894108488d05ec60630148890133c048894110884120488bc14c8949184c8949244c89492c44894934c3"),
+    "subtick_append_container": (0x1235270, "48895c2408574883ec20488bd9488bfa488b49104885c974078b013b430c7513ba01000000488bcbe843010000488b4b108b01ffc0890148634b08488b431048897cc808488bc7ff4308488b5c24304883c4205fc3"),
+    "command_axis_ingestion": (0xA7845A, "498b4d40488bc24885c9480f45c18b40588986a0010000488bc2498b4d404885c9480f45c18b405c8986a4010000"),
+    "historical_button_state": (0xA78239, "488b46584c8d7638"),
+    "surface_data_operand": (0x8C5405, "488b8f78020000"),
+    "stamina_scaling": (0x8C54F8, "f30f108f940600000f2ff9774d0f2fcf7648f30f5e0d962b2001"),
+    "effective_speed_services": (0x8CEDFC, "488b87301300000f57c9f30f11442448f30f1090ac010000"),
+    "effective_speed_caller": (0x8A2F61, "488b4948c745670000803fe8afbd0200488d5567f30f11456f"),
+    "ingestion_forward_thunk": (0x8EA340, "e97bde1800"),
+    "button_state_setter": (0x4C1EA0, "48895c2408488bd941ba0000000041f6c001458bca4c8bda4c0f45ca49f7d3498bc3482341084c0bc8488b43104c89490841f6c002418bca480f45ca4923c3480bc8488b431841f6c00448894b104c0f45d24923c34c0bd04c895318488b5c2408c3cccccccccccccccccccccccccccc48895c2408574883ec40488b01488bf9"),
+    "jump_actual_state": (0x8C43B8, "f30f105714488d4dcf8b5710"),
+    "ground_friction_cvars": (0x8CCE51, "488b0560a0c901440f29442470f3440f104058f3440f59836c020000"),
+    "ground_stop_control": (0x8CCE77, "488b4b38e8e0e094ff440f2fde488b052d9fc901f30f5f7858"),
+    "pawn_ground_friction_scale": (0x21AF60, "f30f108138050000c3"),
+    "ground_acceleration_floor": (0x8BFECA, "f3440f1025f1912f01"),
+    "ground_acceleration_max": (0x1B9C10, "f30f1001f30f5f02c3"),
+    "ground_acceleration_budget": (0x8C00A9, "f30f59f0f3410f108728010000f3410f5ec7f30f59b36c020000f30f5cf0"),
+    "ground_acceleration_addspeed_clamp": (0x8C00CC, "0f28fef3410f59ff410f2ffe760d410f28f6410f28fef3410f5ef7"),
+    "ground_friction_before_acceleration": (0x8EB4E1, "488bd7488bcee89418feff"),
+    "ground_walk_accelerate": (0x8EB527, "488b051ab9c7014c8d442460410f28d9488bd7488bcef30f104058f30f11442420e87347fdff"),
 }
 
 # These are instruction sites, not copies of the source offsets: resolving
@@ -100,7 +100,7 @@ def verify_cvar_offsets(image, header_path):
             raise SystemExit(f"Expected one literal source offset {name} in {header_path}")
         values[name] = int(matches[0], 16 if matches[0].lower().startswith("0x") else 10)
 
-    getter = bytes(image[0x160B10:0x160B1A])
+    getter = bytes(image[0x160AF0:0x160AFA])
     if getter[:3] != bytes.fromhex("488b41") or getter[4:8] != bytes.fromhex("f30f1040") or getter[9] != 0xC3:
         raise SystemExit("Cvar getter addressing evidence differs")
     for name, observed in (("CvarValuePointer", getter[3]), ("CvarValue", getter[8])):
@@ -122,14 +122,14 @@ def verify_cvar_offsets(image, header_path):
 
     # Both selectors load the pointer slot directly, unlike Cvar(), which
     # receives the wrapper start and then adds the getter's pointer offset.
-    for load_site, compare_site in ((0x8DF72D, 0x8DF737), (0x8C0336, 0x8C0340)):
+    for load_site, compare_site in ((0x8E055D, 0x8E0567), (0x8C1166, 0x8C1170)):
         slot = rip_target(image, load_site, "488b05")  # MOV RAX
         if slot != values["LegacyJump"] + values["CvarValuePointer"]:
             raise SystemExit(f"Legacy selector pointer slot differs at 0x{load_site:X}")
         if bytes(image[compare_site:compare_site + 4]) != bytes((0x80, 0x78, values["CvarValue"], 0)):
             raise SystemExit(f"Legacy selector value addressing differs at 0x{compare_site:X}")
-    for name, load_site in (("GroundAccelerate", 0x8EA6F7), ("GroundFriction", 0x8CC021),
-                            ("StopSpeed", 0x8CC054)):
+    for name, load_site in (("GroundAccelerate", 0x8EB527), ("GroundFriction", 0x8CCE51),
+                            ("StopSpeed", 0x8CCE84)):
         if rip_target(image, load_site, "488b05") != values[name] + values["CvarValuePointer"]:
             raise SystemExit(f"Native ground movement cvar slot differs: {name}")
     return verified
@@ -146,15 +146,15 @@ def verify_jump_trace_offsets(image, header_path):
         return int(match.group(1), 0)
 
     # CALL rel32 + LEA RCX[services+disp32] independently identify the hook and receiver.
-    target = 0x8DF752 + 5 + struct.unpack_from("<i", image, 0x8DF753)[0]
-    state_offset = struct.unpack_from("<i", image, 0x8DF74E)[0]
+    target = 0x8E0582 + 5 + struct.unpack_from("<i", image, 0x8E0583)[0]
+    state_offset = struct.unpack_from("<i", image, 0x8E057E)[0]
     observed = {
         "ModernJump": (literal("ModernJump"), target),
         "services::ModernJumpState": (literal("ModernJumpState", "services"), state_offset),
-        "services::Pawn": (literal("Pawn", "services"), image[0x8DF769]),
-        "move_data::Tick": (literal("Tick", "move_data"), struct.unpack_from("<i", image, 0x8C3507)[0]),
-        "move_data::Fraction": (literal("Fraction", "move_data"), struct.unpack_from("<i", image, 0x8C351A)[0]),
-        "move_data::Velocity": (literal("Velocity", "move_data"), image[0x8E8228]),
+        "services::Pawn": (literal("Pawn", "services"), image[0x8E0599]),
+        "move_data::Tick": (literal("Tick", "move_data"), struct.unpack_from("<i", image, 0x8C4337)[0]),
+        "move_data::Fraction": (literal("Fraction", "move_data"), struct.unpack_from("<i", image, 0x8C434A)[0]),
+        "move_data::Velocity": (literal("Velocity", "move_data"), image[0x8E9058]),
     }
     for name, (source, decoded) in observed.items():
         if source != decoded:
@@ -185,19 +185,19 @@ LAYOUTS = {
         "Forward": 0x58, "Left": 0x5C, "ForwardPresent": 0x40, "LeftPresent": 0x80},
 }
 SCHEMA_CLASSES = {
-    "C_BaseEntity": (0x21F4BE8, 0x21F32C0, 82, {
+    "C_BaseEntity": (0x21F6E78, 0x21F5550, 82, {
         "m_fFlags": ("pawn", "Flags"), "m_vecAbsVelocity": ("pawn", "Velocity"),
         "m_nActualMoveType": ("pawn", "ActualMoveType"), "m_flWaterLevel": ("pawn", "WaterLevel"),
         "m_flFriction": ("pawn", "GroundFrictionScale")}),
-    "C_BasePlayerPawn": (0x21F4588, 0x21F41F0, 28, {
+    "C_BasePlayerPawn": (0x21F67E8, 0x21F6450, 28, {
         "m_pMovementServices": ("pawn", "MovementServices")}),
-    "CBasePlayerController": (0x2223A38, 0x2223800, 17, {
+    "CBasePlayerController": (0x2225C98, 0x2225A60, 17, {
         "m_nTickBase": ("controller", "TickBase")}),
-    "CPlayer_MovementServices": (0x222AD38, 0x222AAE0, 18, {
+    "CPlayer_MovementServices": (0x222CFC8, 0x222CD70, 18, {
         "m_flMaxspeed": ("services", "MaxSpeed")}),
-    "CPlayer_MovementServices_Humanoid": (0x222B2D8, 0x222B200, 6, {
+    "CPlayer_MovementServices_Humanoid": (0x222D5E8, 0x222D510, 6, {
         "m_flSurfaceFriction": ("services", "Friction")}),
-    "CCSPlayer_MovementServices": (0x2221E88, 0x22217E0, 49, {
+    "CCSPlayer_MovementServices": (0x2223168, 0x2222AC0, 49, {
         "m_flStamina": ("services", "Stamina")}),
 }
 
@@ -225,17 +225,17 @@ def verify_source_offsets(image, image_base, header_path):
     decoded = {
         "Input": rip_target(image, 0xEE574, "488d0d"),
         "InputVtable": rip_target(image, 0xEE58C, "488d05"),
-        "ModernJump": rel32(0x8DF752),
-        "EffectiveMaxSpeed": rel32(0x8A213C),
-        "Ingest": rel32(0x8E9510, 0xE9),
-        "AllocateSubtick": rel32(0xB6661C),
-        "AddAllocatedSubtick": rel32(0xB66627),
-        "SurfaceManager": rip_target(image, 0x9E3564, "488b0d"),
+        "ModernJump": rel32(0x8E0582),
+        "EffectiveMaxSpeed": rel32(0x8A2F6C),
+        "Ingest": rel32(0x8EA340, 0xE9),
+        "AllocateSubtick": rel32(0xB6745C),
+        "AddAllocatedSubtick": rel32(0xB67467),
+        "SurfaceManager": rip_target(image, 0x9E4394, "488b0d"),
     }
     decoded["Finalize"] = struct.unpack_from("<Q", image, decoded["InputVtable"] + 6 * 8)[0] - image_base
-    for name, site, opcode in (("TickIntervalConstant", 0xA55F99, "f30f5915"),
-                               ("StaminaScaleConstant", 0x8C46DA, "f30f5e0d"),
-                               ("GroundAccelerationSpeedFloor", 0x8BF09A, "f3440f1025")):
+    for name, site, opcode in (("TickIntervalConstant", 0xA56DC9, "f30f5915"),
+                               ("StaminaScaleConstant", 0x8C550A, "f30f5e0d"),
+                               ("GroundAccelerationSpeedFloor", 0x8BFECA, "f3440f1025")):
         length = len(bytes.fromhex(opcode))
         if image[site:site + length] != bytes.fromhex(opcode):
             raise SystemExit(f"Engine constant addressing differs at 0x{site:X}")
@@ -246,9 +246,9 @@ def verify_source_offsets(image, image_base, header_path):
     if rip_target(image, 0xEE59A, "488905") != decoded["Input"]:
         raise SystemExit("CCSGOInput constructor no longer initializes the embedded object")
     # RTTI locator/type strings bind this vtable to the installed input class.
-    if struct.unpack_from("<Q", image, decoded["InputVtable"] - 8)[0] - image_base != 0x1F236C8:
+    if struct.unpack_from("<Q", image, decoded["InputVtable"] - 8)[0] - image_base != 0x1F256C8:
         raise SystemExit("Input vtable RTTI differs")
-    if struct.unpack_from("<I", image, 0x1F236C8 + 12)[0] != 0x23283D0 or bytes(image[0x23283E0:0x23283F1]) != b".?AVCCSGOInput@@\0":
+    if struct.unpack_from("<I", image, 0x1F256C8 + 12)[0] != 0x232A400 or bytes(image[0x232A410:0x232A421]) != b".?AVCCSGOInput@@\0":
         raise SystemExit("Input RTTI class differs")
     for name, value in decoded.items():
         compare(name, value)
@@ -274,34 +274,34 @@ def verify_source_offsets(image, image_base, header_path):
     # Actual machine operands support historical axes, which intentionally differ
     # from the schema's m_flForwardMove/m_flLeftMove at 0x1C0/0x1C4.
     operands = {
-        ("services", "SurfaceData"): (0x8C45D8, "<I"),
-        ("services", "CommandForward"): (0xA7763D, "<I"),
-        ("services", "CommandLeft"): (0xA77654, "<I"),
-        ("services", "Buttons"): (0xA7740C, "<B"),
-        ("command", "Base"): (0xA7762D, "<B"),
-        ("command", "Sequence"): (0xB66116, "<B"),
-        ("command", "Buttons"): (0xCED0AA, "<B"),
-        ("base", "Presence"): (0x4F8284, "<B"),
-        ("base", "SubtickRep"): (0xB665FA, "<B"),
-        ("base", "Angles"): (0xCECFCD, "<B"),
-        ("base", "ForwardPresent"): (0xB662A4, "<B"),
-        ("base", "LeftPresent"): (0xB6633B, "<I"),
-        ("base", "Forward"): (0xA7763A, "<B"),
-        ("base", "Left"): (0xA77651, "<B"),
-        ("base", "Tick"): (0xB66157, "<B"),
+        ("services", "SurfaceData"): (0x8C5408, "<I"),
+        ("services", "CommandForward"): (0xA7846D, "<I"),
+        ("services", "CommandLeft"): (0xA78484, "<I"),
+        ("services", "Buttons"): (0xA7823C, "<B"),
+        ("command", "Base"): (0xA7845D, "<B"),
+        ("command", "Sequence"): (0xB66F56, "<B"),
+        ("command", "Buttons"): (0xCEE70A, "<B"),
+        ("base", "Presence"): (0x4F9084, "<B"),
+        ("base", "SubtickRep"): (0xB6743A, "<B"),
+        ("base", "Angles"): (0xCEE62D, "<B"),
+        ("base", "ForwardPresent"): (0xB670E4, "<B"),
+        ("base", "LeftPresent"): (0xB6717B, "<I"),
+        ("base", "Forward"): (0xA7846A, "<B"),
+        ("base", "Left"): (0xA78481, "<B"),
+        ("base", "Tick"): (0xB66F97, "<B"),
     }
     for (scope, name), (site, fmt) in operands.items():
         compare(name, struct.unpack_from(fmt, image, site)[0], scope)
     # Nested objects: command contains its protobuf at +0x10; the repeated
     # container starts at base+0x18. Decode both operands rather than mistaking
     # a container-relative offset for an absolute command/base field.
-    compare("Presence", image[0xB66124] + image[0xB6612C], "command")
-    repeated = image[0xB665FE]
-    compare("SubtickSize", repeated + image[0xB66607], "base")
-    compare("SubtickCapacity", repeated + image[0x123302D], "base")
-    modern_state = struct.unpack_from("<I", image, 0x8DF74E)[0]
-    for name, operand in (("ModernActual", 0x8C3593), ("ModernUsable", 0x8C361B),
-                          ("ModernLanded", 0x8C362C)):
+    compare("Presence", image[0xB66F64] + image[0xB66F6C], "command")
+    repeated = image[0xB6743E]
+    compare("SubtickSize", repeated + image[0xB67447], "base")
+    compare("SubtickCapacity", repeated + image[0x123528D], "base")
+    modern_state = struct.unpack_from("<I", image, 0x8E057E)[0]
+    for name, operand in (("ModernActual", 0x8C43C3), ("ModernUsable", 0x8C444B),
+                          ("ModernLanded", 0x8C445C)):
         compare(name, modern_state + image[operand], "services")
     for name, expected in {"OnGround": 1, "WaterJump": 4, "Frozen": 32, "Walk": 2,
         "Jump": 2, "Forward": 8, "Back": 0x10, "Left": 0x200, "Right": 0x400}.items():
@@ -358,7 +358,7 @@ def main():
         section = optional + optional_size + index * 40
         rva, size, start = struct.unpack_from("<III", raw, section + 12)
         image[rva:rva + size] = raw[start:start + size]
-    assert (machine, timestamp, image_size) == (0x8664, 0x6AD7B41C, 0x299D000)
+    assert (machine, timestamp, image_size) == (0x8664, 0x6ADA7340, 0x29A0000)
     for name, (rva, expected) in CHECKS.items():
         want = bytes.fromhex(expected)
         if bytes(image[rva:rva + len(want)]) != want:
@@ -367,18 +367,18 @@ def main():
     verified_jump_trace = verify_jump_trace_offsets(image, args.header)
     verified_source = verify_source_offsets(image, image_base, args.header)
     verified_schema = verify_schema_offsets(image, image_base, args.header)
-    assert struct.unpack_from("<Q", image, 0x1C9DB20 + 6 * 8)[0] - image_base == 0xCECF90
-    interval = struct.unpack_from("<f", image, 0x1AC6064)[0]
+    assert struct.unpack_from("<Q", image, 0x1C9FA58 + 6 * 8)[0] - image_base == 0xCEE5F0
+    interval = struct.unpack_from("<f", image, 0x1AC8074)[0]
     assert interval > 0
-    assert struct.unpack_from("<f", image, 0x1AC6098)[0] == 100.0
+    assert struct.unpack_from("<f", image, 0x1AC80A8)[0] == 100.0
     # Embedded installed descriptors contain the actual field names. They do
     # not establish C++ offsets by themselves; reflection/machine code does.
-    descriptor = bytes(image[0x1B2CEB0:0x1B2CEB0 + 1400])
+    descriptor = bytes(image[0x1B2EE60:0x1B2EE60 + 1400])
     for field in (b"CSubtickMoveStep", b"analog_forward_delta", b"analog_left_delta", b"CBaseUserCmdPB"):
         assert field in descriptor
     print(json.dumps({"path": str(args.client), "sha256": digest,
         "machine": hex(machine), "timestamp": hex(timestamp), "image_size": hex(image_size),
-        "input": "embedded object RVA 0x257B640", "finalize_slot": 6,
+        "input": "embedded object RVA 0x257D780", "finalize_slot": 6,
         "tick_quantum_from_engine_seconds": interval, "verified_code": list(CHECKS),
         "source_offsets": str(args.header), "verified_cvars": verified_cvars,
         "verified_jump_trace": verified_jump_trace,

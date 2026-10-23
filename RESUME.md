@@ -1,3 +1,30 @@
+# CS2 compatibility update — October 23, 2026
+
+Installed Windows AMD64 client **1.41.9.2 / 2000935 / Steam 26144732**, Source
+revision **11162119**. Steam current-version API reports up to date. Start next
+update with `docs/CS2_UPDATE_GUIDE.md` and `docs/RE_ADDRESS_INDEX.md`; full current
+record: `docs/CS2_UPDATE_26144732.md`.
+
+All **28/28** frozen checks pass after independent schema/RTTI/export/native
+caller rediscovery. Globals/functions/vtables/fingerprints moved nonuniformly;
+armor now `0x1ED0`, scoped `0x1EA0`, aim readiness members moved +8. Exact hashes
+and bad-input rejection remain enforced. No lifecycle/loader behavior changed.
+Initial bundle `logs/compatibility/20261023T131613316408Z/`; final source bundle
+`logs/compatibility/26144732-final-source/`; research `logs/research/26144732/`.
+
+Both x64 Release variants build without project warnings; sequential full CTest
+runs pass **57/57** each. An obsolete skeleton literal in a synthetic test was
+fixed; parallel config-fixture collision cleared on isolated/sequential reruns.
+Run the two CTest variants sequentially. Both payloads retain zero static TLS/
+delay imports. Final source hashes and whitespace checks pass.
+
+No game/server process was launched, opened or injected; installed files were
+unchanged. Live rendering/movement/shot outcomes remain unobserved. Existing
+**Load Overlay.cmd** workflow applies; restart client normally if an older DLL
+is resident. Cooperative stop does not physically unload resident code.
+
+The previous continuation follows for historical context.
+
 # CS2 compatibility update — October 21, 2026
 
 Installed Windows AMD64 client **1.41.9.1 / 2000934 / Steam 26087496**, Source

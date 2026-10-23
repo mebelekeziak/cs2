@@ -3,7 +3,7 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-seven
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-eight
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -11,17 +11,17 @@ reports under `logs/compatibility/`:
 python tools/check_compatibility.py
 ```
 
-**CS2 update, October 21, 2026:** compatibility is recertified for installed
-patch **1.41.9.1**, client/server **2000934**, Steam build **26087496**. All
-**27/27 installed-file checks pass**. No consumed runtime addresses, layouts or
-hook fingerprints changed. Updated exact build identities and three scope
-consumer verification windows whose native data references moved. Public and
-diagnostic x64 Release builds succeed without project warnings; both pass
-**56/56 CTest suites**. Both DLLs retain zero static TLS/delay imports. See the
-[update record](docs/CS2_UPDATE_26087496.md) for evidence and validation. No
-client/server was launched; live behavior on this build remains unobserved.
-Use the existing **Load Overlay.cmd** workflow, restarting CS2 normally first
-if an older DLL is resident. Stopped and resident is not physically unloaded.
+**CS2 update, October 23, 2026:** compatibility is recertified for installed
+patch **1.41.9.2**, client/server **2000935**, Steam build **26144732**. All
+**28/28 installed-file checks pass**. Updated relocated native functions,
+globals, descriptor tables and fingerprints, plus changed armor/scoped/aim
+readiness members. Public and diagnostic x64 Release builds succeed without
+project warnings; both pass **57/57 CTest suites**. Both DLLs retain zero static
+TLS/delay imports. See the [update record](docs/CS2_UPDATE_26144732.md) for
+evidence and validation. No client/server was launched; live behavior remains
+unobserved. Use the existing **Load Overlay.cmd** workflow, restarting CS2
+normally first if an older DLL is resident. Stopped and resident is not
+physically unloaded.
 
 ## Aim consistency and quickstop - October 22, 2026
 

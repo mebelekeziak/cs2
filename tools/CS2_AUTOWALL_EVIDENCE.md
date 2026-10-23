@@ -1,6 +1,50 @@
 # Native client autowall
 
-## Current static recertification, October 21, 2026
+## Current static recertification, October 23, 2026
+
+Installed Windows AMD64 client: patch `1.41.9.2`, client/server `2000935`,
+Steam build `26144732`, Source revision `11162119`, version date October 22,
+2026, 14:13:16. Installation and executable remain the documented Steam paths.
+Client SHA-256 is `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Investigation read installed files only. Independent scratch code located new
+native windows, decoded them with Capstone 5.0.9, and compared instruction and
+data contracts with the preserved preceding image. Relative instruction operands
+were decoded, and jump tables, schema members, numeric constants and named
+registrations were checked separately. No uniform relocation was assumed.
+Research, all 71 current native windows, complete disassembly and a sixteen-case
+negative-header report are retained under `logs/research/26144732/ballistics/`.
+Unknown file hashes remain rejected. No client/server process was launched or
+opened, and no installed file changed. Live behavior remains unobserved.
+
+The complete native constructor, destructor, trace, segment step and extractor
+were relocated and decoded with their native producers and layout consumers:
+
+| Contract | Previous RVA | Current RVA |
+| --- | --- | --- |
+| Initialize | `0x87EE00` | `0x87FC30` |
+| Destroy | `0x87FB70` | `0x8809A0` |
+| Trace | `0x8830E0` | `0x883F10` |
+| Step | `0x8A1820` | `0x8A2650` |
+| Extract | `0x885830` | `0x886660` |
+| Segmentation | `0x886090` | `0x886EC0` |
+| Direction | `0x89CA80` | `0x89D8B0` |
+| Trace manager producer | `0xA19E90` | `0xA1ACC0` |
+
+Full matched native bodies preserve argument/return ABI and owned container
+construction/destruction. The independently located damage-loop caller
+`0x886540..0x886657` confirms the step ABI and segment layout. Weapon schema at
+`0x221CD08`, fields `0x221C1A0`, proves penetration remains `0x82C`.
+All hit/segment container offsets/strides, state layout, final displacement
+`+0x1D04`, four-step budget and synchronous extraction semantics remain unchanged.
+The native filter moves to `0x352CC0`, while its shot parameters remain unchanged.
+
+`python tools/inspect_autowall.py` passes all 14 native windows, independent
+operand/schema checks and runtime header checks. Negative changes to `Trace`,
+`Penetration`, `DirectionVector` and `InitializeBytes` reject.
+
+## Historical static recertification, October 21, 2026
 
 Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,
 Steam build `26087496`, Source revision `11150591`, version date October 20,

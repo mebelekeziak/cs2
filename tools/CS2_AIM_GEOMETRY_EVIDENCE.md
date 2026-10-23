@@ -1,5 +1,55 @@
 # Authored capsule geometry and sampled hitchance
 
+## October 23, 2026 recertification - client 2000935
+
+Installed Windows AMD64 client `1.41.9.2` / `2000935`, Source revision
+`11162119`, Steam build `26144732`, version date October 22, 2026 14:13:16.
+Installation remains `C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game`;
+executable `bin/win64/cs2.exe`, module `csgo/bin/win64/client.dll`.
+Client SHA-256 `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Research is preserved in `logs/research/26144732/aim_sources/`: `schema.json`
+records independently located named schema templates, `relocations.json` and
+`address_mapping.json` record candidate/call-target rediscovery, and
+`disassembly.txt` contains decoded current instruction windows (Capstone 5.0.7).
+Preserved prior-file comparison uses only windows matching the former frozen
+window hashes; the old negative-test sample is not accepted as a valid complete
+baseline image. New named schema/RTTI/caller checks and full module pins remain
+mandatory. No uniform relocation delta is assumed.
+
+The installed `bin/win64/animationsystem.dll` now has SHA-256
+`8aa57d0c5b90cb49ad5fd9f141004710180a601b08159e50e93c4470142ea132`.
+Its named `CHitBox` registration/array are `0x81D6B8 / 0x81D510` (13 fields,
+size `0x70`), and `CHitBoxSet` registration/array `0x81D7B8 / 0x81D730`
+(4 fields, size `0x30`). All consumed geometry fields retain their prior values.
+The new hash is frozen only after independently checking these named layouts.
+
+Client mesh/set lookup moves `0x1773030 -> 0x1775290`, enabled-mask consumer
+`0x17737F0 -> 0x1775A50`, current skeleton set getter `0xAADFA0 -> 0xAAEDE0`,
+transform-space check `0xAB0D2F -> 0xAB1B6F`, capsule type/endpoint transform
+`0xCA10D8 -> 0xCA29D8`, radius consumer `0xCA134F -> 0xCA2C4F`.
+The nine complete frozen windows and independent client/animation schema
+operands prove the unchanged set stride `0x48`, box stride `0x70`, type `2`,
+endpoints `+0x18/+0x24`, radius `+0x30`, translation flag `+0x3D` and alternate
+transform flag `+0x4A`. The authored asset
+`agents/models/ctm_sas/ctm_sas.vmdl_c` remains SHA-256
+`7312ab88d05bea67b06f3a945d06dc1e5fc5511d4849bc05bc05aec25380eb22`.
+Cached pose and unit-scale constraints remain unchanged.
+
+`final_checks.py` records five passing frozen verifier commands in `frozen.json`
+and their full outputs in per-verifier JSON files. Twenty deliberately wrong
+headers are rejected in `negative.json`, covering source functions, vtables,
+new pawn members, resource layout, weapon table records and entry fingerprints.
+All five verifiers also reject the preserved old negative-test client sample;
+see `hash_rejections.json`. All module/asset hash guards remain exact. This is installed-file verification:
+no client/server was launched, no native getter was executed, and no live aim,
+accuracy, bone pose, capsule or shot-registration observation is claimed. Existing
+command-thread ownership, cache invalidation and cooperative residency rules
+remain in force. Earlier build-specific addresses below are historical.
+
+## Historical evidence
+
 ## October 21, 2026 recertification — client 2000934
 
 Installed Windows AMD64 client `1.41.9.1` / `2000934`, Source revision

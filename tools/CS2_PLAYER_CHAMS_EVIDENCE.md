@@ -197,3 +197,54 @@ The shared frame dispatcher is tested directly and through the model-swap
 regressions. Both payloads have no static TLS/delay imports. This verification
 did not launch CS2 and does not establish visible appearance or correct sorting
 of translucent players: original packet pass/sort classification is preserved.
+
+## October 23, 2026 recertification: Steam build 26144732
+
+Installed Windows AMD64 client patch **1.41.9.2**, client/server **2000935**.
+Read-only investigation used the documented Steam game installation; no game
+process was opened or launched, and no installed files were changed.
+
+| Module | PE timestamp / image size | SHA-256 |
+| --- | --- | --- |
+| client.dll | `0x6ADA7340` / `0x29A0000` | `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5` |
+| scenesystem.dll | `0x6ADA337D` / `0x978000` | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` |
+| materialsystem2.dll | `0x6ADA32D5` / `0x186000` | `2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69` |
+| tier0.dll | `0x6ADA3248` / `0x401000` | `f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d` |
+
+Research scripts, candidate searches, decoded current instruction windows and
+positive/negative JSON reports are retained under
+`logs/research/26144732/render_grenade/`. Optional discovery used Capstone
+**5.0.9**; the frozen verifiers remain standard-library Python and reject
+unrecognized complete module hashes before checking contracts. Discovery
+masked only instruction-decoded RIP-relative displacements and relative branch
+immediates to locate candidates; the final frozen checks contain exact current
+bytes/hashes and unmasked independently decoded operands.
+
+Client scene creation was independently rediscovered from the complete skeleton
+assignment/serialized-handle producer: descriptor-name LEA moves
+`0xAC575C -> 0xAC659C`, skeleton interface assignment
+`0xAC5799 -> 0xAC65D9`, and owner producer
+`0xAC5818 -> 0xAC6658`. Exact new bytes preserve scene `+0x110`, skeleton
+`+0x130`, scene owner `+0xC0`, and serial correction by `identity.flags & 1`.
+The named descriptor target still reads `AnimatableSceneObjectDesc`.
+
+Scene animated descriptor primary vtable `0x5E5C90`, generation slot `+0x20`
+function `0x7D7C0`, four-argument ABI and packet members remain unchanged:
+stride `0x70`, object `+0x18`, material `+0x20`, mode `+0x28`, RGBA `+0x50`,
+view argument `+0x10`, material mode slot `+0x30`. All exact generator, packet,
+view/mode and sorting windows were checked against the new image.
+
+Static singleton registration RIP operands changed: aggregate
+`0x674CB0 -> 0x674CA0`, animated `0x675670 -> 0x675660`; both initialization
+and registration independently resolve the animated singleton. Aggregate
+primary vtable is now `0x5E4518`. Existing descriptor-address sorting still
+puts aggregate before animated within equal applicable native layer/order;
+full-sort signed `packet+0x58`, descriptor tie-break, batch sorting and no-sort
+policy windows are unchanged. No packet priority/order mutation was introduced.
+
+`python tools/verify_player_chams.py` passes, including nested material/asset
+checks. **15** individually mutated player header variants reject (14 numeric
+constants plus GenerateBytes). `chams-verified.json` and `negative-results.json`
+record this. Ownership checks, frame-owner integration and cooperative resident
+stop behavior remain intact. Actual visible/occluded-player appearance remains
+unobserved; build and fixture results are reported by the integrating pass.

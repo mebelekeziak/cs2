@@ -215,9 +215,9 @@ struct TargetFixture {
         strcpy_s(controllerName.data(), controllerName.size(), "cs_player_controller");
         strcpy_s(pawnName.data(), pawnName.size(), "c_cs_player_for_precache");
         Put(Address(system) + ent::entity_layout::TableOffset, reinterpret_cast<std::uintptr_t>(bucket.data()));
-        // Captured from both live player scenes on the failing practice run.
-        constexpr std::uintptr_t observedPlayerSkeleton = 0x1ACDE48;
-        bones = {Address(vtable) - (playerSkeleton ? observedPlayerSkeleton : bone::SkeletonVtable), &FakeLookup};
+        // Exercise the networked player wrapper using the current independently
+        // verified RTTI table, rather than a historical captured module RVA.
+        bones = {Address(vtable) - (playerSkeleton ? bone::PlayerSkeletonVtable : bone::SkeletonVtable), &FakeLookup};
         vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)] = bones.client + bone::SkeletonQuery;
         Configure(local, 1, 3, 0); Configure(enemy, 3, 2, 20); Configure(farther, 5, 2, 40);
         source = {Address(system), Address(local.controller), Address(local.pawn)};
@@ -233,9 +233,9 @@ void TargetChecks() {
     AimTargetDiagnostics diagnostic{};
     TargetFixture playerFixture(true);
     Expect(playerFixture.Select(target, AimHitbox::Chest, 5, &diagnostic),
-           "live player body-component skeleton wrapper supports chest acquisition");
+           "player body-component skeleton wrapper supports chest acquisition");
     Expect(playerFixture.Select(target, AimHitbox::Head, 5, &diagnostic),
-           "live player body-component skeleton wrapper supports head acquisition");
+           "player body-component skeleton wrapper supports head acquisition");
     playerFixture.bones.client -= 0x100;
     playerFixture.vtable[bone::SkeletonQuerySlot / sizeof(std::uintptr_t)] = playerFixture.bones.client + bone::SkeletonQuery;
     Expect(!playerFixture.Select(target, AimHitbox::Chest, 5, &diagnostic) && diagnostic.boneRejected == 2 &&

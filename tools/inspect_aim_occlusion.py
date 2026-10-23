@@ -14,16 +14,16 @@ from verify_sky_draw import mapped, require_bytes
 from inspect_third_person import EXPECTED_HASH, CHECKS as SHARED_CHECKS, verify_source as verify_shared
 
 ROOT = Path(__file__).resolve().parents[1]
-WINDOWS = {
-    "bullet_filter_producer": (0x887F56, 0x64, "76c373d706fdf7d001e05a61a4becb49c831c33ae1d57a5e3a2acf8c425cbfe8"),
-    "filter_constructor": (0x352920, 0x136, "6d865d66564d6b89ee213a23e8e84fd713dd5a2c61086ab18112c915cd06dd75"),
-    "ray_shape_initializer": (0x36DDB0, 0x55, "5fb55f27d925068b696009d304453ca831411627f83f431b2f249eae53f01cc9"),
-    "result_initializer": (0x17794AE, 0xAA, "79a157576985c2e53bb042ae1a73152c9b6a35d31e0ae3e18207e68123c0c31f"),
-    "result_didhit": (0x360720, 0x20, "df26c9b49ad9cda2b6bf3d6f9a8e0d1668382587696a998a373d2eec3966f1ef"),
-    "result_entity_consumer": (0x9A1795, 0xA, "489025be08ab13334af2b658649c40be5522b77a65b0c0874a8264ac234e45b9"),
-    "bullet_call_from_fx": (0xD23E90, 0x2B, "2f61aea6e1b62ee7071495e2689cfbc86ac48f5644b6c892be39a7ce1e078207"),
-    "native_trace_camera_call": (0xB636C7, 0x30, "d7ba88b13a639f5386a44e24fe69d05594f74ce78ab3e5291ba9f29037fa2ea7"),
-}
+WINDOWS = {'bullet_filter_producer': (8949126, 100, '792c891338fa2199883159a342b2b05643e555e5383d074be08709a7194adc0a'),
+ 'filter_constructor': (3484864, 310, '9359ea4e91014bf5977812ee098c92b553e269b203ee4ae1ca013bfd2ca04324'),
+ 'ray_shape_initializer': (3598464, 85, '5fb55f27d925068b696009d304453ca831411627f83f431b2f249eae53f01cc9'),
+ 'result_initializer': (24622862, 170, '88fc93903c40d8ca8aad2eac36f262163b8473461832cef2857d271b461ddd8c'),
+ 'result_didhit': (3542272, 32, '10dcd6f8eb61a9a4b2954bfc29d075ab1f4a5bb72fddd41fb5fe1e622735092d'),
+ 'result_entity_consumer': (10102213, 10, '489025be08ab13334af2b658649c40be5522b77a65b0c0874a8264ac234e45b9'),
+ 'bullet_call_from_fx': (13784288, 43, '442033ce6a23b5b46e51801f81455318c44f923cfa5a99f080876d26b8640b5c'),
+ 'native_trace_camera_call': (11945223, 48, '7bc5ea653e84da54b73915cda37b471f0a9324cc1af96c52cfcd93fdf75e7400')}
+WINDOWS['trace_complete'] = (0xa1ae30, 1294, '82299fc0b20a29839fab528832d9669b15725ba4b074d6b34b37ca567f9695b6')
+WINDOWS['result_constructor_complete'] = (0x177b560, 600, 'a1f6a950d807695ccec68cacba93b8d5544e68bf99916eb26327e0da931b7546')
 FILTER_ENTRY = "48895c24084889742410574883ec200fb6413933ff24c9c74134ffff000f"
 
 
@@ -31,15 +31,15 @@ def verify_source(image, header):
     source = re.sub(r"//[^\n]*|/\*.*?\*/", "", header.read_text(encoding="utf-8-sig"), flags=re.S)
     # Decode operands in the separately frozen native producer/consumer paths.
     expected = {
-        "InitializeFilter": 0x887F71 + 5 + struct.unpack_from("<i", image, 0x887F72)[0],
-        "ShotMask": struct.unpack_from("<I", image, 0x887F6D)[0],
-        "ShotLayer": struct.unpack_from("<I", image, 0x887F62)[0],
-        "ShotFlags": image[0x887F6A],
-        "ShotFlags39": image[0x887F8A],
-        "ShotExclude": struct.unpack_from("<Q", image, 0x887F92)[0],
-        "TraceHitFlag": struct.unpack_from("<I", image, 0x360733)[0],
-        # Result lives at rbp-0x20 (0x9A14FC); selected-entity compare reads rbp-0x18.
-        "TraceEntity": struct.unpack_from("<b", image, 0x9A1798)[0] - (-0x20),
+        "InitializeFilter": 0x888da1 + 5 + struct.unpack_from("<i", image, 0x888da2)[0],
+        "ShotMask": struct.unpack_from("<I", image, 0x888d9d)[0],
+        "ShotLayer": struct.unpack_from("<I", image, 0x888d92)[0],
+        "ShotFlags": image[0x888d9a],
+        "ShotFlags39": image[0x888dba],
+        "ShotExclude": struct.unpack_from("<Q", image, 0x888dc2)[0],
+        "TraceHitFlag": struct.unpack_from("<I", image, 0x360d13)[0],
+        # Result lives at rbp-0x20 (0x9a232c); selected-entity compare reads rbp-0x18.
+        "TraceEntity": struct.unpack_from("<b", image, 0x9a25c8)[0] - (-0x20),
     }
     for name, value in expected.items():
         matches = re.findall(rf"\b{name}\s*=\s*(0[xX][0-9a-fA-F]+|\d+)", source)
@@ -63,7 +63,7 @@ def main():
     if digest != EXPECTED_HASH:
         raise SystemExit("Client changed: repeat native aim-occlusion contract investigation")
     require_bytes(image, {name: SHARED_CHECKS[name] for name in ("shape_entry", "trace_entry", "trace_init_entry")})
-    require_bytes(image, {"bullet_filter_entry": (0x352920, FILTER_ENTRY)})
+    require_bytes(image, {"bullet_filter_entry": (0x352cc0, FILTER_ENTRY)})
     for name, (rva, size, expected) in WINDOWS.items():
         if hashlib.sha256(image[rva:rva+size]).hexdigest() != expected:
             raise SystemExit(f"Native occlusion contract window changed: {name}")
@@ -72,9 +72,9 @@ def main():
     shared = verify_shared(image, base, args.shared_header)
     constants = verify_source(image, args.header)
     # Complete zero-bounds shape branch ends in a return and selects ray kind 0.
-    require_bytes(image, {"point_ray_branch": (0x36DDD6,
+    require_bytes(image, {"point_ray_branch": (0x36e8a6,
         "c6412800f20f1002f20f11018b4208894108c7410c00000000c3")})
-    if struct.unpack_from("<f", image, 0x1AC6074)[0] != 1.0:
+    if struct.unpack_from("<f", image, 0x1ac8084)[0] != 1.0:
         raise SystemExit("DidHit fraction comparison constant changed")
     print(json.dumps({"client_sha256": digest, "constants": constants,
         "shared_constants": shared,

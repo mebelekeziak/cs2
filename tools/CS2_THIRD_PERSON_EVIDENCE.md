@@ -1,5 +1,64 @@
 # Native third-person view and hull contracts
 
+## Build 2000935 update — October 23, 2026
+
+Verified the installed Windows AMD64 **client**, patch `1.41.9.2`,
+client/server `2000935`, Steam build `26144732`. Client SHA-256 is
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`. The installation remains
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+This supersedes the runtime values in historical sections below.
+
+Header `third_person_offsets.h` changes, relative to build 26087496:
+
+| Source symbol | Previous | Current |
+| --- | --- | --- |
+| `OverrideView` | `0xb99250` | `0xb9a090` |
+| `IsThirdPerson` | `0xb627a0` | `0xb635e0` |
+| `LocalPawn` | `0x96a8f0` | `0x96b720` |
+| `ModeSharedVtable` | `0x1c68368` | `0x1c6a2a8` |
+| `ModeNormalVtable` | `0x1c9fc20` | `0x1ca1b50` |
+| `ModeSlotGetter` | `0xb96570` | `0xb973b0` |
+| `IsThirdPersonCameraReturn` | `0xb992a9` | `0xb9a0e9` |
+| `InputPointer` | `0x223bd00` | `0x223dc00` |
+| `TraceManager` | `0x2227058` | `0x2229020` |
+| `TraceShape` | `0xa1a000` | `0xa1ae30` |
+| `InitializeShape` | `0x36ddb0` | `0x36e880` |
+| `InitializeTrace` | `0x1779300` | `0x177b560` |
+| `PopulateFilter` | `0xb722a0` | `0xb730e0` |
+| `FilterVtable` | `0x1ad4838` | `0x1ad6848` |
+
+Rediscovery used `ClientModeShared` and `ClientModeCSNormal` primary RTTI,
+their slot-16 view dispatch, the slot getter, native model-visibility callers,
+embedded `CCSGOInput` construction and the complete camera thinker. The new
+camera trace sequence constructs its hull at `0xB64502 -> 0x36E880`, loads the
+manager at `0xB64507 -> 0x2229020`, and calls `0xA1AE30` at `0xB64531` with six
+arguments. Stack result fraction remains `+0xAC`, hull extent remains 9, and
+mask/layer/exclusion remain `0x80 / 3 / 0xC0000`. Native view origin/angles stay
+`0x4A0 / 0x4B8`; the query still returns the slot-selected input byte.
+
+The original seven windows were decoded and compared instruction by instruction.
+Besides relocated native references, the thinker has eight indexed Cvar/global
+displacements that moved; register use, member widths, stack arguments and
+control flow match. Runtime fingerprints were refreshed from their verified
+sites. Microsoft x64 ABIs remain `void(mode*, view*)`, `int(input*, int)` and the
+synchronous six-argument trace. No runtime algorithm or shutdown change.The shared ballistics investigation also compared the complete trace body`0xA1AE30..0xA1B33E` (1,294 bytes) and trace initializer`0x177B560..0x177B7B8` (600 bytes), including chained unwind fragments. Bothretain identical instruction structure with only decoded native RIP/relativetargets relocated. These two complete windows are now frozen here too;disassembly is retained in `logs/research/26144732/ballistics/`.
+
+The frozen verifier still rejects unknown module hashes before using its sites,
+and checks complete new windows, independently decoded operands/identities,
+header constants and all fingerprints. Research/disassembly and the passing
+`python tools/inspect_third_person.py` report are under
+`logs/research/26144732/view_model/` (`refined.json`, `addresses.json`,
+`schemas.json`, `verified_third_person.json`). All **32/32** temporary
+header scalar/array mutations reject; this verifier also rejects a one-byte
+changed workspace client copy. See `negative_checks.json` and
+`unknown_hash_checks.json` there. No installed file was changed.
+
+Static verification does not establish live appearance or gameplay behavior.
+No client/server was launched, no process was accessed, and no graphics runtime
+was observed in this pass. Build/CTest integration is recorded by the project
+update record; stopped callbacks remain resident until normal process exit.
+
 ## Build 2000934 recertification — October 21, 2026
 
 Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,

@@ -8,14 +8,12 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
-WINDOWS = {
-    'smoke_draw': (0xD20410, 0xEE, '612409cbd3e21fa6e1b7d11a103bd97a3bb3a2b746d7ca49ad4e5d2b55be7647'),
-    'flash_resolve': (0x1211C80, 0x77, 'd80924f32261780a93f665fd17d3000e943d03b7aad20c42110615d842120e54'),
-    'smoke_eye_opacity': (0xCA06E0, 0x557, '5b5e77933f94c041a4afd7d211d81d87d9b245af0bd96e2d5b03799a3fccb8f0'),
-    'smoke_opacity_consumer': (0xC689C3, 0x52, 'd1847e479ad8a944b32dfb4426a255f2aeec0ae6335c20f3396539e69fee43f6'),
-    'flash_alpha_producer': (0x11D9BE0, 0x6B, '8f3e335170ea1544f0e279a8ebdd0cb24704deafa73e7a8316c1d5062be6eb5b'),
-}
+EXPECTED_HASH = 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'
+WINDOWS = {'smoke_draw': (13769312, 238, '7d962520f8b68d6f4f407c17d50bbd545fc3678ba2bc1cda85a5b805919163fd'),
+ 'flash_resolve': (18956000, 119, '5c6ddef4e47ac2dcec1692bfca1bb44a177bc171d7f7feb28511ecc1797a9120'),
+ 'smoke_eye_opacity': (13246432, 1367, 'c55109cc3339e5016a9760d58a18737c17a633129f1917204f0ca0cfbbc6dc10'),
+ 'smoke_opacity_consumer': (13015347, 82, 'ad0c98f022d68e8a3f1f5cb4754aab0943b908e89b399bf10d9396c89afd2ce6'),
+ 'flash_alpha_producer': (18726416, 107, 'b75b716f4791c2391dfecaa1a5e504f47bfd584541fe167ae0e1dabd56097d35')}
 
 
 def verify(image, base, header):
@@ -27,26 +25,26 @@ def verify(image, base, header):
     tables = {
         'SmokeDescriptor': primary_vtable(image, base, b'.?AVCSmokeVolumeSceneObjectDesc@@'),
     }
-    if tables != {'SmokeDescriptor': 0x1CA82E8}:
+    if tables != {'SmokeDescriptor': 0x1CAA228}:
         raise SystemExit('Changed smoke/flash descriptor RTTI')
     expected = dict(tables,
         SmokeDrawSlot=1,
         SmokeDraw=ptr(tables['SmokeDescriptor'] + 8),
-        FlashSetFloat4=call(0x11D9C16), FlashProducer=0x11D9BE0,
-        FlashOverlayReturn=0x11D9C1B, FlashScreenshotReturn=0x11D9C4B,
-        FlashOverlayKey=u32(0x11D9BF5), FlashScreenshotKey=u32(0x11D9C29),
-        SmokeOpacity=call(0xC689C6), SmokeOpacityCaller=0xC689C3, SmokeOpacityReturn=0xC689CB)
-    if expected['SmokeDraw'] != 0xD20410 or expected['FlashSetFloat4'] != 0x16AE20 or expected['SmokeOpacity'] != 0xCA06E0:
+        FlashSetFloat4=call(0x11DBE46), FlashProducer=0x11DBE10,
+        FlashOverlayReturn=0x11DBE4B, FlashScreenshotReturn=0x11DBE7B,
+        FlashOverlayKey=u32(0x11DBE25), FlashScreenshotKey=u32(0x11DBE59),
+        SmokeOpacity=call(0xC69936), SmokeOpacityCaller=0xC69933, SmokeOpacityReturn=0xC6993B)
+    if expected['SmokeDraw'] != 0xD21A60 or expected['FlashSetFloat4'] != 0x16AE00 or expected['SmokeOpacity'] != 0xCA1FE0:
         raise SystemExit('Changed smoke/flash render targets')
-    if call(0xD20497) != 0xD21940 or call(0xD204E0) != 0xD20500:
+    if call(0xD21AE7) != 0xD22F90 or call(0xD21B30) != 0xD21B50:
         raise SystemExit('Changed smoke DrawMask/normal pass dispatch')
     # Caller receives XMM0 and naturally publishes it to the same member used
     # by the native previous-opacity read; these are not injected field writes.
-    if u32(0xC689D8) != 0x1530 or u32(0xC68A11) != 0x1530:
+    if u32(0xC69948) != 0x1530 or u32(0xC69981) != 0x1530:
         raise SystemExit('Changed native smoke opacity publication')
-    if u32(0x11D9C03) != 0x1504 or u32(0x11D9C1F) != 0x1500:
+    if u32(0x11DBE33) != 0x1504 or u32(0x11DBE4F) != 0x1500:
         raise SystemExit('Changed flash white/screenshot alpha inputs')
-    if call(0x11D9C16) != 0x16AE20 or call(0x11D9C46) != 0x16AE20:
+    if call(0x11DBE46) != 0x16AE00 or call(0x11DBE76) != 0x16AE00:
         raise SystemExit('Changed flash alpha parameter producer')
     for name, (at, size, digest) in WINDOWS.items():
         if hashlib.sha256(image[at:at + size]).hexdigest() != digest:
@@ -56,9 +54,9 @@ def verify(image, base, header):
         matches = re.findall(rf'\b{name}\s*=\s*(0[xX][\da-fA-F]+|\d+)\s*;', source)
         if len(matches) != 1 or int(matches[0], 0) != value:
             raise SystemExit(f'Header differs: {name}')
-    for name, at, size in [('SmokeDrawBytes', 0xD20410, 24), ('FlashSetFloat4Bytes', 0x16AE20, 15),
-                           ('FlashProducerBytes', 0x11D9BE0, 0x6B),
-                           ('SmokeOpacityBytes', 0xCA06E0, 15), ('SmokeOpacityCallerBytes', 0xC689C3, 17)]:
+    for name, at, size in [('SmokeDrawBytes', 0xD21A60, 24), ('FlashSetFloat4Bytes', 0x16AE00, 15),
+                           ('FlashProducerBytes', 0x11DBE10, 0x6B),
+                           ('SmokeOpacityBytes', 0xCA1FE0, 15), ('SmokeOpacityCallerBytes', 0xC69933, 17)]:
         match = re.search(rf'\b{name}\[\]\s*\{{([^}}]*)\}}', source, re.S)
         actual = bytes(int(v.strip(), 0) for v in match[1].split(',') if v.strip()) if match else b''
         if actual != image[at:at + size]: raise SystemExit(f'Header bytes differ: {name}')

@@ -1,5 +1,29 @@
 # Native console cleanup and project-message filter
 
+## Current recertification — October 23, 2026
+
+Installed AMD64 engine2 SHA-256
+`e8533af07adc3426eac95391cb70804a0a27f8391c03d36f1cfa06f50d901d29`,
+timestamp `0x6ADA3418`, image size `0xA15000`; client build 26144732 / 2000935.
+
+All nine native checked windows were rediscovered and decoded in scratch
+`logs/research/26144732/core/discovery.json`. Primary named
+CEngineConsoleLoggingListener vtable `0x61ACA0` independently resolves listener
+`0x20AC20` (previous `0x2094B0`). Clear `0x1B8270` (was `0x1B7D70`) is
+independently selected by its registration LEA `0x1B568E` and exact `clear`
+name reference `0x1B56C2`. Queue `0x73BB0` (was `0x73720`) is called by the
+decoded native caller `0x75DE7`, which supplies command buffer `0x979820`
+(was `0x8DBF20`). Literal text still reaches named CCommandBuffer::AddText;
+recursive lock `+0x43E2*12`, owner/recursion fields, 0x86D8 slot stride and
+unlock atomics are unchanged. Argument count/vector remain `+0x438`/`+0x440`.
+
+RIP-relative code fingerprints, header identity, function/caller RVAs and exact
+engine hash changed together; native owner, deferred execution, listener
+forwarding and stop behavior did not change. `inspect_console_control.py`
+passes; incorrect buffer, queue, listener bytes and timestamp headers reject
+(`core/negative.json`). No process or console was opened. Build/test results
+are separate in `docs/CS2_UPDATE_26144732.md`; subsequent sections are historical.
+
 Client feature, investigated October 18, 2026. No client was launched or opened,
 no server was contacted, and installed files were read without modification.
 Installation: `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.

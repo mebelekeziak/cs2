@@ -2,18 +2,18 @@
 
 #include <cstddef>
 
-// Installed 1.41.9.1 / 2000934 AMD64 client, recertified October 21, 2026.
+// Installed 1.41.9.2 / 2000935 AMD64 client, recertified October 23, 2026.
 // Dynamic named animated bone landmarks.
 // No fixed bone indices or authored hitbox-volume centers are assumed.
 // tools/inspect_silent_aim_hitboxes.py checks all constants and fingerprints.
 namespace silent_aim_hitbox_offsets {
-inline constexpr std::ptrdiff_t LookupBone = 0x952940;
-inline constexpr std::ptrdiff_t SkeletonVtable = 0x1C41CE0;
+inline constexpr std::ptrdiff_t LookupBone = 0x953770;
+inline constexpr std::ptrdiff_t SkeletonVtable = 0x1C43C10;
 // NetworkVar_m_skeletonInstance@CBodyComponentSkeletonInstance: verified
-// zero-offset CSkeletonInstance base, observed on both live player pawns.
-inline constexpr std::ptrdiff_t PlayerSkeletonVtable = 0x1ACDE48;
+// zero-offset CSkeletonInstance base, observed on historical live player pawns.
+inline constexpr std::ptrdiff_t PlayerSkeletonVtable = 0x1ACFE58;
 inline constexpr std::ptrdiff_t SkeletonQuerySlot = 0x68;
-inline constexpr std::ptrdiff_t SkeletonQuery = 0x1C9E70;
+inline constexpr std::ptrdiff_t SkeletonQuery = 0x1C9E50;
 inline constexpr std::ptrdiff_t ModelState = 0x140;
 inline constexpr std::ptrdiff_t ModelHandle = 0xA0;
 inline constexpr std::ptrdiff_t BoneArray = 0x1C0;
@@ -38,10 +38,6 @@ inline constexpr char LeftCalfName[] = "leg_lower_l";
 inline constexpr char RightCalfName[] = "leg_lower_r";
 inline constexpr char LeftFootName[] = "ankle_l";
 inline constexpr char RightFootName[] = "ankle_r";
-inline constexpr unsigned char LookupBoneBytes[]{
-    0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x89,0x30,0x03,0x00,0x00,
-    0x48,0x8b,0xda,0x48,0x8b,0x01,0xff,0x50,0x68,0x48,0x8b,0xc8,0x48,
-    0x8b,0xd3,0x48,0x83,0xc4,0x20,0x5b,0xe9,0xca,0x8a,0x16,0x00
-};
-inline constexpr unsigned char SkeletonQueryBytes[]{0x48,0x8b,0xc1,0xc3};
+inline constexpr unsigned char LookupBoneBytes[]{0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x89,0x30,0x03,0x00,0x00,0x48,0x8B,0xDA,0x48,0x8B,0x01,0xFF,0x50,0x68,0x48,0x8B,0xC8,0x48,0x8B,0xD3,0x48,0x83,0xC4,0x20,0x5B,0xE9,0xDA,0x8A,0x16,0x00};
+inline constexpr unsigned char SkeletonQueryBytes[]{0x48,0x8B,0xC1,0xC3};
 }

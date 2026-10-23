@@ -10,17 +10,15 @@ import struct
 from verify_sky_draw import mapped, primary_vtable
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'
-WINDOWS = {
-    'current_services_getter': (0xA7FD00, 31, '80c963b123e5423ad1ecdaecb3f1dbf86572839d1ddf9b3bc7b800286bd90ce3'),
-    'pawn_current_getter': (0x93C660, 243, 'b807d65f18e89fc5d9275ae0e93b50683a0b5da27e659efa420bd4ccc88af373'),
-    'base_eye': (0x15FAB0, 108, 'eb16fe1a63b2b1368355ff327d3dbfac618e1d7c71c07884f35f50cd1024794a'),
-    'view_offset': (0x160770, 69, '444834a2c1cf77952ad9426a58ae056b251597bc0445a4ab06ebafc3c1a76dbe'),
-    'view_offset_interpolation': (0x160580, 469, '86509e524b621888a6d4a1d4616bed1f47659f687a9e512f68f72fca5ccf6079'),
-    'history_producer': (0x9138D0, 480, 'bd72c534a2293b60f784d90de6d0fd5491a5a8704b97bbc011802db7f290dc76'),
-    'history_interpolator': (0x903A30, 1194, '0e78b1a66da3da4deaf5c119e5cac6286a1c5fe72ef8fc83f6eca1cb58874f6f'),
-    'history_bracketing': (0x903EE0, 411, '65e54a0c42f477e31339452fe801dc9484300faf036985b79f39ecd7bf6f3229'),
-}
+EXPECTED_HASH = 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'
+WINDOWS = {'current_services_getter': (0xA80B30, 31, '80c963b123e5423ad1ecdaecb3f1dbf86572839d1ddf9b3bc7b800286bd90ce3'),
+ 'pawn_current_getter': (0x93D490, 243, 'c16498dd3b6eb5d91229014a8fc02763d8d3924ecb56bb065b6d7d512d068a96'),
+ 'base_eye': (0x15FA90, 108, 'eb16fe1a63b2b1368355ff327d3dbfac618e1d7c71c07884f35f50cd1024794a'),
+ 'view_offset': (0x160750, 69, '4e08b8c69babe4ae525cdcbc69b179476bab02d9daba67e24fad7688f406ccd1'),
+ 'view_offset_interpolation': (0x160560, 453, 'f015f8d2e605e5ce6d3e58a26dd1184fe5714c73be6cd2780cc7bfbf5a9db737'),
+ 'history_producer': (0x914700, 480, 'dcd9fbf34b67833e5dd0cb783e38a317d888f73cb42edd5e3369ce89a657545d'),
+ 'history_interpolator': (0x904860, 1194, 'd1c72b196f1c23671f2193e1d51063c40ab24c981d23871f42d1d0b148c1b37d'),
+ 'history_bracketing': (0x904D10, 411, 'c71c793a63e494908d6c7f6e5f1ee8c1a3f6fcc5f78d425fbaf3ece3c9b7ae67')}
 
 
 def verify(image, base, header):
@@ -34,28 +32,28 @@ def verify(image, base, header):
     def call(at):
         if image[at] != 0xE8: raise SystemExit(f'Expected direct call at {at:#x}')
         return at + 5 + struct.unpack_from('<i', image, at + 1)[0]
-    registration, array, count = 0x21F4588, 0x21F41F0, 28
+    registration, array, count = 0x21F67E8, 0x21F6450, 28
     if string(ptr(registration)) != 'C_BasePlayerPawn' or ptr(registration + 0x28) != array or struct.unpack_from('<H', image, registration + 0x1C)[0] != count:
         raise SystemExit('Changed C_BasePlayerPawn named schema registration')
     fields = {string(ptr(array + i * 32)): u32(array + i * 32 + 16) for i in range(count)}
     services = primary_vtable(image, base, b'.?AVCCSPlayer_WeaponServices@@')
     pawn = primary_vtable(image, base, b'.?AVC_CSPlayerPawn@@')
-    slot = u32(0x913998)
-    pawn_slot = u32(0xA7FD12)
-    offset_slot = u32(0x15FADB)
+    slot = u32(0x9147C8)
+    pawn_slot = u32(0xA80B42)
+    offset_slot = u32(0x15FABB)
     expected = {
         'ServicesVtable': services, 'PawnVtable': pawn, 'GetterSlot': slot,
         'Getter': ptr(services + slot), 'PawnGetterSlot': pawn_slot, 'PawnGetter': ptr(pawn + pawn_slot),
         'ViewOffsetSlot': offset_slot, 'ViewOffsetGetter': ptr(pawn + offset_slot),
-        'BaseEye': call(0x93C73B), 'ServicePawn': image[0xA7FD09],
+        'BaseEye': call(0x93D56B), 'ServicePawn': image[0xA80B39],
         'WeaponServices': fields['m_pWeaponServices'], 'CameraServices': fields['m_pCameraServices'],
         'ObserverServices': fields['m_pObserverServices'],
     }
-    if u32(0x903C86) != slot or u32(0x93C673) != fields['m_pCameraServices'] or u32(0x93C6B0) != fields['m_pObserverServices']:
+    if u32(0x904AB6) != slot or u32(0x93D4A3) != fields['m_pCameraServices'] or u32(0x93D4E0) != fields['m_pObserverServices']:
         raise SystemExit('Independent native origin/fallback/schema operands disagree')
-    if call(0x160791) != 0x160580 or call(0x1607A2) != 0x16A3D0 or call(0x15FAC5) != 0x219A80:
+    if call(0x160771) != 0x160560 or call(0x160782) != 0x16A3B0 or call(0x15FAA5) != 0x219A60:
         raise SystemExit('Changed native interpolation/transform/absolute-origin call chain')
-    debug = 0x903A75
+    debug = 0x9048A5
     if string(debug + 7 + struct.unpack_from('<i', image, debug + 3)[0]) != '%s: GetInterpolatedShootPosition time [ #%d + %.3f ]\n':
         raise SystemExit('Changed named historical shooting-origin anchor')
     for name, (at, size, digest) in WINDOWS.items():

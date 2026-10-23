@@ -1,5 +1,56 @@
 # Installed native sunlight and directional lightmap evidence
 
+## Current recertification, October 23, 2026
+
+Installed client **1.41.9.2 / 2000935**, Source revision **11162119**, Steam
+build **26144732**. The unchanged installation's AMD64
+`game/bin/win64/scenesystem.dll` SHA-256 is
+`0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b`;
+timestamp `0x6ADA337D`, image size `0x978000`.
+
+Both named registration strings were independently decoded from current RIP
+operands: `sc_disable_baked_lighting` is now `0x5EEF40` (was `0x5EEF00`),
+`r_directional_lightmaps` now `0x5FC650` (was `0x5FC620`). Their wrappers and
+native consumers remain unchanged. The buffer builder's `0x1AF849` load now
+resolves **`0x5FFF80`**, a verified float 1, formerly `0x5FFF40`. The direction
+producer still maps enabled to 0 and disabled to 1 before storing at source
+`+0x40`; the relocated scalar was discovered from its load, not guessed.
+
+The builder, pure memory-copy path and all current-thread stack-copy/upload
+sites were re-disassembled. Comparison of 611 preserved builder instructions
+found 15 changed RIP-displacement operands and one module-base table
+displacement at `0x1AFB1B` (`0x5FE770` to `0x5FE7A0`). The preceding
+`0x1AFA5B` LEA independently establishes R10 as module base. Members,
+instructions, registers and branch/call structure stay intact. Frozen current builder range
+`0x1AF7B0..0x1B0FB0` and copy scope `0x569120..0x56978D` hashes now supplement
+the existing instruction windows. Copy target/return `0x569120`/`0x1B0CD1`,
+buffer size `0x7DE0`, three-variant propagation, sun RGB `+0x79A0`, ambient
+fill `+0x120` and original destination return remain unchanged. All eight
+runtime byte arrays match; the header changes only timestamp.
+
+The copy's four module-base jump-table operands relocate separately to
+`0x6015B0`, `0x6015F0`, `0x601614`, and `0x601638`. The exact current tables
+are frozen as well; all 43 decoded table entries remain within the checked
+copy code. R10's preceding LEA independently resolves module base. Full old
+copy disassembly comparison found only these table displacements changed
+(one preserved instruction occurs twice in the historical transcript).
+
+`verify_environment_lighting.py` and `inspect_baked_lighting.py` pass against
+the exact new hash. Temporary timestamp, copy-return, sun-member and copy
+fingerprint changes fail; an unknown scene-image copy fails. Evidence is
+`logs/research/26144732/world/{contracts,compare,header-bytes,validation}.json`,
+`buffer_builder.txt`, `memcpy.txt`, and
+`verify_environment_lighting-verified.json`. Scratch decoding used Capstone
+5.0.9; frozen verification remains stdlib-only. The native ambient producer,
+key, getter and store still pass; prior optional shader-consumer research
+below is historical and was not rerun for every shader variant in this pass.
+
+No client/server launch or fresh graphics API/runtime/visual observation was
+performed. Builds/CTest are recorded by the overall update. Current-thread
+source ownership and cooperative stopped/resident behavior are preserved.
+
+## Historical recertification, October 15, 2026
+
 Recertified October 15, 2026 for CS2 **1.41.9.1**, client **2000932**, Steam
 build **25947352**, Source revision **11131657**. Current `scenesystem.dll`
 SHA-256 is `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`,

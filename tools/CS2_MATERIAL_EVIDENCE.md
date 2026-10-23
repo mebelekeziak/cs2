@@ -1,5 +1,46 @@
 # Installed native world-material evidence
 
+## Current recertification, October 23, 2026
+
+Installed AMD64 client **1.41.9.2 / 2000935**, Source revision **11162119**,
+Steam build **26144732**. Module root remains the historical installation's
+`game/bin/win64`; investigation read files only.
+
+| DLL | Current SHA-256 | PE timestamp / image size |
+| --- | --- | --- |
+| scenesystem.dll | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` | `0x6ADA337D` / `0x978000` |
+| worldrenderer.dll | `e0b1ed04a652f8268fd9d6b75b5a97910ab57197e2cdb8a0a4966703a5ec8322` | `0x6ADA331E` / `0x26B000` |
+| materialsystem2.dll | `2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69` | `0x6ADA32D5` / `0x186000` |
+
+Independent RTTI traversal and the scene constructor's RIP operand at `0x3A88A`
+both resolve aggregate descriptor table **`0x5E4518`**, formerly `0x5E4538`.
+Its `+0x20` slot still selects four-argument generation `0x41F30`. Independent
+`CMaterial2` primary RTTI now yields **`0x129AE0`**, formerly `0x129AD0`;
+slot `+0x30` still selects `0xBA30`. Its complete checked method and selection
+helper windows retain the two-argument material/view contract and selected
+variant return. All 21 frozen scene windows and four material ABI windows
+match. The worldrenderer descriptor lookup still names
+`AggregateSceneObjectDesc`; native flat initialization still names
+`materials/dev/reflectivity_90.vmat` and resolves binding `0x9217D8`.
+
+Packet layout, append/overflow behavior, native view-mode selection, alternate
+streams `0x921390`/`0x9213A8` and all member widths remain unchanged.
+`include/world_material_offsets.h` changes scene/material identities and the
+aggregate descriptor only. No runtime C++ behavior changed. Verifier pins now
+cover the current files and independently validate aggregate/material RTTI.
+
+`python tools/verify_world_materials.py` passes; altered temporary timestamp,
+`FlatBinding`, `Material`, and `CallbackBytes` each fail. An unknown scene image
+fails before trusting instruction sites. Reports/disassembly:
+`logs/research/26144732/world/{probe,contracts,header-bytes,validation}.json`,
+`aggregate.txt`, `aggregate_draw.txt`, `append.txt`, and
+`verify_world_materials-verified.json`. Capstone 5.0.9 was a scratch-only tool;
+the frozen verifier is standard-library-only. No live appearance/graphics API
+was observed, and no game/server was launched. Builds/tests are recorded by
+the overall update pass. The following sections describe historical evidence.
+
+## Historical investigation, October 14–15, 2026
+
 Read-only local binary investigation on October 14, reverified October 15,
 2026 for client 1.41.9.1 / 2000932, Steam build25947352 / Source11131657; client-side world
 draw generation, AMD64, Microsoft x64 ABI. No game process was launched or

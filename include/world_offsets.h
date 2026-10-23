@@ -1,18 +1,18 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-// Recertified October 21, 2026 for installed patch 1.41.9.1 / client 2000934.
-// scenesystem.dll SHA256 040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5.
-// client.dll SHA256 5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49.
+// Recertified October 23, 2026 for installed patch 1.41.9.2 / client 2000935.
+// scenesystem.dll SHA256 0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b.
+// client.dll SHA256 ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5.
 // See tools/verify_sky_draw.py and CS2_SKY_DRAW_EVIDENCE.md.
 namespace world_offsets {
-inline constexpr std::uint32_t SceneTimestamp = 0x6ACFCD4F;
+inline constexpr std::uint32_t SceneTimestamp = 0x6ADA337D;
 inline constexpr std::uint32_t SceneImageSize = 0x978000;
 // Only the sky lighting-kind producer was recertified in client.dll. These
 // scoped identities do not enable unverified ESP or movement layouts.
-inline constexpr std::uint32_t ClientTimestamp = 0x6AD7B41C;
-inline constexpr std::uint32_t ClientImageSize = 0x299D000;
-inline constexpr std::ptrdiff_t SkyDescriptorVtable = 0x5F64D8;
+inline constexpr std::uint32_t ClientTimestamp = 0x6ADA7340;
+inline constexpr std::uint32_t ClientImageSize = 0x29A0000;
+inline constexpr std::ptrdiff_t SkyDescriptorVtable = 0x5F6508;
 inline constexpr std::ptrdiff_t SkyRender = 0x154FB0;
 inline constexpr std::ptrdiff_t SetFloat4 = 0x4DA70;
 inline constexpr std::ptrdiff_t SkyTintReturn = 0x1551A9;
@@ -21,7 +21,7 @@ inline constexpr std::ptrdiff_t DrawSource = 0x18;
 inline constexpr std::ptrdiff_t SceneKind = 0xC4;
 inline constexpr std::uint32_t VisibleKind = 0xE5FD3C88;
 inline constexpr std::uint32_t LightingKind = 0x0881EE9E;
-inline constexpr std::ptrdiff_t LightingProducer = 0x28269E;
+inline constexpr std::ptrdiff_t LightingProducer = 0x28267E;
 inline constexpr std::uint32_t SkyTintKey = 0x99E6002A;
 inline constexpr unsigned char SkyRenderBytes[]{
     0x45,0x85,0xc9,0x0f,0x8e,0x1f,0x07,0x00,0x00,0x4c,0x8b,0xdc,

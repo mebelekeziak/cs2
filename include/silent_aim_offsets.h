@@ -2,13 +2,13 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed 1.41.9.1 client; independently verified by inspect_silent_aim.py.
-// Recertified October 21, 2026 for client 2000934 / Steam build 26087496.
+// Installed 1.41.9.2 client; independently verified by inspect_silent_aim.py.
+// Recertified October 23, 2026 for client 2000935 / Steam build 26144732.
 // See tools/CS2_SILENT_AIM_EVIDENCE.md for producer, consumer and timing.
 namespace silent_aim_offsets {
-inline constexpr std::ptrdiff_t Input = 0x257B640;
-inline constexpr std::ptrdiff_t InputVtable = 0x1C9DB20;
-inline constexpr std::ptrdiff_t HistoryBuilder = 0xD02130;
+inline constexpr std::ptrdiff_t Input = 0x257D780;
+inline constexpr std::ptrdiff_t InputVtable = 0x1C9FA58;
+inline constexpr std::ptrdiff_t HistoryBuilder = 0xD03790;
 inline constexpr std::ptrdiff_t HistorySlot = 25;
 inline constexpr unsigned char HistoryBuilderBytes[]{
     0x48,0x8b,0xc4,0x4c,0x89,0x40,0x18,0x48,0x89,0x48,0x08,0x55,0x53,0x57,0x41,0x55,

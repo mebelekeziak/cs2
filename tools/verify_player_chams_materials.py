@@ -38,20 +38,20 @@ def verify(game, header):
     call = lambda image, at: at + 5 + struct.unpack_from('<i', image, at+1)[0]
     need(primary_vtable(m, mb, b'.?AVCMaterialSystem2@@') == 0x12D920,
          'Changed native material system RTTI')
-    need(primary_vtable(m, mb, b'.?AVCMaterial2@@') == 0x129AD0,
+    need(primary_vtable(m, mb, b'.?AVCMaterial2@@') == 0x129AE0,
          'Changed native material RTTI')
     creator = ptr(m, mb, 0x12D920 + 29*8)
-    mode = ptr(m, mb, 0x129AD0 + 0x30)
+    mode = ptr(m, mb, 0x129AE0 + 0x30)
     need(creator == 0x3ADE0 and mode == 0xBA30, 'Changed material virtual ABI')
-    need(call(c, 0x226FD8) == 0x19B4860 and call(c, 0x226FE4) == 0x19C28E0 and
-         call(c, 0x227115) == 0x19B4EB0, 'Changed native arena caller lifecycle')
-    need(c[0x19B4EB0:0x19B4EB3] == bytes.fromhex('33d2e9') and
-         0x19B4EB7 + struct.unpack_from('<i', c, 0x19B4EB3)[0] == 0x19B4F10,
+    need(call(c, 0x226FB8) == 0x19B6AC0 and call(c, 0x226FC4) == 0x19C4B40 and
+         call(c, 0x2270F5) == 0x19B7110, 'Changed native arena caller lifecycle')
+    need(c[0x19B7110:0x19B7113] == bytes.fromhex('33d2e9') and
+         0x19B7117 + struct.unpack_from('<i', c, 0x19B7113)[0] == 0x19B7170,
          'Arena destructor no longer selects nondeleting path')
-    arena_size = u32(c, 0x19B5007)
-    need(arena_size == 0x1190 and c[0x19C2902:0x19C2906] == bytes.fromhex('488d4178'),
+    arena_size = u32(c, 0x19B7267)
+    need(arena_size == 0x1190 and c[0x19C4B62:0x19C4B66] == bytes.fromhex('488d4178'),
          'Changed arena size/root offset')
-    generic = 0x1AD2840
+    generic = 0x1AD4FA8
     need(cstring(c, ptr(c, cb, generic)) == 'generic' and
          struct.unpack_from('<QQ', c, generic+8) == (0x469806E97412167C, 0xE73790B53EE6F2AF),
          'Changed native generic KV3 format ID')
@@ -71,7 +71,7 @@ def verify(game, header):
          call(m, 0x10329) == 0x10700 and
          m[0x10A74:0x10A81] == bytes.fromhex('83bdc8000000000f85b6010000'),
          'Changed CreateMaterial asynchronous shader-load selection/clone parity')
-    callback_type = cstring(m, 0x14C950 + 16)
+    callback_type = cstring(m, 0x14C960 + 16)
     need('IssueAsyncLoadRequests@CMaterial2' in callback_type and
          'MaterialStaticComboLoadRequest_t' in callback_type and 'ShaderLoadMode_t' in callback_type,
          'Changed native static-combo asynchronous request RTTI')
@@ -91,10 +91,10 @@ def verify(game, header):
          'Changed packet tint to native GPU instance copy')
     constants = {'ClientTimestamp': u32(cr, cn+8), 'ClientImageSize': len(c),
         'MaterialTimestamp': u32(mr, mn+8), 'MaterialImageSize': len(m),
-        'ArenaConstructor': call(c, 0x226FD8), 'ArenaGetRoot': call(c, 0x226FE4),
-        'ArenaDestructor': call(c, 0x227115), 'ArenaSize': arena_size,
+        'ArenaConstructor': call(c, 0x226FB8), 'ArenaGetRoot': call(c, 0x226FC4),
+        'ArenaDestructor': call(c, 0x2270F5), 'ArenaSize': arena_size,
         'CreateMaterial': creator, 'MaterialSystemVtable': 0x12D920,
-        'MaterialVtable': 0x129AD0, 'MaterialMode': mode, 'LoadKV3String': parser}
+        'MaterialVtable': 0x129AE0, 'MaterialMode': mode, 'LoadKV3String': parser}
     source = re.sub(r'//[^\n]*|/\*.*?\*/', '', header.read_text(), flags=re.S)
     for name, observed in constants.items():
         matches = re.findall(rf'\b{name}\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*;', source)
@@ -131,37 +131,37 @@ def verify_assets(game):
 
 ROOT = Path(__file__).resolve().parents[1]
 GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game")
-IDENTITIES = {'client': ('csgo/bin/win64/client.dll', '5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49'),
+IDENTITIES = {'client': ('csgo/bin/win64/client.dll', 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'),
  'material': ('bin/win64/materialsystem2.dll',
-              'b4d5c667eb65f13d9193d743a88eb1f9dfa623cc8f745cef764d9977969e38b6'),
- 'tier0': ('bin/win64/tier0.dll', '990ea56bf1626d299ba54b64b423f2e409bd592bb737c7a5edf7972ad5c7143e')}
-WINDOWS = {'client': {'ArenaConstructor': (26953824,
+              '2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69'),
+ 'tier0': ('bin/win64/tier0.dll', 'f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d')}
+WINDOWS = {'client': {'ArenaConstructor': (26962624,
                                  190,
                                  '87de68c154a44d92f4d41a9f24aa75884284bc63d2e34861a9e331573a0e4ed4'),
-            'ArenaDeletingDestructor': (26955536,
+            'ArenaDeletingDestructor': (26964336,
                                         268,
-                                        '5335587a75dd3e884c2c1174c5d502ce966637b8d212ef06c0780a26262bd62f'),
-            'ArenaDestructor': (26955440,
+                                        'd74f38824f30cd3a383e45a9d36e84f828b325a1df1a01593a6699b63c6a3a19'),
+            'ArenaDestructor': (26964240,
                                 7,
                                 '1a92b26d2497313aaa31f19cb07bf971ac24ccd47f6d2dd2923da36137a36890'),
-            'ArenaGetRoot': (27011296,
+            'ArenaGetRoot': (27020096,
                              43,
-                             '842057cc67bf1d51b3b951e3f28f9d79b74446274114774e01615ac46d7c9b3c'),
-            'ArenaPoolConstructor': (26954016,
+                             '90b370e8e5f9a67a75ef2f7e4ff971e2f50c32cd25544087e87b9b64ca42eb5f'),
+            'ArenaPoolConstructor': (26962816,
                                      519,
-                                     '585ee0944fadf50db411035f5541ca6c457773d6f5a136053d7ce243b9526e4f'),
-            'NativeParserCaller': (2256833,
+                                     '7e004ebbac34c4e28a3f706e04aace84f0c1c1bafbcf24ca2b2b5a3522af3ad2'),
+            'NativeParserCaller': (2256801,
                                    345,
-                                   'c41fe5fa47c5069ad6ec451ddc145f83bd07a403cb5d99ca021b7b9679675284')},
+                                   'cbdb5bd3f028ba647ccc6999f906f3c1210e509558ecb18a43b740e5eb1aa7a4')},
  'material': {'CreateMaterial': (241120,
                                  360,
-                                 'eeb7aa376d5960285babaf17bca0a0a266391b67b2aa3d97f2d34519ca67ad23'),
+                                 'ae6d100c6686911ef89ab4abd54ace44f9fc0c769dc48072fcd30f58941b3a2a'),
               'MaterialInitialize': (64768,
                                      464,
-                                     '089ad98d27215c293711096c7fd8766dfe38425de8d7878d7c28c2e60f87f619'),
+                                     'de4720a5e963c09b6aa594d62fcd1ca2b98c3afdc55f61ebef3ade3557bb04ce'),
               'MaterialKVConversion': (56320,
                                        1556,
-                                       '8eae13a305e7fbb334eb5a04c341201fa1af8cebf8649062803038850c9f3523'),
+                                       '2989a872d70a8ac932c61c7e19b6d0871588ac9c24e21898dad60c5feb4cc5e7'),
               'MaterialMode': (47664,
                                320,
                                'dcb6a4e12ec2ba96f35f894dc12c0ab394b65ce68d436a344f97068bc9ae1c33')},
@@ -173,7 +173,7 @@ WINDOWS = {'client': {'ArenaConstructor': (26953824,
                              '1aa4615085f73ef6121d2eeda8eddadf2936daddf40924c4ba726b04117351ac')}}
 ENTRIES = {'ArenaConstructor': '48895c2408574883ec308bda488bf9488bd1e8a9000000',
  'ArenaDestructor': '33d2e959000000',
- 'ArenaGetRoot': '4883ec28f68130110000047515488d15dcb34900488d0de5b34900ff15c7af0e00cc488d41784883c428c3',
+ 'ArenaGetRoot': '4883ec28f68130110000047515488d158cb14900488d0d95b14900ff155fad0e00cc488d41784883c428c3',
  'CreateMaterial': '48895c240848896c2410488974241848897c242041564881ec10010000',
  'LoadKV3String': '48895c2408574883ec704c8bd148c7c0ffffffff48ffc041803c000075f6'}
 
@@ -202,12 +202,12 @@ ASSETS = [('csgo',
   'shaders/vfx/csgo_unlitgeneric_pc_50_ps.vcs',
   '3c3c2bdad0876533567335b6a5dc07329af5caee51cd7ff3cd13bf0b1c8a603a')]
 
-IDENTITIES["scene"] = ('bin/win64/scenesystem.dll', '040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5')
+IDENTITIES["scene"] = ('bin/win64/scenesystem.dll', '0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b')
 WINDOWS["scene"] = {'NativePacketTintGPUConsumer': (376480, 3984, '8d6dd1a6cd6d0107a704771d9280b12102c7686879c8190c3a623730e4f44d37')}
 
-WINDOWS["material"]["MaterialBindingRetain"] = (240624, 483, '25c7944649cd5a0265ef8626a834a1bd3d73fce0b959cab685520902b710552c')
-WINDOWS["material"]["MaterialInitializeAndLoadMode"] = (0xFD00, 0x955, '5040c737e86ad08cf7e72607f13cbf5898f3e56cc9e156d1e2ac3c4c1d1b7bf2')
-WINDOWS["material"]["IssueAsyncLoadRequests"] = (0x10700, 0x724, '25cf289113c324ca7db275cb351c99112a8e34764babd7ed5a46a7cacb58bd06')
+WINDOWS["material"]["MaterialBindingRetain"] = (240624, 483, 'ae25c1841020390769b181716a294103107e501e8973915790dc5094fd5dc97f')
+WINDOWS["material"]["MaterialInitializeAndLoadMode"] = (0xFD00, 0x955, 'e1f878450465488df0cd25f99e788bf4fbc5e0e02bda0b2dc8b1ef0990702c21')
+WINDOWS["material"]["IssueAsyncLoadRequests"] = (0x10700, 0x724, 'd4b6d38cc332742f43b9a65247bda7501daec31be4f65db86f9ad5312fd6917d')
 
 
 if __name__ == '__main__':

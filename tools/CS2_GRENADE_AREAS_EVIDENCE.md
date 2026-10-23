@@ -181,3 +181,54 @@ Acquisition/stop serialization is separate from the publication lock, so native
 scanning and geometry generation do not hold the render publication lock.
 Only swapping/clearing copied geometry and taking the render snapshot require
 that lock. No engine methods run under either lock.
+
+## October 23, 2026 recertification: Steam build 26144732
+
+Installed Windows AMD64 client patch **1.41.9.2**, client/server **2000935**.
+Read-only investigation used the documented Steam game installation; no game
+process was opened or launched, and no installed files were changed.
+
+| Module | PE timestamp / image size | SHA-256 |
+| --- | --- | --- |
+| client.dll | `0x6ADA7340` / `0x29A0000` | `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5` |
+| scenesystem.dll | `0x6ADA337D` / `0x978000` | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` |
+| materialsystem2.dll | `0x6ADA32D5` / `0x186000` | `2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69` |
+| tier0.dll | `0x6ADA3248` / `0x401000` | `f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d` |
+
+Research scripts, candidate searches, decoded current instruction windows and
+positive/negative JSON reports are retained under
+`logs/research/26144732/render_grenade/`. Optional discovery used Capstone
+**5.0.9**; the frozen verifiers remain standard-library Python and reject
+unrecognized complete module hashes before checking contracts. Discovery
+masked only instruction-decoded RIP-relative displacements and relative branch
+immediates to locate candidates; the final frozen checks contain exact current
+bytes/hashes and unmasked independently decoded operands.
+
+`C_Inferno` RTTI vtable moved `0x1CAC6F0 -> 0x1CAE650`; named schema
+registration/field array moved `0x223FE48/0x223FB30 -> 0x2241E58/0x2241B40`.
+The class remains size `0x86A0`, 24 fields, including positions `+0x1108`,
+burning bytes `+0x1708`, count `+0x1A48`, post-effect byte `+0x1A54`, and
+visual half-width `+0x866C`. The new native fire world-coordinate consumer
+`0xD53451`, burning selector `0xD534FA`, visual-width consumer `0xD5105F`,
+default-width stores `0xD42BF8`, post-effect branch `0xD45453` and bounded
+capacity check `0xD53598` preserve those meanings and the 64-cell capacity.
+
+`C_SmokeGrenadeProjectile` RTTI vtable moved `0x1BD2190 -> 0x1BD4120`;
+registration/field array moved `0x2218958/0x22185E0 -> 0x221A798/0x221A620`.
+It remains size `0x1500`, 11 fields, with unchanged smoke tick/effect/detonation/
+spawned fields. The start/origin producer `0x7D8EF0` proves the embedded
+simulation `+0x13B8`. Native iteration `0x7C7190` and render occupancy
+`0x7E1030` retain owner `+0x70`, current buffer `+0x100`, occupancy `+0x1008`
+and 32768 voxels. The density consumer `0x7E110C` still computes `1-buffer`,
+uses its `0x80000` byte buffer and `+0x3008` base. Morton decode is now
+`0x7E1072`; world-coordinate conversion `0x7E1D2A` decodes cell-size constant
+RIP target `0x1ADC2FC` as float 20. Grid/cell-center initialization
+`0x7E1DFC/0x7E1E44` contains float 16/10. Origin remains simulation `+0xE8`.
+These independent windows moved by different deltas; no common shift was used.
+
+`python tools/inspect_grenade_areas.py` passes. All **28** numeric constants,
+including timestamps, vtables, members, buffer strides and float sizes, reject
+individual temporary header mutations (`negative-results.json`). No runtime
+behavior changed beyond build-specific identities/vtables. Shared frame-owner
+stage/lifecycle updates are owned by the model/frame verifier. Actual grenade
+footprint appearance remains unobserved; builds/CTest are reported separately.

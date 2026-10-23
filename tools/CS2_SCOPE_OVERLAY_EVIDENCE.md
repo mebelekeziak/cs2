@@ -1,5 +1,68 @@
 # Native first-person scope overlay
 
+## Build 2000935 update — October 23, 2026
+
+Verified the installed Windows AMD64 **client**, patch `1.41.9.2`,
+client/server `2000935`, Steam build `26144732`. Client SHA-256 is
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`;
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`. The installation remains
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+This supersedes the runtime values in historical sections below.
+
+Header `scope_overlay_offsets.h` changes, relative to build 26087496:
+
+| Source symbol | Previous | Current |
+| --- | --- | --- |
+| `Producer` | `0x8e15e0` | `0x8e2410` |
+| `RenderCaller` | `0x11da302` | `0x11dc532` |
+| `Consumer` | `0x11ec870` | `0x11eeaa0` |
+| `ScopeGate` | `0x11eca98` | `0x11eecc8` |
+| `RenderReturn` | `0x11da311` | `0x11dc541` |
+| `OtherReturn` | `0xcefcaf` | `0xcf130f` |
+| `IronSightGate` | `0x82fe70` | `0x830ca0` |
+| `IronSightDrawCaller` | `0x8321da` | `0x83300a` |
+| `IronSightGraphCaller` | `0x11f996e` | `0x11fbbce` |
+| `IronSightDrawReturn` | `0x8321e2` | `0x833012` |
+| `IronSightGraphReturn` | `0x11f9976` | `0x11fbbd6` |
+
+Rediscovery followed both visual-producer callers, the graph call to the
+legacy consumer, exact named render passes and `CIronSightController` gate's
+geometry/graph callers. The native producer now reads scoped byte `+0x1EA0`;
+the verifier independently checks its operand against the named pawn schema.
+Output byte `+4` still controls the legacy mask/lines/blur. Float `+0` remains
+health boost and is preserved. The render stack's `+0x980/+0x984` temporary and
+`+0x176` copy still establish view-state scope byte `+0x1B6`, which feeds modern
+stencil/crop consumers. The other producer caller remains the FOV path.
+
+All thirteen windows, including the complete 4,349-byte iron-sight graph, were
+decoded. Every instruction retains the original structure except the producer's
+new scoped member and relocated native data/function references. The graph's
+indexed lookup at `0x22922E0` (48 bytes) and vector table at `0x1D2C420`
+(64 bytes) match their prior data exactly. Render-pass LEAs independently resolve
+`Health Boost Effect`, `Legacy Sniper Scope`, `IronSightResolve`, blur passes,
+`IronSightToScreen` and `SniperZoomStencil`; stencil RTTI also matches.
+
+Iron-sight controller ownership stays embedded at weapon `+0x1BD0`, confirmed
+by schema and native subtraction. The two targeted false-result branches still
+reach the resource-free epilogues at `0x8343FD` and `0x11FCC8D`. All other
+predicate users stay native. ABIs remain `void(pawn*, temporary output*)` and
+`bool(controller*)`; replacement still requires the fresh same local source.
+
+The frozen verifier still rejects unknown module hashes before using its sites,
+and checks complete new windows, independently decoded operands/identities,
+header constants and all fingerprints. Research/disassembly and the passing
+`python tools/inspect_scope_overlay.py` report are under
+`logs/research/26144732/view_model/` (`refined.json`, `addresses.json`,
+`schemas.json`, `verified_scope_overlay.json`). All **20/20** temporary
+header scalar/array mutations reject; this verifier also rejects a one-byte
+changed workspace client copy. See `negative_checks.json` and
+`unknown_hash_checks.json` there. No installed file was changed.
+
+Static verification does not establish live appearance or gameplay behavior.
+No client/server was launched, no process was accessed, and no graphics runtime
+was observed in this pass. Build/CTest integration is recorded by the project
+update record; stopped callbacks remain resident until normal process exit.
+
 ## Build 2000934 recertification — October 21, 2026
 
 Rechecked the installed Windows AMD64 **client**, patch `1.41.9.1`,

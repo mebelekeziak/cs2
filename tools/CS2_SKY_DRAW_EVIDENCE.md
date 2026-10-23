@@ -1,6 +1,46 @@
 # Installed CS2 sky draw evidence
 
-## Current recertification, October 21, 2026
+## Current recertification, October 23, 2026
+
+Read-only installed Windows AMD64 client **1.41.9.2 / 2000935**, Source revision
+**11162119**, Steam build **26144732** (version October 22, 14:13:16).
+The installation remains
+`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`.
+`bin/win64/scenesystem.dll` SHA-256 is
+`0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b`,
+PE timestamp `0x6ADA337D`, image `0x978000`.
+`csgo/bin/win64/client.dll` SHA-256 is
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+timestamp `0x6ADA7340`, image `0x29A0000`.
+
+Independent primary RTTI traversal for `CSkyBoxObjectDesc` gives the new
+table **`0x5F6508`**, formerly `0x5F64D8`. Render slot `+8` still resolves
+`0x154FB0`; generation slot `+0x20` still resolves `0x36C00`. The client lighting
+kind store is unique at **`0x28267E`**, formerly `0x28269E`. Its owning updater
+entry is `0x282370`; the `0x282667` window independently shows material handle
+`+0x10A0`, creation dispatch `+0x138`, lighting output `+0x10F0`, then the
+`[rax+0xC4]=0x0881EE9E` store. These moves were discovered separately, without
+applying a uniform relocation.
+
+All twenty frozen instruction windows pass after updating the client site
+locations. Render remains seven-argument Microsoft x64 ABI; packet stride
+`0x70`, last-source `+0x18`, kind `+0xC4`, visible kind, tint key, writer
+`0x4DA70`, and return `0x1551A9` are unchanged. The complete render/constructor/
+writer and client-updater windows were disassembled to workspace logs. The
+writer still copies the temporary float4 synchronously; no lifetime/stop change.
+
+`include/world_offsets.h` updates the two module identities, descriptor and
+client producer; its three byte arrays remain unchanged. The frozen verifier
+passes. Temporary alternate headers with changed timestamp, descriptor,
+`DrawSource`, or `SkyRenderBytes` all fail; an unknown scene image also fails.
+Evidence: `logs/research/26144732/world/probe.json`, `contracts.json`,
+`client-updater.txt`, `header-bytes.json`, `verify_sky_draw-verified.json`, and
+`validation.json`. Research used Capstone 5.0.9 from the documented ignored
+dependency directory; the frozen verifier remains standard-library-only.
+No client/server launch or fresh runtime/graphics/visual observation occurred.
+Build/CTest results belong to the overall update record.
+
+## Historical recertification, October 21, 2026
 
 Installed client/server `2000934`, Source revision `11150591`, Steam build
 `26087496`, patch `1.41.9.1` (version October 20, 2026, 11:41:22).

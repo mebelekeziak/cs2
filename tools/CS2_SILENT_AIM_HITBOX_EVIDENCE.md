@@ -1,5 +1,58 @@
 # Named animated aim landmarks
 
+## October 23, 2026 recertification - client 2000935
+
+Installed Windows AMD64 client `1.41.9.2` / `2000935`, Source revision
+`11162119`, Steam build `26144732`, version date October 22, 2026 14:13:16.
+Installation remains `C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game`;
+executable `bin/win64/cs2.exe`, module `csgo/bin/win64/client.dll`.
+Client SHA-256 `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Research is preserved in `logs/research/26144732/aim_sources/`: `schema.json`
+records independently located named schema templates, `relocations.json` and
+`address_mapping.json` record candidate/call-target rediscovery, and
+`disassembly.txt` contains decoded current instruction windows (Capstone 5.0.7).
+Preserved prior-file comparison uses only windows matching the former frozen
+window hashes; the old negative-test sample is not accepted as a valid complete
+baseline image. New named schema/RTTI/caller checks and full module pins remain
+mandatory. No uniform relocation delta is assumed.
+
+Named bone lookup moves `0x952940 -> 0x953770`; its complete 38-byte entry
+continues to resolve the pawn scene's skeleton through byte slot `0x68`, then
+tail-call the native string/model lookup `0xABC270`. The skeleton RTTI table is
+`0x1C43C10`, player networked skeleton table `0x1ACFE58`, identity query
+`0x1C9E50`. Independent native constructor at `0x930AB5` and RTTI hierarchy
+retain the zero-offset skeleton base and embedded skeleton `+0x80`.
+
+Named schema keeps model state `+0x140`, model handle `+0xA0`; native model
+consumer reads combined `+0x1E0`. Bone-array member `+0x1C0`, resource count
+`+0x178`, cached transform stride `0x20` and position `+0` remain unchanged.
+World bone transform moves `0xAB11B0 -> 0xAB1FF0`; native pelvis lookup at
+`0xC7D817` calls the newly verified lookup and consumes the returned float3.
+All client named strings are rediscovered at their new addresses; leg-upper
+names remain established through the exact unchanged authored SAS model hash.
+The verifier checks ten machine windows, three schema templates, constructor,
+RTTI hierarchy, vtable slots, named strings and compiled header fingerprint.
+
+`final_checks.py` records five passing frozen verifier commands in `frozen.json`
+and their full outputs in per-verifier JSON files. Twenty deliberately wrong
+headers are rejected in `negative.json`, covering source functions, vtables,
+new pawn members, resource layout, weapon table records and entry fingerprints.
+All five verifiers also reject the preserved old negative-test client sample;
+see `hash_rejections.json`. All module/asset hash guards remain exact. This is installed-file verification:
+no client/server was launched, no native getter was executed, and no live aim,
+accuracy, bone pose, capsule or shot-registration observation is claimed. Existing
+command-thread ownership, cache invalidation and cooperative residency rules
+remain in force. Earlier build-specific addresses below are historical.
+
+The `silent_aim_checks` fixture now selects the verified current player
+skeleton table instead of its historical captured RVA. The behavioral chest/head
+acquisition and foreign-table rejection cases remain. Target rebuilds and
+`ctest -R "^silent_aim_checks$"` pass in both Release build variants.
+
+## Historical evidence
+
 ## October 21, 2026 recertification — client 2000934
 
 Installed AMD64 client `1.41.9.1` / `2000934`, Source revision `11150591`,

@@ -25,6 +25,25 @@ def main():
     digest = hashlib.sha256(raw).hexdigest()
     if digest != EXPECTED_SCENE:
         raise SystemExit("Changed scenesystem.dll: repeat environment lighting investigation")
+    # These scopes were disassembled separately for 1.41.9.2. Data references
+    # moved, while the source frame, copies, uploads and ABI remain intact.
+    for label, start, end, expected_hash in [
+        ("view_buffer_builder", 0x1AF7B0, 0x1B0FB0,
+         "9b2263c6b28804927a43bdab8d6aa7697c63afd73f72eb2d33859a53072fce20"),
+        ("native_copy_scope", 0x569120, 0x56978D,
+         "648d90812c84b0fa379c2b5ae8f176b2060162d7e91c3b0c0e97195c736e1e5c"),
+        ("native_copy_jump_tables", 0x6015B0, 0x60165C,
+         "4f133157d20825e84e15fd8ce38ff17698626cdd59c96456b24a976aa7777a16"),
+    ]:
+        if hashlib.sha256(image[start:end]).hexdigest() != expected_hash:
+            raise SystemExit(f"Changed installed {label} scope")
+    for site, expected in [(0x569140, 0x6015B0), (0x569387, 0x6015F0),
+                           (0x5694B7, 0x601614), (0x56962B, 0x601638)]:
+        if struct.unpack_from("<I", image, site + 4)[0] != expected:
+            raise SystemExit("Native copy jump-table operand differs")
+    if not all(0x569120 <= target < 0x56978D
+               for target in struct.unpack_from("<43I", image, 0x6015B0)):
+        raise SystemExit("Native copy table dispatch leaves the checked copy scope")
     for label, (site, hexbytes) in CHECKS.items():
         expected = bytes.fromhex(hexbytes)
         if image[site:site + len(expected)] != expected:

@@ -1,5 +1,39 @@
 # Installed environment and scene-light switch evidence
 
+## Current recertification, October 23, 2026
+
+Installed Windows AMD64 client **1.41.9.2 / 2000935**, Source **11162119**,
+Steam build **26144732**. The unchanged installation's
+`game/bin/win64/scenesystem.dll` SHA-256 is
+`0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b`,
+timestamp `0x6ADA337D`, image `0x978000`.
+
+The named `lb_enable_lights` registration remains at `0xE840`; its RIP string
+operand now resolves **`0x5FB290`** (formerly `0x5FB410`). The decoded wrapper
+remains `0x923810`, and both native gate loads independently resolve value
+slot `0x923818`. The point/spot and area entries, boolean `+0x58` test,
+clean disabled returns, three-pointer void ABI, descriptor callers and
+per-view `+0xE3D0` count clear all remain unchanged. All ten frozen windows
+match after updating only the relocated registration-string displacement.
+
+Full point/area gathers and frame-setup dispatch were re-disassembled.
+The preserved area comparison covers 939 instructions; 11 changed operands
+are RIP-relative constant/table/string references. The gates occur before
+output work, and their early-return targets still execute only the native
+epilogues. `include/world_lighting_switch_offsets.h` changes timestamp only;
+all five byte arrays are unchanged. No runtime behavior or lifetime changes.
+
+Frozen verification passes; temporary timestamp, entry, frame-clear and gate
+fingerprint mutations fail, as does a separately modified scene-image copy.
+See `logs/research/26144732/world/{probe,contracts,compare,validation}.json`,
+`point_gather.txt`, `area_gather.txt`, `frame_setup.txt`, and
+`verify_lighting_switches-verified.json`. Scratch decoding used Capstone 5.0.9;
+the frozen verifier remains stdlib-only. No client/server was launched and no
+fresh visual/graphics/runtime observation is claimed. The overall update
+records builds/tests. The following recertification is historical.
+
+## Historical recertification, October 15, 2026
+
 Recertified October 15, 2026 for CS2 **1.41.9.1**, client **2000932**, Steam
 build **25947352**, Source revision **11131657**. Current `scenesystem.dll`
 SHA-256 is `040eb851fa7875523346b890f1ed6e158abc59e08bccbd8dc60539435277efa5`,

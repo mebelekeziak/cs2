@@ -238,3 +238,60 @@ texture assets. **18 deliberately wrong header variants** were rejected: all
 `negative-mutations.json`. These are static contract checks, separate from the
 native-adapter fixture suites and successful builds reported by the integrating
 agent. They establish neither a live game run nor observed visual appearance.
+
+## October 23, 2026 recertification: Steam build 26144732
+
+Installed Windows AMD64 client patch **1.41.9.2**, client/server **2000935**.
+Read-only investigation used the documented Steam game installation; no game
+process was opened or launched, and no installed files were changed.
+
+| Module | PE timestamp / image size | SHA-256 |
+| --- | --- | --- |
+| client.dll | `0x6ADA7340` / `0x29A0000` | `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5` |
+| scenesystem.dll | `0x6ADA337D` / `0x978000` | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` |
+| materialsystem2.dll | `0x6ADA32D5` / `0x186000` | `2fe9750177006c24aacd0f86b14efbc00d04ca61d86f27f1b07b263eefb06d69` |
+| tier0.dll | `0x6ADA3248` / `0x401000` | `f96f4f9666be66ee3dd42a015b305d954b5dd5582b0608a74e50548df426584d` |
+
+Research scripts, candidate searches, decoded current instruction windows and
+positive/negative JSON reports are retained under
+`logs/research/26144732/render_grenade/`. Optional discovery used Capstone
+**5.0.9**; the frozen verifiers remain standard-library Python and reject
+unrecognized complete module hashes before checking contracts. Discovery
+masked only instruction-decoded RIP-relative displacements and relative branch
+immediates to locate candidates; the final frozen checks contain exact current
+bytes/hashes and unmasked independently decoded operands.
+
+Native arena constructor/get-root/destructor moved
+`0x19B4860/0x19C28E0/0x19B4EB0 -> 0x19B6AC0/0x19C4B40/0x19B7110`.
+The independently decoded native parser caller now invokes them at
+`0x226FB8`, `0x226FC4`, `0x2270F5` using the same stack arena. Destructor
+remains `xor edx,edx; jmp 0x19B7170`, selecting its nondeleting path. Its
+allocation operand at `0x19B7267` remains `0x1190`; get-root returns `this+0x78`.
+Generic KV3 ID moves `0x1AD2840 -> 0x1AD4FA8`, reached by the parser caller's
+R9 LEA and retaining the exact generic string/two 64-bit GUID words.
+Constructor/pool/destructors, getter and complete native-caller windows are
+refrozen at their decoded new addresses. ArenaGetRoot entry fingerprint changed
+with its diagnostic/import RIP operands.
+
+`CMaterialSystem2` RTTI/table `0x12D920`, CreateMaterial slot 29/function
+`0x3ADE0`, material mode slot `+0x30`/function `0xBA30`, exported tier0
+LoadKV3String `0x124950`, synchronous KV conversion `0xDC00`, initialize
+`0xFD00`, asynchronous request path `0x10700`, binding references `+0x20`,
+output/name/root argument registers, and native clone load-mode parity remain
+unchanged. Material RTTI primary table moves `0x129AD0 -> 0x129AE0`, including
+the creator's new table-address operand. Native async callback RTTI now begins
+at `0x14C960`; shader-load mode bool inversion/enum0 contract is unchanged.
+Exact new full function windows preserve native root consumption before return.
+
+The entire scene tint GPU-instance consumer (`0x5BEA0`, size `0xF90`) is
+byte-identical. All **eight** installed shader/texture resource hashes are
+unchanged, preserving the separately decoded tint/depth shader evidence.
+The full tier0 string/buffer parser windows also remain byte-identical.
+
+`python tools/verify_player_chams_materials.py` passes. All **18** material
+bad-header variants reject (13 numeric constants and five byte arrays). Reports
+are `materials-verified.json` and `negative-results.json`; the overall owned
+render/grenade pass rejects **78** variants. Material ownership, asynchronous
+load policy, retained resources and resident-stop behavior remain unchanged.
+No live GPU rendering/material appearance was observed. Build/CTest results are
+reported separately by the integrating pass.

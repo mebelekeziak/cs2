@@ -1,5 +1,43 @@
 # Installed-client entity layout evidence
 
+## Current recertification — October 23, 2026
+
+Installed Windows AMD64 client **1.41.9.2 / 2000935 / Steam 26144732**,
+Source revision **11162119**. Client SHA-256
+`ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Separate scratch investigation `logs/research/26144732/core/` mapped all nine
+named schema registrations and every consumed field from installed templates.
+Eleven exact instruction windows were rediscovered using decoded instructions,
+then checked against their initializer, lookup, prediction and load/store
+relationships. Preserved prior client windows were required to match old frozen
+evidence before comparison. Candidate searches alone did not authorize constants.
+The entity initializer's complete body relocated to `0x15BAF50`; equivalent
+handle lookup bodies occur at `0x39C585` and `0x39C815`. The verifier pins the
+first, with its table reference independently agreeing with the initializer.
+The prediction getter's larger 64-byte context uniquely locates `0xBF8080`;
+its RIP address plus native pawn-slot displacement supplies the pawn global.
+
+| Source constant | Previous | Current |
+| --- | --- | --- |
+| Entity system/list pointer slot | `0x271A908` | `0x271C8B8` |
+| Local controller pointer slot | `0x253CB78` | `0x253EEF8` |
+| Local pawn pointer slot | `0x2565718` | `0x25676D8` |
+| View matrix | `0x256B020` | `0x256CFE0` |
+| C_CSPlayerPawn::m_ArmorValue | `0x1EC8` | `0x1ED0` |
+
+All other consumed schema fields, the embedded table `+0x10`, 0x70 identity
+stride, full serialized handle layout and pointer/member distinctions remain
+unchanged. `inspect_cs2.py` freezes new exact sites/bytes and source build identity;
+there is no live dump or inferred uniform relocation. `entity_decoded.json`,
+`discovery.json`, `function_candidates.json` and `details.json` preserve the
+derivations. The frozen verifier passes. Four temporary incorrect headers
+(global, armor member, stride, timestamp) reject; see `core/negative.json`.
+No game/server process was launched or accessed. ESP appearance remains unobserved.
+Build/test results are recorded separately in `docs/CS2_UPDATE_26144732.md`.
+Earlier sections below are historical.
+
 ## Current recertification, October 21, 2026
 
 Installed Windows AMD64 PE32+ client: patch `1.41.9.1`, client/server

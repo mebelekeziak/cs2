@@ -1,9 +1,9 @@
 # Updating CS2 compatibility
 
 Start here after a game update. This project targets the Windows AMD64 **client**
-and its D3D11 overlay. Current verified baseline: **1.41.9.1 / client 2000934 /
-Steam build 26087496**, checked October 21, 2026. See the
-[update record](CS2_UPDATE_26087496.md) for evidence and observation limits.
+and its D3D11 overlay. Current verified baseline: **1.41.9.2 / client 2000935 /
+Steam build 26144732**, checked October 23, 2026. See the
+[update record](CS2_UPDATE_26144732.md) for evidence and observation limits.
 
 Use the [address index](RE_ADDRESS_INDEX.md) to find a symbol's module, meaning,
 rediscovery anchor, owning header and verifier. Headers are the executable source
@@ -26,7 +26,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all twenty-seven frozen verifiers independently, so
+rewrite offsets. It runs all twenty-eight frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -36,10 +36,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Twenty-seven component JSON files: exact command, exit code, stdout and stderr.
+- Twenty-eight component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all twenty-seven static checks passed; **1** means one or more
+Exit code **0** means all twenty-eight static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -113,6 +113,13 @@ listed below; the combined runner supplies the correct installation arguments.
 | Jump/steering/input | [inspect_movement.py](../tools/inspect_movement.py) | [movement evidence](../tools/CS2_MOVEMENT_EVIDENCE.md) |
 | Silent aim history | [inspect_silent_aim.py](../tools/inspect_silent_aim.py) | [history evidence](../tools/CS2_SILENT_AIM_EVIDENCE.md) |
 | Aim spread/inaccuracy/punch/readiness | [inspect_aim_weapon.py](../tools/inspect_aim_weapon.py) | [weapon evidence](../tools/CS2_AIM_WEAPON_EVIDENCE.md) |
+| Native current shooting origin | [inspect_aim_shoot_origin.py](../tools/inspect_aim_shoot_origin.py) | [origin evidence](../tools/CS2_AIM_SHOOT_ORIGIN_EVIDENCE.md) |
+| Native penetration | [inspect_autowall.py](../tools/inspect_autowall.py) | [autowall evidence](../tools/CS2_AUTOWALL_EVIDENCE.md) |
+| Smoke/inferno areas | [inspect_grenade_areas.py](../tools/inspect_grenade_areas.py) | [area evidence](../tools/CS2_GRENADE_AREAS_EVIDENCE.md) |
+| Smoke/flash effects | [inspect_grenade_effects.py](../tools/inspect_grenade_effects.py) | [effect evidence](../tools/CS2_GRENADE_EFFECTS_EVIDENCE.md) |
+| Scope overlay | [inspect_scope_overlay.py](../tools/inspect_scope_overlay.py) | [scope evidence](../tools/CS2_SCOPE_OVERLAY_EVIDENCE.md) |
+| Local player models | [inspect_model_swap.py](../tools/inspect_model_swap.py) | [model evidence](../tools/CS2_MODEL_SWAP_EVIDENCE.md) |
+| Native console controls | [inspect_console_control.py](../tools/inspect_console_control.py) | [console evidence](../tools/CS2_CONSOLE_CONTROL_EVIDENCE.md) |
 | Aim authored capsules | [inspect_aim_geometry.py](../tools/inspect_aim_geometry.py) | [geometry evidence](../tools/CS2_AIM_GEOMETRY_EVIDENCE.md) |
 | Native autofire/history request | [inspect_autofire.py](../tools/inspect_autofire.py) | [autofire evidence](../tools/CS2_AUTOFIRE_EVIDENCE.md) |
 | Autofire direct-path occlusion | [inspect_aim_occlusion.py](../tools/inspect_aim_occlusion.py) | [occlusion evidence](../tools/CS2_AIM_OCCLUSION_EVIDENCE.md) |
@@ -158,7 +165,8 @@ ctest --test-dir build-diagnostic -C Release --output-on-failure
 ```
 
 For first-time configuration, see the [README build instructions](../README.md).
-The current baseline has 56 CTest suites per variant. Passing these tests does
+The current baseline has 57 CTest suites per variant. Run the two build-tree
+CTest commands sequentially because local configuration fixtures share paths. Passing these tests does
 not certify a new binary or a successful hop/rendered player.
 
 Use a fresh normal client process and the documented launcher. Loading at the

@@ -16,28 +16,20 @@ from verify_sky_draw import mapped, require_bytes
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLIENT = pathlib.Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll")
-REGISTRATION = 0x21F3F48
-FIELD_ARRAY = 0x21F4600
+REGISTRATION = 0x21F61D8
+FIELD_ARRAY = 0x21F6860
 FIELD_COUNT = 47
 
-CHECKS = {
-    # RCX=pawn; native origin getter; R8=pawn+m_vecViewOffset.
-    "eye_origin_and_view_offset": (0x8CD2CF, "e8acc794ff80bf20100000004c8d87600f0000488bd8"),
-    # R9B=true applies scene scale; RCX=pawn, RDX=output, R8=view vector.
-    "eye_transform_call": (0x8CD35C, "41b101488d542424488bcfe864d089ff"),
-    # The native transform reads contiguous floats at vector+0,+4,+8.
-    "live_vector_components": (0x16A423, "0f28c20f28caf30f5907f30f594f04f30f595708f30f1103f30f114b04f30f115308"),
-    # Origin getter uses pawn scene+0x330, then scene absolute origin+0xC8.
-    "origin_getter": (0x219A86, "488b99300300009080bb10010000007408488bcbe8116f7b00488d83c8000000"),
-    # Origin components are added after transforming the offset.
-    "eye_origin_sum": (0x8CD36C, "f30f10442424488d542424f30f5803f30f104c2428488bcff30f584b04f30f1054242cf30f585308"),
-    # Current CHandle resolution compares against the table's full serialized handle.
-    "controller_handle_resolution": (0xB1944D, "394810490f45c0eb03"),
-    # Native assignment normalizes the reference serial by identity flags bit zero.
-    # This is lifecycle evidence, not permission to accept a mismatching table serial.
-    "controller_reference_construction": (0xB19474, "8b48108bd18b403083e001c1ea0f2bd08bc123c3c1e20f83f9ff498bc90f45d80bd3418991bc140000"),
-    "second_controller_reference_construction": (0xC94B3B, "8b50108bcd8b4030448bc283e00141c1e80f442bc08bc223c541c1e00f83faff0f45c8440bc1448986bc140000"),
-}
+CHECKS = {'eye_origin_and_view_offset': (0x8CE0FF, 'e85cb994ff80bf20100000004c8d87600f0000488bd8'),
+ 'eye_transform_call': (0x8CE18C, '41b101488d542424488bcfe814c289ff'),
+ 'live_vector_components': (0x16A403, '0f28c20f28caf30f5907f30f594f04f30f595708f30f1103f30f114b04f30f115308'),
+ 'origin_getter': (0x219A66, '488b99300300009080bb10010000007408488bcbe8617d7b00488d83c8000000'),
+ 'eye_origin_sum': (0x8CE19C, 'f30f10442424488d542424f30f5803f30f104c2428488bcff30f584b04f30f1054242cf30f585308'),
+ 'controller_handle_resolution': (0xB1A28D, '394810490f45c0eb03'),
+ 'controller_reference_construction': (0xB1A2B4,
+                                       '8b48108bd18b403083e001c1ea0f2bd08bc123c3c1e20f83f9ff498bc90f45d80bd3418991bc140000'),
+ 'second_controller_reference_construction': (0xC961AB,
+                                              '8b50108bcd8b4030448bc283e00141c1e80f442bc08bc223c541c1e00f83faff0f45c8440bc1448986bc140000')}
 
 
 def evidence(image, base):
@@ -69,12 +61,12 @@ def evidence(image, base):
         raise SystemExit("Missing C_BaseModelEntity::m_vecViewOffset")
     require_bytes(image, CHECKS)
     # Decode the LEA operand rather than relying on the field name alone.
-    view_offset = struct.unpack_from("<I", image, 0x8CD2DE)[0]
+    view_offset = struct.unpack_from("<I", image, 0x8CE10E)[0]
     if fields["m_vecViewOffset"] != view_offset:
         raise SystemExit("Schema and native live view-offset operand disagree")
-    call = 0x8CD367
+    call = 0x8CE197
     transform = call + 5 + struct.unpack_from("<i", image, call + 1)[0]
-    if transform != 0x16A3D0:
+    if transform != 0x16A3B0:
         raise SystemExit("Native eye transform target changed")
     return view_offset
 

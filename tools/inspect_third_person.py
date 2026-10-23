@@ -12,52 +12,56 @@ import struct
 from verify_sky_draw import mapped, primary_vtable, require_bytes
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
+EXPECTED_HASH = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
 CHECKS = {
-    "override_entry": (0xB99250, "48895c241055488bec4881ec80000000488b01488bda"),
-    "query_complete": (0xB627A0, "4863c24869d0280900000fb6840a29020000c3"),
-    "mode_slot_getter": (0xB96570, "8b41288902488bc2c3"),
-    "camera_query_call": (0xB9929A, "8b5510488b0d5c2a6a01e8f794fcff"),
-    "shape_entry": (0x36DDB0, "f30f10420c0f2e027a367534f30f1042100f2e42047a297527f30f1042140f2e"),
-    "trace_entry": (0xA1A000, "488954241048894c240855535657415441564157488dac24f0dbffffb8102500"),
-    "trace_init_entry": (0x1779300, "4055415541574883ec304c8b3dafaafb004533ed488be94d85ff0f858e010000"),
-    "filter_populate_entry": (0xB722A0, "48895c2408574883ec200fb6442450488bf9884137488bda448849384c894108"),
+    "override_entry": (0xb9a090, "48895c241055488bec4881ec80000000488b01488bda"),
+    "query_complete": (0xb635e0, "4863c24869d0280900000fb6840a29020000c3"),
+    "mode_slot_getter": (0xb973b0, "8b41288902488bc2c3"),
+    "camera_query_call": (0xb9a0da, "8b5510488b0d1c3b6a01e8f794fcff"),
+    "shape_entry": (0x36e880, "f30f10420c0f2e027a367534f30f1042100f2e42047a297527f30f1042140f2e"),
+    "trace_entry": (0xa1ae30, "488954241048894c240855535657415441564157488dac24f0dbffffb8102500"),
+    "trace_init_entry": (0x177b560, "4055415541574883ec304c8b3defa7fb004533ed488be94d85ff0f858e010000"),
+    "filter_populate_entry": (0xb730e0, "48895c2408574883ec200fb6442450488bf9884137488bda448849384c894108"),
 }
 WINDOWS = {
-    "override_view": (0xB99250, 0x2E0),
-    "query_local_model": (0xB1BE10, 0x7C),
-    "query_local_wrapper": (0xB1BEE0, 0x44),
-    "camera_thinker": (0xB62A20, 0xED0),
-    "shape_initializer": (0x36DDB0, 0x55),
-    "filter_population": (0xB722A0, 0xE1),
-    "local_pawn_resolver": (0x96A8F0, 0x97),
+    "override_view": (0xb9a090, 0x2E0),
+    "query_local_model": (0xb1cc50, 0x7C),
+    "query_local_wrapper": (0xb1cd20, 0x44),
+    "camera_thinker": (0xb63860, 0xED0),
+    "shape_initializer": (0x36e880, 0x55),
+    "filter_population": (0xb730e0, 0xE1),
+    "local_pawn_resolver": (0x96b720, 0x97),
+    "trace_shape_complete": (0xA1AE30, 0x50E),
+    "trace_initializer_complete": (0x177B560, 0x258),
 }
 WINDOW_HASHES = {
-    "override_view": "23d45bf1ef215c91ba0872fa99e4f6ed494b7fcde5ddfbba753ad98e96489e21",
-    "query_local_model": "b6422888b2076483183ad0f3e445cacc6cd05574ab0533cc26c2b8e051580078",
-    "query_local_wrapper": "c20e142030474510dbc83c5785d3e74b429f3d212291c02c5594642ef266a930",
-    "camera_thinker": "dc557df4e54058cfcfe2494877cbb362d27e8115c22c1826b33f386aba0dfe53",
+    "override_view": "9fdc54a1b6236004af493be2df9b01027d529a28b28f6c49a52d1a04e6e8e91f",
+    "query_local_model": "346e87950583e18e4329be01d9d7a984669589d32805221d6ed550293bb50f2f",
+    "query_local_wrapper": "f758941787e4481958843abd0a526daffbb86c35646f7c0c6e55d4b5e2c47f43",
+    "camera_thinker": "a3debf5bae6e3519b08344592d2a057e29fd3ac1446d62b4d8c4e3ffa4bc8704",
     "shape_initializer": "5fb55f27d925068b696009d304453ca831411627f83f431b2f249eae53f01cc9",
-    "filter_population": "5c52bfcf18d2507236a1837cdfff74b0c2582c3ba676fa53c9a568488bdfc7ac",
-    "local_pawn_resolver": "00ab6bae7d5701f7f20d7585d44596fe268d495cf08567f3cec49435449e2cbf",
+    "filter_population": "4a45d0f918b47919801a83019f61b9e3e005c5ff085a6d5f655148a29bd39928",
+    "local_pawn_resolver": "d4e70d0cf70c604f2984cbd72c7be2681a2b421fcb951bc5e092c3cf5c5df456",
+    "trace_shape_complete": "82299fc0b20a29839fab528832d9669b15725ba4b074d6b34b37ca567f9695b6",
+    "trace_initializer_complete": "a1f6a950d807695ccec68cacba93b8d5544e68bf99916eb26327e0da931b7546",
 }
 
 
 def verify_source(image, base, path):
     source = re.sub(r"//[^\n]*|/\*.*?\*/", "", path.read_text(encoding="utf-8-sig"), flags=re.S)
     expected = {
-        "OverrideView": 0xB99250, "IsThirdPerson": 0xB627A0,
-        "LocalPawn": 0x96A8F0, "ModeSharedVtable": 0x1C68368,
-        "ModeNormalVtable": 0x1C9FC20, "ModeSlot": image[0xB96572],
-        "ModeSlotGetter": 0xB96570,
-        "ViewOrigin": struct.unpack_from("<I", image, 0xB9931E)[0],
-        "ViewAngles": struct.unpack_from("<I", image, 0xB99490)[0],
-        "IsThirdPersonCameraReturn": 0xB992A9,
-        "InputPointer": 0xB9929D + 7 + struct.unpack_from("<i", image, 0xB992A0)[0],
-        "TraceManager": 0xB636C7 + 7 + struct.unpack_from("<i", image, 0xB636CA)[0],
-        "TraceShape": 0xA1A000, "InitializeShape": 0x36DDB0,
-        "InitializeTrace": 0x1779300, "PopulateFilter": 0xB722A0,
-        "FilterVtable": 0xB63557 + 7 + struct.unpack_from("<i", image, 0xB6355A)[0],
+        "OverrideView": 0xb9a090, "IsThirdPerson": 0xb635e0,
+        "LocalPawn": 0x96b720, "ModeSharedVtable": 0x1c6a2a8,
+        "ModeNormalVtable": 0x1ca1b50, "ModeSlot": image[0xb973b2],
+        "ModeSlotGetter": 0xb973b0,
+        "ViewOrigin": struct.unpack_from("<I", image, 0xb9a15e)[0],
+        "ViewAngles": struct.unpack_from("<I", image, 0xb9a2d0)[0],
+        "IsThirdPersonCameraReturn": 0xb9a0e9,
+        "InputPointer": 0xb9a0dd + 7 + struct.unpack_from("<i", image, 0xb9a0e0)[0],
+        "TraceManager": 0xb64507 + 7 + struct.unpack_from("<i", image, 0xb6450a)[0],
+        "TraceShape": 0xa1ae30, "InitializeShape": 0x36e880,
+        "InitializeTrace": 0x177b560, "PopulateFilter": 0xb730e0,
+        "FilterVtable": 0xb64397 + 7 + struct.unpack_from("<i", image, 0xb6439a)[0],
         "ShapeSize": 0x30, "TraceSize": 0xC0, "FilterSize": 0x48,
         "TraceFraction": 0xAC, "CameraMask": 0x80,
         "CameraExclude": 0xC0000, "CameraLayer": 3,
@@ -67,7 +71,7 @@ def verify_source(image, base, path):
         if len(matches) != 1 or int(matches[0], 0) != native:
             raise SystemExit(f"Source constant {name} differs from native evidence {native:#x}")
     extent = re.findall(r"\bHullExtent\s*=\s*([0-9.]+)f", source)
-    native_extent = struct.unpack_from("<f", image, 0x2234550)[0]
+    native_extent = struct.unpack_from("<f", image, 0x2236550)[0]
     if len(extent) != 1 or float(extent[0]) != native_extent or native_extent != 9.0:
         raise SystemExit("Camera hull extent differs")
     for array, key in (("OverrideViewBytes", "override_entry"), ("IsThirdPersonBytes", "query_complete"),
@@ -94,19 +98,19 @@ def main():
     for name, (rva, size) in WINDOWS.items():
         if hashlib.sha256(image[rva:rva + size]).hexdigest() != WINDOW_HASHES[name]:
             raise SystemExit(f"Native function/consumer window changed: {name}")
-    input_slot = 0xB9929D + 7 + struct.unpack_from("<i", image, 0xB992A0)[0]
-    input_object = 0xEE574 + 7 + struct.unpack_from("<i", image, 0xEE577)[0]
-    if struct.unpack_from("<Q", image, input_slot)[0] - base != input_object or input_object != 0x257B640:
+    input_slot = 0xb9a0dd + 7 + struct.unpack_from("<i", image, 0xb9a0e0)[0]
+    input_object = 0xee574 + 7 + struct.unpack_from("<i", image, 0xee577)[0]
+    if struct.unpack_from("<Q", image, input_slot)[0] - base != input_object or input_object != 0x257d780:
         raise SystemExit("Native camera input pointer differs from constructed CCSGOInput")
     for name, rva, slot, target in (
-        (b".?AVClientModeShared@@", 0x1C68368, 16, 0xB99250),
-        (b".?AVClientModeCSNormal@@", 0x1C9FC20, 16, 0xD02E30),
+        (b".?AVClientModeShared@@", 0x1c6a2a8, 16, 0xb9a090),
+        (b".?AVClientModeCSNormal@@", 0x1ca1b50, 16, 0xd04490),
     ):
         if primary_vtable(image, base, name) != rva:
             raise SystemExit("Client mode RTTI/vtable differs")
         if struct.unpack_from("<Q", image, rva + slot * 8)[0] - base != target:
             raise SystemExit("Client mode OverrideView slot differs")
-        if struct.unpack_from("<Q", image, rva + 0x100)[0] - base != 0xB96570:
+        if struct.unpack_from("<Q", image, rva + 0x100)[0] - base != 0xb973b0:
             raise SystemExit("Client mode slot getter differs")
     constants = verify_source(image, base, args.header)
     print(json.dumps({"client_sha256": digest, "constants": constants,

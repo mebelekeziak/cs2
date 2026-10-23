@@ -1,5 +1,46 @@
 # Basic aim target acquisition evidence
 
+## October 23, 2026 recertification - client 2000935
+
+Installed Windows AMD64 client `1.41.9.2` / `2000935`, Source revision
+`11162119`, Steam build `26144732`, version date October 22, 2026 14:13:16.
+Installation remains `C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game`;
+executable `bin/win64/cs2.exe`, module `csgo/bin/win64/client.dll`.
+Client SHA-256 `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
+PE timestamp `0x6ADA7340`, SizeOfImage `0x29A0000`.
+
+Research is preserved in `logs/research/26144732/aim_sources/`: `schema.json`
+records independently located named schema templates, `relocations.json` and
+`address_mapping.json` record candidate/call-target rediscovery, and
+`disassembly.txt` contains decoded current instruction windows (Capstone 5.0.7).
+Preserved prior-file comparison uses only windows matching the former frozen
+window hashes; the old negative-test sample is not accepted as a valid complete
+baseline image. New named schema/RTTI/caller checks and full module pins remain
+mandatory. No uniform relocation delta is assumed.
+
+The named `C_BaseModelEntity` registration moves `0x21F3F48 -> 0x21F61D8`,
+field array `0x21F4600 -> 0x21F6860`; 47 fields and `m_vecViewOffset=0xF60`
+remain unchanged. Native eye-origin/offset reader moves `0x8CD2CF -> 0x8CE0FF`,
+scale-enabled transform call `0x8CD367 -> 0x8CE197`, target
+`0x16A3D0 -> 0x16A3B0`; absolute-origin getter moves `0x219A80 -> 0x219A60`.
+Current full serialized-handle comparison is at `0xB1A28D`; independent native
+reference constructions are at `0xB1A2B4` and `0xC961AB`. Their serial adjustment
+and field widths remain unchanged. `inspect_silent_aim_targets.py` checks the
+new schema records, all eight machine windows and the decoded live offset.
+
+`final_checks.py` records five passing frozen verifier commands in `frozen.json`
+and their full outputs in per-verifier JSON files. Twenty deliberately wrong
+headers are rejected in `negative.json`, covering source functions, vtables,
+new pawn members, resource layout, weapon table records and entry fingerprints.
+All five verifiers also reject the preserved old negative-test client sample;
+see `hash_rejections.json`. All module/asset hash guards remain exact. This is installed-file verification:
+no client/server was launched, no native getter was executed, and no live aim,
+accuracy, bone pose, capsule or shot-registration observation is claimed. Existing
+command-thread ownership, cache invalidation and cooperative residency rules
+remain in force. Earlier build-specific addresses below are historical.
+
+## Historical evidence
+
 ## October 21, 2026 recertification — client 2000934
 
 Installed Windows AMD64 client: patch `1.41.9.1`, client/server `2000934`,

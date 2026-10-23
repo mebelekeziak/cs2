@@ -2,20 +2,20 @@
 #include <cstddef>
 #include <cstdint>
 
-// Verified against installed CS2 1.41.9.1 / client 2000934, October 21, 2026.
+// Verified against installed CS2 1.41.9.2 / client 2000935, October 23, 2026.
 // Static schema templates and decoded machine operands; no new live dump.
-// client.dll SHA256: 5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49
+// client.dll SHA256: ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5
 // Frozen read-only verifier: tools/inspect_cs2.py; tools/CS2_ENTITY_EVIDENCE.md.
 namespace cs2_offsets {
-inline constexpr std::uint32_t ClientTimestamp = 0x6AD7B41C;
-inline constexpr std::uint32_t ClientImageSize = 0x299D000;
+inline constexpr std::uint32_t ClientTimestamp = 0x6ADA7340;
+inline constexpr std::uint32_t ClientImageSize = 0x29A0000;
 namespace globals {
-inline constexpr std::ptrdiff_t dwEntityList = 0x271A908;
-inline constexpr std::ptrdiff_t dwGameEntitySystem = 0x271A908;
+inline constexpr std::ptrdiff_t dwEntityList = 0x271C8B8;
+inline constexpr std::ptrdiff_t dwGameEntitySystem = 0x271C8B8;
 inline constexpr std::ptrdiff_t dwGameEntitySystem_highestEntityIndex = 0x2120;
-inline constexpr std::ptrdiff_t dwLocalPlayerController = 0x253CB78;
-inline constexpr std::ptrdiff_t dwLocalPlayerPawn = 0x2565718;
-inline constexpr std::ptrdiff_t dwViewMatrix = 0x256B020;
+inline constexpr std::ptrdiff_t dwLocalPlayerController = 0x253EEF8;
+inline constexpr std::ptrdiff_t dwLocalPlayerPawn = 0x25676D8;
+inline constexpr std::ptrdiff_t dwViewMatrix = 0x256CFE0;
 }
 namespace entity_layout {
 inline constexpr std::ptrdiff_t TableOffset = 0x10;
@@ -66,7 +66,7 @@ inline constexpr std::ptrdiff_t m_vecMins = 0x40;
 inline constexpr std::ptrdiff_t m_vecMaxs = 0x4C;
 }
 namespace C_CSPlayerPawn {
-inline constexpr std::ptrdiff_t m_ArmorValue = 0x1EC8;
+inline constexpr std::ptrdiff_t m_ArmorValue = 0x1ED0;
 }
 namespace C_BasePlayerPawn {
 inline constexpr std::ptrdiff_t m_hController = 0x14BC;

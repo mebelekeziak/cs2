@@ -2,9 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 
-// Installed AMD64 client 1.41.9.1. Reproduce with verify_player_chams.py.
+// Installed AMD64 client 1.41.9.2. Reproduce with verify_player_chams.py.
 namespace player_chams_offsets {
-inline constexpr std::uint32_t SceneTimestamp = 0x6ACFCD4F;
+inline constexpr std::uint32_t SceneTimestamp = 0x6ADA337D;
 inline constexpr std::uint32_t SceneImageSize = 0x978000;
 inline constexpr std::uintptr_t Generate = 0x7D7C0;
 inline constexpr std::uintptr_t DescriptorVtable = 0x5E5C90;

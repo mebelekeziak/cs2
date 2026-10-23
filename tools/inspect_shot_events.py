@@ -14,36 +14,69 @@ from inspect_surface_tint import extract
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll")
-CLIENT_HASH = "5a46a09b521bbd607012146364dafae2abfa50364246638391990d4c7dfb9d49"
-SERVER_HASH = "05e6f04972bb2983f463c08824c3133626e0703e881443589288b68e200acc4d"
-SERVER_WINDOWS = {
-    "server_weapon_fire_broadcast": (0xA07CFC, 0x15B, "b4228042c133a8e75719cfac2c66cc333d1e966594efed93ce1cfc9e0bd11940"),
-    "server_bullet_impact_pawn_and_xyz": (0xA70A43, 0x14D, "76205d54b3192ab3e1203539f9b08532e269685d6b0cbd3dc65c1e6cb9193468"),
-    "server_hurt_fields": (0xA8DFC4, 0x420, "a0091188cfd475127402931d8001424c8d9b3609f02cfdf80480c2ece30d760c"),
-    "server_combined_controller_pawn_setter": (0xC21E10, 0x150, "872dd3157f111b2cbef299c28425058f0b296a4d805ea696cb6065433bbe9796"),
-}
-WINDOWS = {
-    "manager_add": (0x9C9D30, 0x11C, "7772f8d29812a3126d7e60c34395d48498a93ec7ccb39c1d7dc16ecdfd6fad92"),
-    "manager_find": (0x9E1BF0, 0x157, "79f917cf9ec401788d54684461e3e368d71127bce971aa31046a509c6784ef93"),
-    "manager_client_dispatch": (0x9E2960, 0x247, "7f54d677f668ee08ad8b9e4a7ff6a80db648c78b9688c9805b27158f477a0589"),
-    "manager_register": (0x9C99B0, 0x37E, "506aabfdc0ba27d96a248f474f7abae32342fbaaf4ca3ed09e29b09ac2ebb3db"),
-    "manager_remove": (0xA01540, 0x1DF, "7be1273350ec316fe20942272a41ad3790880cad328da2e3c56112a32726d466"),
-    "manager_reset_external_listener_wrappers": (0xA04868, 0x34, "a7e498329a01db8ec00825ad044ce9bec4aa8766811f39400b50fc52ec4213fd"),
-    "event_name": (0x9E7E50, 0x22, "ec2655f13c7114e54d211c757a4fdda8d80f782294cad531e8bcec0a5ed4b363"),
-    "event_empty": (0x9F1770, 0x56, "d906d92c014040e48afe8647a03ac03fe37b62f48be328698cf62f7cfe215394"),
-    "event_bool": (0x9E3E60, 0x2D, "9d955b7b8eb7c00d4113c35d730d54023772e3da0094a7ea0896ea94ff35dd23"),
-    "event_int": (0x9E7120, 0x2D, "6081c5f24a24fd77d72dfded439e815d673d4a6e2461ad7db11ac663c3157dda"),
-    "event_float": (0x9E6D40, 0x2D, "a9338414c443efad3987eaf5e2143d658dbf2a5f75a3acb286738b29ada68a07"),
-    "event_string": (0x9E9550, 0x2D, "6e6c7144f26ef69575611fdc18deb59171c6ec2157233dd9674e40d3ea751a89"),
-    "event_handle": (0x9E4620, 0x55, "2085d254151931aaf3d106e2acd990b2ef20bdd54a7e3223728c390ab5766066"),
-    "key_hash": (0x166050, 0x126, "fc102547d3248e607c9e2ca0d949e171aefcd880c1c97375b30f47283d89f9e6"),
-    "hitgroups": (0x1AF8B90, 0x1C0, "2775a2a6cdf6b376b7d54918e962ab02682742bd8f5ccd032d63975bea36e301"),
-}
-CHECKS = {
-    "global_manager_load": (0xC5FC00, "4c8d05f1d00201488b0dfabf8e014533c9488bd6488b01ff5018"),
-    "global_manager_clear": (0x9C4453, "48391dae77b801750748892da577b801"),
-    "event_ctor": (0x9C1213, "488d05a60327014d8bf8488901488bda33c04c8bf1"),
-}
+CLIENT_HASH = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
+SERVER_HASH = "2a229dd46c8af0b52c1f49a3e343b99d9ffe946c102c56102a45b00f6a52349c"
+SERVER_WINDOWS = {'server_weapon_fire_broadcast': (10572204,
+                                  347,
+                                  '47d2c92e521aa22de89f66b095d7322666411f84d905f58f87c1a117656c186c'),
+ 'server_bullet_impact_pawn_and_xyz': (11001587,
+                                       333,
+                                       '48872524761b13fc558c06f861f38676383f4b5ff035343d7456bc5e0b6abe42'),
+ 'server_hurt_fields': (11121780,
+                        1056,
+                        '7a302e1a469c18640d1ee2e0bbff4fdbc5011c5137600160d4680c02cf1c80ec'),
+ 'server_combined_controller_pawn_setter': (12776112,
+                                            336,
+                                            'cc737d473a8951406a45f2cce1f337fb6af7f18b0e0e2dea06f7661faf293f53')}
+WINDOWS = {'manager_add': (10267488,
+                 284,
+                 '2df332c8fa5d386979eb162e022b646061504a5f854d040060da2ec2ee5ea4a2'),
+ 'manager_find': (10365472,
+                  343,
+                  'fbd2c1c1a78b453a76d764cf0a37e963d06e4a29d1ecf31fc2adc9897116f16e'),
+ 'manager_client_dispatch': (10368912,
+                             583,
+                             '99af2b0a12aa6f31cada5ecff5a199f06557744d4fb5ff1ad76d797f38c262d1'),
+ 'manager_register': (10266592,
+                      894,
+                      'ae172ed312b7217ff8ef07769f9797f6587e062180654cd69b5c8e6b34e3beca'),
+ 'manager_remove': (10494832,
+                    479,
+                    '8534146c5a11ea51d0aa5c498fc347a61cb264843df799c7da0276e85d760bc5'),
+ 'manager_reset_external_listener_wrappers': (10507928,
+                                              52,
+                                              'f49f840e5d57f3b557d620084ad0af672c8897a277111ad0373c76be2ded32a6'),
+ 'event_name': (10390656,
+                34,
+                'e16f0afd98e397445b0c33f9ebd16e2a24bea686276eefaaccdd1e9aea8f89a8'),
+ 'event_empty': (10429856,
+                 86,
+                 'dbc31320a57ecb0b64fdbb1071e687441b22e5bb8581daaf3364be09c2f79ea3'),
+ 'event_bool': (10374288,
+                45,
+                '5d27611234a7a5226c75976cb99291ee044a90f712a7d412de40f1c216897125'),
+ 'event_int': (10387280,
+               45,
+               'd5670e6c8ecd057dcdf7583378f8412ac590d8b61386ab81d1d5098f75c8377b'),
+ 'event_float': (10386288,
+                 45,
+                 'a5637c33e06bb7758a9f614bbe2dc5f2fc4cf9409879073e42331969a374ea5d'),
+ 'event_string': (10396544,
+                  45,
+                  '883db578ab4fe9dc33aebddc47408923671d9568b161c218b808da8698ade3cf'),
+ 'event_handle': (10376272,
+                  85,
+                  '2085d254151931aaf3d106e2acd990b2ef20bdd54a7e3223728c390ab5766066'),
+ 'key_hash': (1466416,
+              294,
+              'fc102547d3248e607c9e2ca0d949e171aefcd880c1c97375b30f47283d89f9e6'),
+ 'hitgroups': (28289984,
+               448,
+               '290eea176a98ab6899c966c84e4038b2c5ab2121932156665805ad36645a7f81')}
+CHECKS = {'global_manager_load': (12978770,
+                         '4c8d05cfe10201488b0da0d18e014533c9488bd6488b01ff5018'),
+ 'global_manager_clear': (10244739, '48391d7689b801750748892d6d89b801'),
+ 'event_ctor': (10231875, '488d05a61427014d8bf8488901488bda33c04c8bf1')}
 ASSETS = {
     "resource/mod.gameevents": "6beca96ba82e2362491f1172a18201beb3cf6ad34856cea825fc9adfd2ae3220",
     "resource/game.gameevents": "03b665315a0dca6ac542d81d0348331da86a59c090fdee2ee42f2d90aabef5c6",
@@ -56,10 +89,10 @@ def verify_source(image, base, header):
     manager = primary_vtable(image, base, b".?AVCGameEventManager@@")
     event = primary_vtable(image, base, b".?AVCGameEvent@@")
     listener = primary_vtable(image, base, b".?AVIGameEventListener2@@")
-    if listener != 0x1ACB668 or struct.unpack_from("<QQ", image, listener) != (base + 0x1906A0, base + 0x19FAFE4):
+    if listener != 0x1ACD678 or struct.unpack_from("<QQ", image, listener) != (base + 0x190680, base + 0x19FD244):
         raise SystemExit("Native two-method listener interface RTTI/vtable differs")
-    expected = {"Manager": rip(0xC5FC07), "ManagerVtable": manager, "EventVtable": event}
-    if expected["Manager"] != rip(0x9C4453):
+    expected = {"Manager": rip(0xC60A59), "ManagerVtable": manager, "EventVtable": event}
+    if expected["Manager"] != rip(0x9C5283):
         raise SystemExit("Native manager global registration/destructor disagree")
     for name, slot, table in (("AddListener", 0x18, manager), ("FindListener", 0x20, manager),
         ("FireClient", 0x40, manager), ("Name", 8, event), ("Empty", 0x28, event),
@@ -125,14 +158,14 @@ def schemas(vpk, core_vpk):
 
 def hitgroups(image, base):
     def string(address): return bytes(image[address:image.index(0, address)]).decode("ascii")
-    registration = 0x21CF818
+    registration = 0x21D19D8
     if (string(struct.unpack_from("<Q", image, registration)[0] - base) != "HitGroup_t" or
         struct.unpack_from("<I", image, registration + 0x14)[0] != 14 or
-        struct.unpack_from("<Q", image, registration + 0x18)[0] - base != 0x1AF8B90):
+        struct.unpack_from("<Q", image, registration + 0x18)[0] - base != 0x1AFABC0):
         raise SystemExit("Named HitGroup_t registration differs")
     values = {}
     for index in range(14):
-        record = 0x1AF8B90 + index * 0x20
+        record = 0x1AFABC0 + index * 0x20
         values[string(struct.unpack_from("<Q", image, record)[0] - base)] = struct.unpack_from("<q", image, record + 8)[0]
     return values
 
@@ -146,14 +179,14 @@ def main():
     parser.add_argument("--core-vpk", type=Path, default=CLIENT.parents[3] / "core/pak01_dir.vpk")
     args = parser.parse_args()
     raw, image, base, nt = mapped(args.client)
-    if hashlib.sha256(raw).hexdigest() != CLIENT_HASH or struct.unpack_from("<I", raw, nt + 8)[0] != 0x6AD7B41C or len(image) != 0x299D000:
+    if hashlib.sha256(raw).hexdigest() != CLIENT_HASH or struct.unpack_from("<I", raw, nt + 8)[0] != 0x6ADA7340 or len(image) != 0x29A0000:
         raise SystemExit("Client changed: repeat native listener/event-field investigation")
     require_bytes(image, CHECKS)
     for name, (site, size, digest) in WINDOWS.items():
         if hashlib.sha256(image[site:site + size]).hexdigest() != digest:
             raise SystemExit(f"Native event window changed: {name}")
     server_raw, server, _, server_nt = mapped(args.server)
-    if hashlib.sha256(server_raw).hexdigest() != SERVER_HASH or struct.unpack_from("<I", server_raw, server_nt + 8)[0] != 0x6AD7B41C or len(server) != 0x2572000:
+    if hashlib.sha256(server_raw).hexdigest() != SERVER_HASH or struct.unpack_from("<I", server_raw, server_nt + 8)[0] != 0x6ADA7343 or len(server) != 0x257F000:
         raise SystemExit("Installed server changed: repeat event emission/identity investigation")
     for name, (site, size, digest) in SERVER_WINDOWS.items():
         if hashlib.sha256(server[site:site + size]).hexdigest() != digest:
