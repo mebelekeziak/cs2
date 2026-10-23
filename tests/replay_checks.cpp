@@ -488,11 +488,12 @@ int main() {
     jumpbugPlan.buttons.down = (jumpbugPlan.buttons.down | off::Jump) & ~off::Duck;
     jumpbugPlan.buttons.changed |= off::Jump | off::Duck;
     jumpbugPlan.buttons.third &= ~(off::Jump | off::Duck);
-    MovementSubtick suppressedJump{}; bool suppressedActive = true;
+    MovementSubtick suppressedJump{}; bool suppressedActive = false;
     Expect(MovementReplayTransition(jumpbugPlan, MovementReplayJumpEventIndex, 0, 0,
-        suppressedJump, suppressedActive) && !suppressedActive && suppressedJump.presence == 4 &&
-        !suppressedJump.button && MovementReplayMask(jumpbugPlan) == (off::Directions | off::Jump | off::Duck),
-        "jumpbug owns jump/duck and suppresses the ordinary jump edge without changing its cached identity");
+        suppressedJump, suppressedActive) && suppressedActive && suppressedJump.presence == 7 &&
+        suppressedJump.button == off::Jump && !suppressedJump.pressed && !suppressedJump.when &&
+        MovementReplayMask(jumpbugPlan) == (off::Directions | off::Jump | off::Duck),
+        "jumpbug explicitly releases inherited jump at zero before scheduling the landing press");
     auto duckOnlyPlan = jumpbugPlan; duckOnlyPlan.jump = duckOnlyPlan.strafe = false;
     Expect(MovementReplayMask(duckOnlyPlan) == (off::Jump | off::Duck),
         "jumpbug controls both buttons independently of bunnyhop and steering settings");
@@ -571,6 +572,9 @@ int main() {
         bugRetained.plan.landingFraction == jumpbugPlan.landingFraction && sameJump(jumpbugPlan, bugRetained.plan) &&
         !((jumpbugPlan.buttons.down ^ bugRetained.plan.buttons.down) & off::Duck),
         "steering retarget, physical release and unchanged replay retain the selected jumpbug timing and button plan");
+    Expect(bugRetarget.plan.analogCount == 1 && bugRetarget.command.count == 1 &&
+        bugRetarget.plan.analogs[0].when == 0,
+        "jumpbug retarget cannot insert analog boundaries after its timed press");
     messages.clear(); allocator = 0x8000;
     std::array<MovementReplayStep, 4> bugOwned{};
     auto bugContext = airContext; bugContext.jumpbug = true;
@@ -602,5 +606,16 @@ int main() {
     }
     Expect(retiredBugNeutral && messages.size() == 4 && allocator == 0x8004,
         "retired jumpbug slots become neutral in their retained pool entries without allocating new messages");
+    Expect(MovementAirSteeringSlices(-256, {}) == 1 && MovementAirSteeringSlices(0, {}) == 1 &&
+        MovementAirSteeringSlices(256, {}) == AirSteeringSliceCount &&
+        MovementAirSteeringSlices(256, {off::Jump, 0, 0}) == 1 &&
+        MovementAirSteeringSlices(256, {0, off::Jump, 0}) == 1 &&
+        MovementAirSteeringSlices(256, {0, 0, off::Jump}) == 1,
+        "descending, apex and manual or assisted jump inputs suppress artificial intermediate movement slices");
+    auto descentStart = steeringStart; descentStart.sliceCount = 1;
+    const auto descentRetarget = MovementPlanReplaySteering(descentStart, initialIntent, leftIntent, initialAirPlan);
+    Expect(descentRetarget.refreshed && descentRetarget.command.count == 1 && descentRetarget.plan.analogCount == 1 &&
+        descentRetarget.plan.analogs[0].when == 0 && sameJump(initialAirPlan, descentRetarget.plan),
+        "changed WASD keeps the frozen one-slice landing policy and the original jump edge on replay");
     return failures ? 1 : 0;
 }

@@ -1,5 +1,8 @@
 # Timed strafe and jumpbug — October 23, 2026
 
+Historical revision 11. Superseded by [revision 12](MOVEMENT_REVISION12.md),
+which fixes demonstrated braking and stale jump input from the subsequent run.
+
 This change targets the Windows AMD64 CS2 client and existing D3D11 overlay.
 It replaces revision 10's single-wish Axion steering with an independently
 implemented adaptation of the algorithms inspected in these references:

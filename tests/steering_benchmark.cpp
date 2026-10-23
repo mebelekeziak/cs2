@@ -9,7 +9,7 @@ unsigned int SteeringCommandEvaluationsForBenchmark() noexcept;
 #endif
 
 // One shared deterministic corpus covers direct planner and complete command
-// command costs. Elapsed time is reported without hardware-dependent thresholds.
+// costs. Elapsed time is reported without hardware-dependent thresholds.
 int main() {
     constexpr std::array<AirPhysics, 8> physics{{
         {250, 30, 12, 1, 1.0f / 64}, {250, 30, 12, 0.2f, 0.004f},
@@ -18,6 +18,7 @@ int main() {
         {250, 250, 100, 1, 0.1f}, {250, 30, 12, 2, 1.0f / 64}
     }};
     constexpr int commands = 100000;
+    constexpr std::array<float, 9> speeds{{0, 9.99f, 10.01f, 30, 79.99f, 80, 80.01f, 250, 800}};
     unsigned int maximumFragmentEvaluations = 0, maximumCommandEvaluations = 0;
     bool validCounts = true;
     for (bool whole : {false, true}) {
@@ -26,7 +27,7 @@ int main() {
             double checksum = 0;
             const auto start = std::chrono::steady_clock::now();
             for (int i = 0; i < commands; ++i) {
-                const float speed = i % 5 == 0 ? 10.0f : (i % 5 == 1 ? 30.0f : (i % 5 == 2 ? 80.0f : (i % 5 == 3 ? 250.0f : 800.0f)));
+                const float speed = speeds[i % speeds.size()];
                 const StrafeInput input{
                     speed, static_cast<float>(i % 7 - 3), static_cast<float>(i % 360 - 180),
                     i % 3 == 0 ? 1.0f : (i % 3 == 1 ? -1.0f : 0.0f),
@@ -55,7 +56,7 @@ int main() {
             }
             const double microseconds = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
             std::printf("path=%s trial=%d commands=%d us_per_command=%.6f checksum=%.9f\n",
-                        whole ? "velocity_timed_command" : "velocity_direct_planner", trial + 1,
+                        whole ? "projection_timed_command" : "projection_direct_planner", trial + 1,
                         commands, microseconds / commands, checksum);
         }
     }

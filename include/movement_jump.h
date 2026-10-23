@@ -13,6 +13,7 @@ struct JumpState {
     bool down = false;
     std::uint32_t requestTick = 0, releaseTick = 0, lastSimulationTick = 0, consumptionTick = 0;
     bool haveClock = false, haveConsumption = false, usableBuffered = false;
+    bool timedPress = false;
     JumpStamp baselineActual{}, baselineUsable{};
 };
 struct JumpInput {
@@ -28,3 +29,7 @@ struct JumpOutput {
 };
 JumpOutput PlanJump(JumpState& state, const JumpInput& input) noexcept;
 void ResetJump(JumpState& state) noexcept;
+// A separately scheduled jump still owns a down input. Retain that ownership
+// until a following command publishes its explicit time-zero release.
+void RecordTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept;
+JumpOutput ReleaseTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept;

@@ -18,10 +18,28 @@ void BeginRequest(JumpState& state, const JumpInput& in) noexcept {
 }
 
 void ResetJump(JumpState& state) noexcept { state = {}; }
+void RecordTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept {
+    ResetJump(state);
+    state.down = state.timedPress = state.haveClock = true;
+    state.phase = JumpPhase::Pending;
+    state.requestTick = state.lastSimulationTick = simulationTick;
+}
+JumpOutput ReleaseTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept {
+    if (!state.timedPress) return {};
+    if (simulationTick < state.lastSimulationTick) state.requestTick = simulationTick;
+    state.timedPress = state.down = false;
+    state.phase = JumpPhase::Releasing;
+    state.releaseTick = state.lastSimulationTick = simulationTick;
+    JumpOutput out{};
+    out.valid = out.released = true;
+    out.phase = state.phase;
+    return out;
+}
 JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
     JumpOutput out{};
     if (in.commandTick < 0 || !std::isfinite(in.interval) || in.interval <= 0 || in.interval > 0.1f ||
         !std::isfinite(in.penalty) || in.penalty < 0 || !std::isfinite(in.bufferWindow) || in.bufferWindow < 0) return out;
+    if (state.timedPress) return ReleaseTimedJump(state, in.simulationTick);
     if (state.haveClock && in.simulationTick < state.lastSimulationTick) {
         // Prediction can rewind without undoing the input already emitted.
         // Keep its press/release phase, including the release acknowledgement

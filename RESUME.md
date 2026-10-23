@@ -1,3 +1,28 @@
+# Movement revision 12 — October 23, 2026
+
+User reported air/landing speed loss, low-speed A/D kicks and uncertain jumpbug.
+Reviewed the actual revision 11 run in
+`logs/overlay-33704-134372367408887983.log`. Turning math applied negative
+velocity projections. Jumpbug reset its planner while publishing Jump down;
+the next command omitted release, and 32 analog slices repeatedly restarted
+the native jump cooldown. Tick 563 records fresh input at every 1/32 fraction.
+
+Revision 12 uses a non-braking projection solver with no 10/80 speed thresholds,
+32 ascent wishes and one full-interval wish on descent or with jump input.
+Jumpbug now releases historical input at zero and explicitly releases its
+owned press on the next command, independently of bunnyhop. Replay keeps the
+chosen event count/timing; ground handoff uses physical keys. Observer outcomes
+separate actual takeoff from mere recorded presses. No native offsets changed.
+
+Both Release builds pass 58/58 CTest suites; 29/29 static components pass in
+`logs/compatibility/20261023T140008355306Z/`. Build/test logs:
+`logs/movement-r12-*`. Full findings: `docs/MOVEMENT_REVISION12.md`.
+No new gameplay observation or client/server launch. Jumpbug posture/grounding
+prediction is still unverified; do not describe it as reliable or claim damage
+avoidance. Restart normally before Load Overlay.cmd; stopped code stays resident.
+
+The previous continuation follows for historical context.
+
 # CS2 compatibility update — October 23, 2026
 
 Installed Windows AMD64 client **1.41.9.2 / 2000935 / Steam 26144732**, Source

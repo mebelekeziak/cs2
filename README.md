@@ -23,7 +23,33 @@ unobserved. Use the existing **Load Overlay.cmd** workflow, restarting CS2
 normally first if an older DLL is resident. Stopped and resident is not
 physically unloaded.
 
-## Timed autostrafe and jumpbug - October 23, 2026
+## Movement speed and jumpbug input fixes — October 23, revision 12
+
+Autostrafe now uses the verified air-acceleration projection instead of the
+previous turning heuristic, which could actively remove speed. A/D steering no
+longer switches policies at speeds 10 and 80. Opposite input turns through an
+arc; physical WASD and the camera retain their existing roles.
+
+Steering uses up to 32 wishes while rising, and one full-interval wish while
+descending or carrying jump input. This avoids adding intermediate movement
+steps around landing and jump presses. Landing restores physical key intent.
+
+The latest revision 11 log exposed jumpbug carrying a fresh jump into the next
+command and repeating it on all 32 analog steps, restarting native cooldown.
+Jumpbug now releases historical jump at time zero before its landing sequence,
+remembers its outgoing press, and explicitly releases it on the next command,
+including with bunnyhop disabled. Native observer logs distinguish a recorded
+press from an observed takeoff. The hull probe still does not simulate crouch
+posture changes, so reliable jumpbugs and fall-damage avoidance remain unverified.
+
+Both x64 Release builds pass **58/58 CTest suites**; installed-file checks pass
+**29/29**. These are code/model checks; no post-fix gameplay was observed. See
+[findings, references and validation](docs/MOVEMENT_REVISION12.md).
+
+Use the existing **Load Overlay.cmd** workflow after restarting CS2 normally if
+an older DLL is resident. Stopped and resident is not physically unloaded.
+
+## Timed autostrafe and jumpbug — revision 11 (superseded above)
 
 Autostrafe now uses an independent adaptation of the linked Velocity algorithm:
 32 timed wishes per command, with physics-dependent ideal angles and velocity

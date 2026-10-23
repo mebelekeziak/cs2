@@ -211,5 +211,32 @@ int main() {
     input.simulationTick = 12001; input.actual = {1001, 0}; input.engineDown = true;
     out = PlanJump(state, input);
     Expect(out.down && !state.haveConsumption, "legacy mode does not interpret modern stamp changes as processing feedback");
+    RecordTimedJump(state, 562);
+    Expect(state.down && state.timedPress, "timed jumpbug retains the final published jump-down ownership");
+    // Captured failure: tick 563 inherited fresh jump on every analog slice
+    // because jumpbug had ResetJump() while its outgoing button was still down.
+    input = {}; input.simulationTick = 563; input.commandTick = 563;
+    input.interval = input.penalty = 1.0f / 64; input.grounded = false;
+    out = PlanJump(state, input);
+    Expect(out.valid && out.released && !out.down && !out.fresh && !state.timedPress,
+        "captured 562-to-563 jumpbug path emits a release instead of silently retaining native fresh input");
+    Expect(!ReleaseTimedJump(state, 563).valid, "timed press cleanup is consumed once, replay retains its emitted event");
+    RecordTimedJump(state, 900);
+    out = ReleaseTimedJump(state, 901);
+    Expect(out.valid && out.released && !out.down,
+        "jumpbug alone can release without bunnyhop rules or a valid physics interval");
+    RecordTimedJump(state, 900);
+    out = ReleaseTimedJump(state, 850);
+    Expect(out.released && !out.down && state.requestTick == 850 && state.releaseTick == 850,
+        "new-command prediction rewind cannot discard a timed press release obligation");
+    input.simulationTick = 850; input.grounded = true; input.engineDown = true;
+    out = PlanJump(state, input);
+    Expect(!out.down && !out.fresh, "ground after timed jump waits for release acknowledgement before retry");
+    input.simulationTick = 854; input.engineDown = false;
+    out = PlanJump(state, input);
+    Expect(out.fresh && out.down, "acknowledged timed jump release permits a bounded ordinary retry");
+    RecordTimedJump(state, 1000); input.simulationTick = 1001; input.autoBunnyhop = true;
+    out = PlanJump(state, input);
+    Expect(out.released && !out.down, "server auto-bhop mode cannot preserve a fresh timed press across steering slices");
     return failures ? 1 : 0;
 }

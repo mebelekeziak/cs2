@@ -30,19 +30,24 @@ struct SteeringCommand {
 
 // Physical WASD selects camera-relative travel heading, including diagonals.
 // No net input returns an invalid plan, leaving ordinary release behavior alone.
-// Physics-based angle selection and velocity correction follow the algorithmic
-// approach inspected in wubly/velocity's airstrafe.cpp. Independent implementation;
-// no upstream command structures, engine offsets or prediction interfaces are used.
-// W-only input participates. Below 10 units/s input follows the desired heading.
-// Camera is unchanged. Prediction uses the supplied engine physics.
+// The velocity-relative wish uses the installed accelerator's maximum-gain
+// projection, widened toward intent when needed for low-speed control. Every
+// wish has nonnegative velocity projection, avoiding intentional air braking.
+// There are no fixed speed thresholds. Opposite intent turns through an arc;
+// acceleration limits the attainable heading change. W-only input participates.
+// Camera is unchanged. Prediction uses the supplied engine physics and does
+// not account for collisions, ground friction or subsequent native modifiers.
 // Reset state at pawn/airborne lifecycle changes and whenever steering is disabled.
 SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& input,
                               const AirPhysics& physics) noexcept;
 void ResetAirSteering(SteeringState& state) noexcept;
 
-// Recalculate the wish after every 1/32 interval of predicted acceleration.
+// Recalculate the wish after each requested fraction of predicted acceleration.
+// sliceCount must be 1..AirSteeringSliceCount; fewer events can avoid additional
+// ground integration boundaries when landing during this command is possible.
 // Each slice's prediction uses that fraction of the supplied interval; the
 // summary uses the final axes/velocity and whole-command impulse/heading change.
 // Sequence and slice parity are deterministic across retained-command rebuilds.
 SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& input,
-                                      const AirPhysics& physics) noexcept;
+                                      const AirPhysics& physics,
+                                      std::size_t sliceCount = AirSteeringSliceCount) noexcept;

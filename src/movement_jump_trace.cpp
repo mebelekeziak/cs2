@@ -96,16 +96,30 @@ void Hook(void* statePointer, void* movePointer) {
     if (!ReadSource(state, afterSource) || !SameSource(beforeSource, afterSource) ||
         !Capture(afterSource, moveData, after)) return;
     const bool cleared = (before.flags & off::OnGround) && !(after.flags & off::OnGround);
+    const float verticalImpulse = after.velocity[2] - before.velocity[2];
+    const bool takeoff = cleared && verticalImpulse > 0;
+    // ModernActual records requests, including cooldown-rejected requests. It
+    // must never be reported as evidence that the player actually jumped.
+    const bool requestRecorded = before.actual.tick != after.actual.tick ||
+        before.actual.fraction != after.actual.fraction;
+    const bool bufferChanged = before.usable.tick != after.usable.tick ||
+        before.usable.fraction != after.usable.fraction;
+    const char* outcome = takeoff ? "takeoff" :
+        requestRecorded ? "press_recorded_no_takeoff" :
+        bufferChanged ? "buffer_changed_no_takeoff" :
+        (before.buttons.down & off::Jump) ? "held_no_takeoff" : "no_takeoff";
     // Unchanged airborne slices emit nothing; the shared queue bounds producers.
     if (!fresh && !cleared && !((before.flags & off::OnGround) && (before.buttons.down & off::Jump))) return;
     char message[1400]{};
     std::snprintf(message, sizeof(message),
         "MOVE_JUMP_EXEC handle=0x%x rawtick=%d fraction=%.6f raw_state=%u fresh=%u ground_cleared=%u "
+        "outcome=%s takeoff=%u request_recorded=%u buffer_changed=%u vertical_impulse=%.3f "
         "flags=0x%x/0x%x velocity_before=%.3f,%.3f,%.3f velocity_after=%.3f,%.3f,%.3f "
         "buttons_before=0x%llx/0x%llx/0x%llx buttons_after=0x%llx/0x%llx/0x%llx "
         "actual_before=%d/%.6f actual_after=%d/%.6f usable_before=%d/%.6f usable_after=%d/%.6f "
-        "landed_before=%d/%.6f landed_after=%d/%.6f; immediate client jump execution, later integration remains separate",
-        beforeSource.handle, before.tick, before.fraction, raw, fresh, cleared, before.flags, after.flags,
+        "landed_before=%d/%.6f landed_after=%d/%.6f; client jump-handler observation, request stamps alone are not takeoff or jumpbug proof",
+        beforeSource.handle, before.tick, before.fraction, raw, fresh, cleared,
+        outcome, takeoff, requestRecorded, bufferChanged, verticalImpulse, before.flags, after.flags,
         before.velocity[0], before.velocity[1], before.velocity[2], after.velocity[0], after.velocity[1], after.velocity[2],
         before.buttons.down, before.buttons.changed, before.buttons.third,
         after.buttons.down, after.buttons.changed, after.buttons.third,
@@ -141,7 +155,11 @@ bool MovementJumpTracePrepare(MovementLogCallback callback) noexcept {
     if (queued != MH_OK) {
         callback("MOVE_JUMP_TRACE_UNAVAILABLE reason=jump observer activation queue failed"); return false;
     }
-    callback("MOVE_JUMP_TRACE_PREPARED rva=0x8c2630 snapshot=move_data_velocity_and_live_pawn_flags writes=none; hook activation queued");
+    char message[240]{};
+    std::snprintf(message, sizeof(message),
+        "MOVE_JUMP_TRACE_PREPARED rva=0x%llx snapshot=move_data_velocity_and_live_pawn_flags writes=none; hook activation queued",
+        static_cast<unsigned long long>(off::ModernJump));
+    callback(message);
     return true;
 }
 void MovementJumpTraceEnable(bool active) noexcept {

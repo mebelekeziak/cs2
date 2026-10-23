@@ -1,6 +1,5 @@
-// Independent implementation informed by Velocity's physics-aware timed steering.
-// https://github.com/wubly/velocity/blob/main/cs2/velocity-cs2/project/core/features/movement/impl/airstrafe.cpp
-// Inspected blob d39767b2e52c82fd088c7678fbdbb02fad167723. No upstream code copied.
+// Independent projection solver for the installed air accelerator documented in
+// tools/CS2_MOVEMENT_EVIDENCE.md. Timed input retains the existing command format.
 #include "movement_steering.h"
 #include <algorithm>
 #include <cmath>
@@ -34,20 +33,25 @@ SteeringOutput Slice(SteeringState& state, double x, double y, double camera, do
     double wish = desired;
     state.mode = SteeringMode::Accelerating;
     state.turnSide = 0;
-    if (speed >= 10) {
-        // Half-budget selects the steering angle. Prediction still spends the
-        // full native acceleration budget for this fraction of the command.
-        const double halfBudget = available * 0.5;
-        const double projection = std::max(halfBudget, cap - halfBudget);
-        const double ideal = std::clamp(std::atan2(projection, speed) / radians, 0.0, 45.0);
+    if (speed > 0.000001) {
+        // For projection q and impulse a=min(A,max(0,C-q)), squared speed
+        // changes by 2*a*q+a*a. Its maximum occurs at q=max(0,C-A),
+        // clipped to the achievable [0,speed] interval. In particular, using
+        // 90+an ideal angle while turning gives q<0 and throws speed away.
+        const double gainProjection = std::min(speed, std::max(0.0, cap - available));
+        const double gainAngle = std::acos(std::clamp(gainProjection / speed, 0.0, 1.0)) / radians;
         const double error = Wrap(desired - velocityYaw);
-        const bool turning = speed > 80 && (std::abs(error) > 170 || std::abs(error) > ideal);
-        const int side = turning ? ((std::abs(error) > 170 || error > 0) ? 1 : -1) :
-            (positiveSide ? 1 : -1);
-        const double heading = turning ? velocityYaw : desired;
-        wish = Wrap(heading + side * (turning ? 90.0 + ideal : 90.0 - ideal));
+        // Low speed can make gainAngle zero. Then a gain-only wish would
+        // ignore A/D forever. Widen it toward the requested heading, never
+        // beyond perpendicular: q stays nonnegative, so turning cannot brake.
+        // This also removes the old 10/80-unit direction discontinuities.
+        const double angle = std::max(gainAngle, std::min(std::abs(error), 90.0));
+        const bool opposite = std::abs(error) >= 180.0 - 0.000001;
+        const int side = opposite ? 1 : (std::abs(error) > 0.000001 ? (error > 0 ? 1 : -1) :
+            (positiveSide ? 1 : -1));
+        wish = Wrap(velocityYaw + side * angle);
         state.turnSide = side;
-        if (turning) state.mode = SteeringMode::Turning;
+        if (std::abs(error) > 0.000001) state.mode = SteeringMode::Turning;
     }
     const double relative = Wrap(wish - camera) * radians;
     out.forward = static_cast<float>(std::cos(relative));
@@ -89,27 +93,29 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
     return out;
 }
 SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& in,
-                                      const AirPhysics& p) noexcept {
+                                      const AirPhysics& p, std::size_t sliceCount) noexcept {
 #ifdef CS2_STEERING_BENCHMARK
     commandEvaluations = 0;
 #endif
-    if (!Valid(in, p)) { ResetAirSteering(state); return {}; }
+    if (!Valid(in, p) || sliceCount == 0 || sliceCount > AirSteeringSliceCount) {
+        ResetAirSteering(state); return {};
+    }
     SteeringCommand command{};
     const double camera = Wrap(in.viewYaw);
     const double desired = Wrap(camera + std::atan2(static_cast<double>(in.left), static_cast<double>(in.forward)) / radians);
-    const double duration = static_cast<double>(p.interval) / AirSteeringSliceCount;
+    const double duration = static_cast<double>(p.interval) / sliceCount;
     const double originalHeading = std::atan2(static_cast<double>(in.velocityY), static_cast<double>(in.velocityX)) / radians;
     double x = in.velocityX, y = in.velocityY, impulse = 0;
-    for (std::size_t i = 0; i < AirSteeringSliceCount; ++i) {
+    for (std::size_t i = 0; i < sliceCount; ++i) {
         auto& output = command.slices[i];
         output = Slice(state, x, y, camera, desired, p, duration, ((in.sequence + i) & 1u) == 0);
         if (!output.valid) { ResetAirSteering(state); return {}; }
         x = output.predictedVelocityX; y = output.predictedVelocityY;
         impulse += output.accelerationStep;
     }
-    command.count = AirSteeringSliceCount;
+    command.count = sliceCount;
     command.valid = true;
-    command.summary = command.slices.back();
+    command.summary = command.slices[sliceCount - 1];
     command.summary.accelerationStep = static_cast<float>(impulse);
     if (!std::isfinite(command.summary.accelerationStep)) { ResetAirSteering(state); return {}; }
     command.summary.headingChange = std::hypot(static_cast<double>(in.velocityX), static_cast<double>(in.velocityY)) > 0.000001 ?

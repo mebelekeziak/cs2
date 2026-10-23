@@ -137,8 +137,10 @@ inline bool MovementReplayTransition(const MovementReplayPlan& plan, std::size_t
         active = true;
         return MovementReplayAnalogTransition(plan, eventIndex, historicalForward, historicalLeft, event);
     }
-    if (eventIndex == MovementReplayJumpEventIndex && plan.jumpEdge && !plan.jumpbug) {
-        active = true; event = MovementJumpTransition(plan.jumpDown);
+    if (eventIndex == MovementReplayJumpEventIndex && (plan.jumpEdge || plan.jumpbug)) {
+        // The landing press must start from released input, including when
+        // native historical state still contains physical held Space.
+        active = true; event = MovementJumpTransition(plan.jumpbug ? false : plan.jumpDown);
     }
     if (eventIndex >= MovementReplayJumpbugEventIndex && plan.jumpbug) {
         const auto transition = eventIndex - MovementReplayJumpbugEventIndex;
@@ -156,7 +158,14 @@ struct MovementReplaySteeringStart {
     SteeringState state{};
     AirPhysics physics{};
     std::uint64_t directions = 0;
+    std::size_t sliceCount = AirSteeringSliceCount;
 };
+inline std::size_t MovementAirSteeringSlices(float verticalVelocity, const MovementButtons& buttons) noexcept {
+    // Avoid our artificial movement boundaries around possible ground contact
+    // or a jump input (including manual jump with bunnyhop disabled).
+    return verticalVelocity > 0 &&
+        !((buttons.down | buttons.changed | buttons.third) & movement_offsets::Jump) ? AirSteeringSliceCount : 1;
+}
 struct MovementReplaySteeringResult {
     bool refreshed = false;
     MovementReplayPlan plan{};
@@ -173,7 +182,7 @@ inline MovementReplaySteeringResult MovementPlanReplaySteering(const MovementRep
     auto input = start.input;
     input.forward = currentIntent.forward; input.left = currentIntent.left; input.viewYaw = currentIntent.viewYaw;
     if (currentIntent.viewValid) {
-        result.command = PlanAirSteeringCommand(result.state, input, start.physics);
+        result.command = PlanAirSteeringCommand(result.state, input, start.physics, plan.jumpbug ? 1 : start.sliceCount);
         result.steering = result.command.summary;
     }
     else ResetAirSteering(result.state);
