@@ -77,14 +77,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers.\n");
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows the Fresnel player chams menu.\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 17 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 17 (17 = eligible aim points).\n");
+    if (selectedTab < 0 || selectedTab > 18 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 18 (17 = eligible aim points, 18 = Fresnel chams menu).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -145,10 +145,11 @@ int wmain(int argc, wchar_t** argv) {
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50, true});
     if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
-    if (selectedTab == 13 || selectedTab == 14) {
+    if (selectedTab == 13 || selectedTab == 14 || selectedTab == 18) {
         PlayerChamsSettings chams;
         chams.enabled = true;
-        chams.style = selectedTab == 13 ? PlayerChamsStyle::Flat : PlayerChamsStyle::Iridescent;
+        chams.style = selectedTab == 18 ? PlayerChamsStyle::Fresnel :
+            selectedTab == 13 ? PlayerChamsStyle::Flat : PlayerChamsStyle::Iridescent;
         PlayerChamsSetSettings(chams);
     }
     ModelPickerFixture modelFixture;

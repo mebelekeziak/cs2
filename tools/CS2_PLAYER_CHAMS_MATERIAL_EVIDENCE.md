@@ -1,5 +1,93 @@
 # Player material creation and shader contracts
 
+## Fresnel style, October 23, 2026
+
+The third style uses installed `csgo_effects.vfx`, an unlit translucent effects
+shader, on the current Windows AMD64 client **1.41.9.2 / Steam 26144732** at
+the installation documented below. This investigation read installed resources
+only; no client or server was opened or launched. Existing project rendering
+targets D3D11. The inspected `_pc_50_` resources contain original Shader Model
+5 DXBC; this is static evidence, not observation of a newly launched process.
+
+The recipe declares `F_ADDITIVE_BLEND=0`, `F_DEPTH_FEATHER=0`, `F_TINT_MASK=0`,
+white `g_vColorTint`, `g_bFogEnabled=0`, `g_flColorBoost=1`,
+`g_flOpacityScale=1`, `g_flFresnelExponent=2`, `g_flFresnelFalloff=1`,
+`g_flFresnelMin=1` and `g_flFresnelMax=0.001`. All names and types occur in
+installed metadata. There is no `g_flModelTintAmount` input: this shader
+consumes instance tint directly. `g_tColor` and all three `g_tMask1/2/3`
+inputs use the existing preloaded white texture. No new texture dependency or
+normal-map input is introduced. Distance attenuation is disabled using
+`g_flFadeDistance=1`, `g_flFadeFalloff=1`, `g_flFadeMin=1`, `g_flFadeMax=1`.
+
+The original effects PS's first static/dynamic combination independently maps
+`g_flFresnelExponent/Falloff/Min/Max` to scalar constant offsets 28/29/30/31
+(`cb0[7].xyzw`); opacity and color boost are offsets 26/27. Texture slots
+13/14/15/16 bind color and masks 1/2/3. Its original DXBC normalizes the normal
+and view vector, then computes:
+
+```text
+f = saturate(pow(saturate(dot(N, V)), Exponent) * Falloff)
+fresnelOpacity = Min + f * (Max - Min)
+alpha = colorTexture.a * instanceTint.a * OpacityScale
+        * fresnelOpacity * mask1 * mask2 * mask3 * distanceFade
+```
+
+The reverse endpoint values are intentional: the chosen values yield
+`1 - 0.999 * saturate(N dot V)^2`, strengthening silhouette edges and leaving
+a faint center. Setting the endpoints to their ordinary 0/1 defaults would
+produce the opposite opacity profile. All ten extracted PS programs retain
+the same Fresnel constant operations. Ordinary, non-MBOIT PS combinations
+write alpha directly; other compiled combinations retain native compositing.
+
+Distance constants occupy scalar offsets 34/35/36/37. The actual DXBC computes
+`pow(lerp(FadeMin, FadeMax, min(length((position-camera)/FadeDistance), 1)),
+FadeFalloff)`. The selected nonzero distance and equal endpoints evaluate to
+`pow(1,1)=1`; no division by an endpoint difference occurs. White masks keep
+the three multiplicative mask samples at one. RGB uses color texture times
+instance tint times ColorBoost. Fog is disabled by the declared bool at scalar
+offset 2. The controls are native material keys, not guessed shader tokens.
+
+All twelve extracted effects VS programs read the existing 32-byte instance
+buffer (first combination: slot 13), unpack RGBA at byte zero, convert RGB
+from sRGB to linear, and apply material color tint. They retain native transform
+buffer, blend-index and vertex-cache animation paths. Unlike `tools_solid`,
+they explicitly compare all four vertex COLOR components to zero and bypass
+vertex-color multiplication when all are zero. Nonzero vertex COLOR is still
+multiplied, so the precise absent-stream binding and any model-authored vertex
+color remain subjects for an authorized offline visual check. No vertex stream
+is overwritten or synthesized by this implementation.
+
+Effects features 3/4 are `F_DISABLE_Z_BUFFERING` / `F_DISABLE_Z_PREPASS`.
+`DepthEnable` uses the same complete inverse conditional bytecode as character,
+with feature index 3. `DepthWriteEnable` has an unconditional zero default.
+Thus the normal effects variant depth-tests without depth writes, and the
+Through walls variant disables both. The shader has no `F_IGNOREZ` recipe key.
+Material creation, selected-mode pairing, process-lifetime retained ownership
+and cooperative stopped/resident behavior continue through the existing path;
+three styles now require six immutable bindings.
+
+The frozen verifier pins these three additional complete installed resources:
+
+| Resource | SHA-256 |
+| --- | --- |
+| `csgo_effects_pc_50_features.vcs` | `facd6e30e4b1c662d6a336172f758540da600110ab5535cccc159f81798123d4` |
+| `csgo_effects_pc_50_vs.vcs` | `4acc2cf98aa151e5b4e0de88795ba0bffa05de4e272b0148aa5a9506687494d5` |
+| `csgo_effects_pc_50_ps.vcs` | `447feac05b603d8528fa604f0b15ce24d362c8f53b25c15a52488ce46426937e` |
+
+`python tools/verify_player_chams_materials.py` passes all native material
+contracts and **eleven** installed assets. Three one-byte in-memory mutations,
+one for each additional effects resource, are independently rejected by the
+asset verifier; installed resources remain unchanged. Both changed Python
+tools pass `py_compile`. The optional research reproducer
+`python tools/inspect_player_chams_depth.py --research logs/research/fresnel-depth`
+passes all three shaders' exact depth metadata and effects VS/PS key/register
+bindings using the existing hash-pinned VRF 20.0 DATA reader. Original DXBC was
+read using the existing provenanced zstandard dictionary and D3DDisassemble
+helper; copied resources, metadata and all 12 VS / 10 PS assemblies remain in
+`logs/research/fresnel/`. No shaders were recompiled. These checks establish
+native inputs and compiled consumers; final player appearance, absent vertex
+streams, translucent sorting and GPU execution remain unobserved.
+
 ## Static recertification, October 21, 2026
 
 Installed Windows AMD64 client at the unchanged installation path now reports

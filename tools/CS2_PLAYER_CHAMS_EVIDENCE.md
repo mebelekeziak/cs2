@@ -1,5 +1,15 @@
 # Player chams native ownership and packet contracts
 
+## PVS visibility correction, October 23, 2026
+
+The current implementation additionally overrides a native PVS rejection for
+validated players selected by Through walls. The [visibility evidence](CS2_PLAYER_CHAMS_VISIBILITY_EVIDENCE.md)
+records the exact scene-worker caller, borrowed-object register provenance,
+boolean ABI and stackless MASM adapter. It retains native frustum/distance,
+model availability and ordinary depth-tested visibility checks. The older
+baseline below describes the original material-only implementation; its
+ownership, packet and material contracts continue to apply.
+
 ## Static recertification, October 21, 2026
 
 Current installed Windows AMD64 client: patch `1.41.9.1`, client/server
@@ -155,8 +165,10 @@ than assuming that separately allocated objects follow a stable heap order.
 The verifier freezes registration, both comparison paths and policy branches.
 
 Depth-disabled materials can color submitted player geometry despite existing
-wall depth. This does not bypass engine visibility, frustum/PVS, model or mesh
-culling: if native generation emits no player packet, this adapter emits none.
+wall depth. The PVS correction above admits eligible player objects into this
+generation path; it does not synthesize missing model or mesh geometry. Native
+frustum, distance and other culling still apply. If generation emits no player
+packet, the material adapter emits none.
 Native no-sort layers, unequal full-sort render orders, geometry rendered in a
 later layer and later compositing remain outside the ordering guarantee. No
 late replay hook or priority-key mutation is introduced. Actual occluded-player

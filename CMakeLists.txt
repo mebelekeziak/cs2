@@ -3,6 +3,7 @@ project(cs2_menu_overlay LANGUAGES C CXX)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Use Windows, MSVC and an x64 generator.")
 endif()
+enable_language(ASM_MASM)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -25,7 +26,7 @@ target_link_libraries(imgui_dx11 PUBLIC d3d11 dxgi d3dcompiler)
 add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_reader.cpp src/esp_draw.cpp
   src/aim_visualization.cpp src/aim_visualization_draw.cpp
   src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_visuals.cpp src/grenade_effects.cpp
-  src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_material.cpp src/client_frame.cpp
+  src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_pvs.asm src/player_chams_material.cpp src/client_frame.cpp
   src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_shoot_origin.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
@@ -55,7 +56,7 @@ target_compile_definitions(cs2_loader PRIVATE CS2_WORKSPACE_ROOT=L"${CMAKE_SOURC
 add_dependencies(cs2_loader mapper cs2_overlay)
 foreach(target imgui_dx11 cs2_overlay mapper cs2_loader)
   target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-  target_compile_options(${target} PRIVATE /W4 /Zc:threadSafeInit-)
+  target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:/W4;/Zc:threadSafeInit->)
 endforeach()
 target_link_options(cs2_overlay PRIVATE /INCREMENTAL:NO)
 include(CTest)
@@ -83,11 +84,12 @@ if(BUILD_TESTING)
   target_compile_definitions(client_frame_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_CLIENT_FRAME_CHECKS)
   target_compile_options(client_frame_checks PRIVATE /W4 /Zc:threadSafeInit-)
   add_test(NAME client_frame_checks COMMAND client_frame_checks)
-  add_executable(player_chams_checks tests/player_chams_checks.cpp src/player_chams.cpp src/player_chams_settings.cpp)
+  add_executable(player_chams_checks tests/player_chams_checks.cpp tests/player_chams_pvs_fixture.asm
+    src/player_chams.cpp src/player_chams_pvs.asm src/player_chams_settings.cpp)
   target_include_directories(player_chams_checks PRIVATE include)
   target_link_libraries(player_chams_checks PRIVATE minhook)
   target_compile_definitions(player_chams_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_PLAYER_CHAMS_CHECKS)
-  target_compile_options(player_chams_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  target_compile_options(player_chams_checks PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4;/Zc:threadSafeInit->)
   add_test(NAME player_chams_checks COMMAND player_chams_checks)
   add_executable(scoped_crosshair_checks tests/scoped_crosshair_checks.cpp src/scoped_crosshair.cpp src/zoom_settings.cpp)
   target_include_directories(scoped_crosshair_checks PRIVATE include)

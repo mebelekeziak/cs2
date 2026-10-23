@@ -348,10 +348,18 @@ Header: [player_chams_offsets.h](../include/player_chams_offsets.h); verifier: [
 
 client.dll and scenesystem.dll; full serialized pawn ownership, skeleton interface and animatable native generation/packet consumers.
 
+The [PVS visibility evidence](../tools/CS2_PLAYER_CHAMS_VISIBILITY_EVIDENCE.md)
+also freezes the scene worker's exact caller, boolean predicate and RSI object
+provenance. The leaf register adapter admits only validated selected players
+with Through walls enabled; it changes no persistent scene flags or PVS data.
+
 | Symbol | Current value |
 | --- | --- |
 | `Generate` | `0x7D7C0` |
 | `DescriptorVtable` | `0x5E5C90` |
+| `PvsTest` / `PvsReturn` | `0x36840` / `0xF0941` |
+| `PvsSourceLoad` / `PvsCaller` | `0xF07A9` / `0xF0922` |
+| `ObjectDescriptor` / `ObjectPvsData` | `0x18` / `0xA0` |
 | `OwnerHandle` | `0xC0` |
 | `SkeletonInterface` | `0x110` |
 | `PacketSize` | `0x70` |

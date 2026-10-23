@@ -88,6 +88,10 @@ int main() {
     invalidChams.iridescentColor[1] = -std::numeric_limits<float>::infinity();
     invalidChams.iridescentColor[2] = -2;
     invalidChams.iridescentColor[3] = 2;
+    invalidChams.fresnelColor[0] = -3;
+    invalidChams.fresnelColor[1] = 3;
+    invalidChams.fresnelColor[2] = std::numeric_limits<float>::quiet_NaN();
+    invalidChams.fresnelColor[3] = std::numeric_limits<float>::infinity();
     PlayerChamsSetSettings(invalidChams);
     const auto boundedChams = PlayerChamsGetSettings();
     Expect(boundedChams.enabled && boundedChams.teammates && boundedChams.localPlayer && !boundedChams.throughWalls &&
@@ -95,10 +99,17 @@ int main() {
         boundedChams.color[2] == chamsDefaults.color[2] && boundedChams.color[3] == chamsDefaults.color[3] &&
         boundedChams.iridescentColor[0] == chamsDefaults.iridescentColor[0] &&
         boundedChams.iridescentColor[1] == chamsDefaults.iridescentColor[1] &&
-        boundedChams.iridescentColor[2] == 0 && boundedChams.iridescentColor[3] == 1,
+        boundedChams.iridescentColor[2] == 0 && boundedChams.iridescentColor[3] == 1 &&
+        boundedChams.fresnelColor[0] == 0 && boundedChams.fresnelColor[1] == 1 &&
+        boundedChams.fresnelColor[2] == chamsDefaults.fresnelColor[2] &&
+        boundedChams.fresnelColor[3] == chamsDefaults.fresnelColor[3],
         "player chams reject unknown style, clamp finite RGBA and default nonfinite channels independently");
     PlayerChamsResetSettings();
     Expect(PlayerChamsGetSettings() == chamsDefaults, "player chams reset restores every field");
+    Expect(static_cast<int>(PlayerChamsStyle::Flat) == 0 && static_cast<int>(PlayerChamsStyle::Iridescent) == 1 &&
+        static_cast<int>(PlayerChamsStyle::Fresnel) == 2 &&
+        PlayerChamsSanitizeSettings(PlayerChamsSettings{.style = PlayerChamsStyle::Fresnel}).style == PlayerChamsStyle::Fresnel,
+        "Fresnel is accepted without changing persisted Flat and Iridescent style IDs");
     const ThirdPersonSettings cameraDefaults;
     Expect(ThirdPersonGetSettings() == cameraDefaults, "third person starts disabled at default distance with collision");
     const auto boundedCamera = ThirdPersonSanitizeSettings({true, -1, -99, 99, false});
@@ -153,6 +164,7 @@ int main() {
     Expect(defaults.find("player_chams.enabled=0\nplayer_chams.teammates=0\nplayer_chams.localPlayer=0\nplayer_chams.style=0\n") != std::string::npos &&
         defaults.find("player_chams.color.3=1\n") != std::string::npos &&
         defaults.find("player_chams.iridescentColor.3=1\n") != std::string::npos &&
+        defaults.find("player_chams.fresnelColor.3=1\n") != std::string::npos &&
         defaults.find("player_chams.throughWalls=1\n") != std::string::npos,
         "default preset explicitly saves player chams modes, target toggles, RGBA channels and through-walls selection");
     EspSettings esp = EspGetSettings();
@@ -197,11 +209,12 @@ int main() {
     expectedModel.enabled = true;
     Expect(ModelSwapSetModel(expectedModel, "agents/models/hmn_ag2/zenless_zone_zero/ellen/ellen.vmdl"), "prepare selected custom model");
     ModelSwapSetSettings(expectedModel);
-    PlayerChamsSettings expectedChams{true, true, true, PlayerChamsStyle::Iridescent};
+    PlayerChamsSettings expectedChams{true, true, true, PlayerChamsStyle::Fresnel};
     expectedChams.throughWalls = false;
     for (int channel = 0; channel < 4; ++channel) {
         expectedChams.color[channel] = (channel + 1) / 8.0f;
         expectedChams.iridescentColor[channel] = (channel + 4) / 8.0f;
+        expectedChams.fresnelColor[channel] = (channel + 2) / 16.0f;
     }
     PlayerChamsSetSettings(expectedChams);
     GrenadeSettings expectedGrenades{true, true, true, true};
@@ -240,8 +253,10 @@ int main() {
         "scoped zoom master, levels, sensitivity and scope overlay removal roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
     Expect(GrenadeGetSettings() == expectedGrenades, "grenade removals, aura toggles, both RGBA colors and width roundtrip");
-    Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos,
-        "player chams master, teammate and local targets, iridescent style, RGBA and disabled through-walls selection roundtrip");
+    Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos &&
+        custom.find("player_chams.style=2\n") != std::string::npos &&
+        custom.find("player_chams.fresnelColor.3=0.3125\n") != std::string::npos,
+        "player chams master, targets, Fresnel style, three independent RGBA colors and through-walls selection roundtrip");
     Expect(ShotLogGetSettings()==expectedShotLog && custom.find("shot_log.enabled=0\nshot_log.verbose=1\n")!=std::string::npos,
         "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
@@ -319,6 +334,10 @@ int main() {
         "version=1\nplayer_chams.localPlayer=2\n", "version=1\nplayer_chams.style=1.5\n",
         "version=1\nplayer_chams.color.0=nan\n", "version=1\nplayer_chams.color.3=inf\n",
         "version=1\nplayer_chams.iridescentColor.2=-inf\n", "version=1\nplayer_chams.iridescentColor.3=0.5oops\n",
+        "version=1\nplayer_chams.fresnelColor.0=nan\n", "version=1\nplayer_chams.fresnelColor.1=inf\n",
+        "version=1\nplayer_chams.fresnelColor.2=-inf\n", "version=1\nplayer_chams.fresnelColor.3=0.5oops\n",
+        "version=1\nplayer_chams.fresnelColor.3=0.25\nplayer_chams.fresnelColor.3=0.75\n",
+        "version=1\naim.enabled=0\nplayer_chams.style=2\nplayer_chams.fresnelColor.0=nan\n",
         "version=1\nplayer_chams.style=0\nplayer_chams.style=1\n",
         "version=1\nplayer_chams.throughWalls=2\n", "version=1\nplayer_chams.throughWalls=true\n",
         "version=1\nplayer_chams.throughWalls=0\nplayer_chams.throughWalls=1\n",
@@ -385,16 +404,30 @@ int main() {
     Write(badPath, "version=1\naim.min_damage=999\n");
     Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().minDamage == 100 && !SilentAimGetSettings().enabled,
         "config bounds maximum minimum damage to 100 HP without enabling aim");
-    Write(badPath, "version=1\nplayer_chams.enabled=1\nplayer_chams.style=-99\nplayer_chams.color.0=-2\nplayer_chams.color.3=2\nplayer_chams.iridescentColor.2=-2\n");
+    Write(badPath, "version=1\nplayer_chams.enabled=1\nplayer_chams.style=-99\nplayer_chams.color.0=-2\nplayer_chams.color.3=2\nplayer_chams.iridescentColor.2=-2\nplayer_chams.fresnelColor.1=3\nplayer_chams.fresnelColor.3=-1\n");
     auto expectedBoundedChams = chamsDefaults;
     expectedBoundedChams.enabled = true;
     expectedBoundedChams.color[0] = 0;
     expectedBoundedChams.color[3] = 1;
     expectedBoundedChams.iridescentColor[2] = 0;
+    expectedBoundedChams.fresnelColor[1] = 1;
+    expectedBoundedChams.fresnelColor[3] = 0;
     Expect(LocalConfigLoad(bad, error) && PlayerChamsGetSettings() == expectedBoundedChams,
-        "player chams config bounds both colors and falls back to flat for unknown style while defaulting missing targets");
+        "player chams config bounds all three colors and falls back to flat for unknown style while defaulting missing targets");
     Expect(PlayerChamsGetSettings().enabled && PlayerChamsGetSettings().throughWalls,
         "older enabled player chams presets without through-walls key inherit enabled depth override");
+    Write(badPath, "version=1\nplayer_chams.enabled=1\nplayer_chams.style=1\nplayer_chams.iridescentColor.0=0.125\n");
+    auto legacyChams = chamsDefaults;
+    legacyChams.enabled = true;
+    legacyChams.style = PlayerChamsStyle::Iridescent;
+    legacyChams.iridescentColor[0] = 0.125f;
+    Expect(LocalConfigLoad(bad, error) && PlayerChamsGetSettings() == legacyChams,
+        "older iridescent preset preserves style and tint while restoring independent Fresnel defaults");
+    Write(badPath, "version=1\nplayer_chams.style=2\n");
+    auto fresnelChams = chamsDefaults;
+    fresnelChams.style = PlayerChamsStyle::Fresnel;
+    Expect(LocalConfigLoad(bad, error) && PlayerChamsGetSettings() == fresnelChams,
+        "Fresnel style-only preset uses its RGBA defaults and stays disabled");
     Write(badPath, "version=1\nanti_aim.enabled=1\n");
     Expect(LocalConfigLoad(bad, error) && AntiAimGetSettings() == AntiAimSettings{true},
         "older enabled-only anti aim preset preserves static backwards yaw and downward pitch");

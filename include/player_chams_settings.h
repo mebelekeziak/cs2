@@ -1,6 +1,6 @@
 #pragma once
 
-enum class PlayerChamsStyle { Flat, Iridescent };
+enum class PlayerChamsStyle { Flat = 0, Iridescent = 1, Fresnel = 2 };
 
 struct PlayerChamsSettings {
     bool enabled = false;
@@ -10,6 +10,7 @@ struct PlayerChamsSettings {
     float color[4]{0.4f, 0.7f, 1.0f, 1.0f}; // Flat style RGBA.
     float iridescentColor[4]{1.0f, 0.3f, 0.8f, 1.0f}; // Iridescent style RGBA tint.
     bool throughWalls = true;
+    float fresnelColor[4]{0.3f, 0.85f, 1.0f, 1.0f}; // Fresnel style RGBA tint.
 
     bool operator==(const PlayerChamsSettings&) const = default;
 };

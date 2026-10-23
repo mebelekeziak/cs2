@@ -44,6 +44,18 @@ SCENE_CHECKS = {'generate_entry': (513984, '488bc4488958204c89401848895010488948
  'scene_layer_sort_policy': (972029, '488b4548a801742d'),
  'scene_layer_no_sort_policy': (972082, 'a8020f8534020000')}
 
+# The complete leaf and caller provenance were independently decoded with
+# Capstone 5.0.9. No RSI/ESI write occurs after the spatial record's object load
+# and before the PVS call. Freeze that complete interval, not just its endpoints.
+PVS_FUNCTION = '4c8bda4c8bc94885c974350f1f440000450fb751084533c04d85d2741b498d41108b48fc418b148b8510751749ffc04883c0084d3bc27ce94d8b094d85c975d032c0c3b001c3'
+PVS_CALLER = '488b8ea00000004885c9742a0fb64678c0e803a801741f498bd0e8ff5ef4ff4c8b4c243884c0750bff8324010000e9fe0600004533d2'
+SCENE_CHECKS.update({
+    'pvs_complete_leaf': (0x36840, PVS_FUNCTION),
+    'pvs_spatial_record_object': (0xF0780, '488b7e084803fa488b4f20488bc14923c2493bc20f85c70800004985cb0f85be080000ff83f0000000488b7728'),
+    'pvs_caller_and_boolean_consumer': (0xF0922, PVS_CALLER),
+})
+PVS_PROVENANCE_HASH = 'da433c53cbe05d7b5587df9253224862e2e969251db10200a3b7ddc98c450e1c'
+
 
 def require(image, checks):
     for name, (site, encoded) in checks.items():
@@ -61,6 +73,22 @@ def verify(game, header, material_header=None):
         raise SystemExit('Installed player render binaries changed; reinvestigation required')
     require(client, CLIENT_CHECKS)
     require(scene, SCENE_CHECKS)
+    if hashlib.sha256(scene[0xF07A9:0xF0941]).hexdigest() != PVS_PROVENANCE_HASH:
+        raise SystemExit('Changed PVS caller RSI object provenance')
+    # Discover each checked site within the frozen culler independently of the
+    # header, then decode the relative CALL and its object-member displacement.
+    culler_begin, culler_end = 0xF0460, 0xF10B1
+    source_pattern = bytes.fromhex('488b7728488b8ea80000004885c9')
+    sources = [m.start() + culler_begin for m in re.finditer(re.escape(source_pattern), scene[culler_begin:culler_end])]
+    callers = [m.start() + culler_begin for m in re.finditer(re.escape(bytes.fromhex(PVS_CALLER)), scene[culler_begin:culler_end])]
+    if len(sources) != 1 or len(callers) != 1:
+        raise SystemExit('Missing or ambiguous PVS scene-object source/caller')
+    pvs_source, pvs_caller = sources[0], callers[0]
+    pvs_call = pvs_caller + 0x1A
+    if scene[pvs_call] != 0xE8:
+        raise SystemExit('Native PVS caller is not a relative CALL')
+    pvs_return = pvs_call + 5
+    pvs_test = pvs_return + struct.unpack_from('<i', scene, pvs_call + 1)[0]
     table = primary_vtable(scene, scene_base, b'.?AVCAnimatableSceneObjectDesc@@')
     generate = struct.unpack_from('<Q', scene, table+0x20)[0]-scene_base
     name = 0xAC659C+7+struct.unpack_from('<i', client, 0xAC659F)[0]
@@ -85,6 +113,10 @@ def verify(game, header, material_header=None):
         'PacketMaterial': scene[0x7E77E], 'PacketMode': scene[0x7E782],
         'PacketColor': scene[0x7E5D9], 'ViewInArgs': scene[0x7D862],
         'ViewMode': scene[0x7E797],
+        'PvsTest': pvs_test, 'PvsReturn': pvs_return,
+        'PvsSourceLoad': pvs_source, 'PvsCaller': pvs_caller,
+        'ObjectDescriptor': scene[0x10F5FD],
+        'ObjectPvsData': struct.unpack_from('<I', scene, pvs_caller + 3)[0],
     }
     source = re.sub(r'//[^\n]*|/\*.*?\*/', '', header.read_text(), flags=re.S)
     for name, observed in constants.items():
@@ -94,11 +126,25 @@ def verify(game, header, material_header=None):
     body = re.findall(r'\bGenerateBytes\[\]\s*\{([^}]*)\}',source,re.S)
     if len(body) != 1 or bytes(int(v.strip(),0) for v in body[0].split(',') if v.strip()) != bytes.fromhex(GENERATE):
         raise SystemExit('Header GenerateBytes mismatch')
+    for name, address, length in [('PvsTestBytes', pvs_test, 16),
+                                  ('PvsSourceLoadBytes', pvs_source, 4),
+                                  ('PvsCallerBytes', pvs_caller, len(bytes.fromhex(PVS_CALLER)))]:
+        bodies = re.findall(rf'\b{name}\[\]\s*\{{([^}}]*)\}}', source, re.S)
+        if len(bodies) != 1 or bytes(int(v.strip(),0) for v in bodies[0].split(',') if v.strip()) != bytes(scene[address:address+length]):
+            raise SystemExit(f'Header {name} mismatch')
     materials = verify_materials(game, material_header or ROOT/'include/player_chams_material_offsets.h')
     return {'component': 'player_chams', 'verified': True, 'hashes': hashes,
             'materials': materials,
             'constants': {k:hex(v) for k,v in constants.items()},
             'client_checks': list(CLIENT_CHECKS), 'scene_checks': list(SCENE_CHECKS),
+            'native_visibility': {
+                'test': hex(pvs_test), 'caller_return': hex(pvs_return),
+                'abi': 'bool Microsoft x64 (linked PVS records, view PVS bits)',
+                'object_source': 'RSI from spatial record+0x28; unchanged through caller',
+                'provenance_sha256': PVS_PROVENANCE_HASH,
+                'scope': 'original-first false-to-true only for exact caller and validated eligible player',
+                'persistent_scene_mutation': False,
+            },
             'native_ordering': {
                 'aggregate_descriptor':hex(aggregate_descriptor),
                 'animatable_descriptor':hex(animatable_descriptor),

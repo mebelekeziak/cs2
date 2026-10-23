@@ -11,19 +11,25 @@
 #include <cstdio>
 #include <cstring>
 
+extern "C" bool PlayerChamsPvsThunk(void*,void*) noexcept;
+
 namespace {
 namespace off=player_chams_offsets;
 namespace ent=cs2_offsets;
 using GenerateFn=void (*)(void*,void*,void*,void*);
 GenerateFn original=nullptr;
+using PvsFn=bool (*)(void*,void*);
+PvsFn originalPvs=nullptr;
 std::uintptr_t client=0,scene=0;
 std::atomic<bool> active{false},stopped{false};
 SRWLOCK mutationLock=SRWLOCK_INIT;
 PlayerChamsLogCallback logger=nullptr;
 std::atomic<const char*> status{"Player chams not initialized."};
 std::atomic<unsigned long long> callbacks{0},changedPackets{0},rejections{0};
+std::atomic<unsigned long long> eligibleCallbacks{0},emptyGenerations{0},materialMisses{0},staleSources{0};
+std::atomic<unsigned long long> pvsTests{0},pvsOverrides{0};
 ULONGLONG lastReport=0;
-unsigned long long lastCalls=0,lastChanges=0,lastRejections=0;
+unsigned long long lastCalls=0,lastChanges=0,lastRejections=0,lastPvsTests=0;
 #ifdef CS2_PLAYER_CHAMS_CHECKS
 bool testRuntime=false;
 #endif
@@ -133,6 +139,31 @@ bool Eligible(const Source& source,const PlayerChamsSettings& settings) noexcept
         return settings.localPlayer && source.local && source.controller.entity==localController && source.pawn.entity==localPawn;
     return source.team!=team || settings.teammates;
 }
+bool Pvs(void* data,void* view,void* objectPointer,std::uintptr_t caller) noexcept {
+    // Native membership bookkeeping/results remain authoritative for every
+    // other callsite. The thunk captures RSI without changing any native field.
+    const bool native=originalPvs(data,view);
+    if (caller!=scene+off::PvsReturn) return native;
+    pvsTests.fetch_add(1,std::memory_order_relaxed);
+    if (native || !active.load(std::memory_order_acquire)) return native;
+    const auto object=reinterpret_cast<std::uintptr_t>(objectPointer);
+    std::uintptr_t descriptor=0,table=0,membership=0;
+    // Most rejected records belong to the world. Avoid the settings and stop
+    // locks for those; validate the descriptor again inside the stop barrier.
+    if (!data || !view || !Read(object+off::ObjectDescriptor,descriptor) ||
+        !Read(descriptor,table) || table!=scene+off::DescriptorVtable) return native;
+    const auto settings=PlayerChamsGetSettings();
+    if (!settings.enabled || !settings.throughWalls) return native;
+    Source source{};
+    AcquireSRWLockShared(&mutationLock);
+    const bool selected=active.load(std::memory_order_acquire) &&
+        Read(object+off::ObjectDescriptor,descriptor) && Read(descriptor,table) && table==scene+off::DescriptorVtable &&
+        Read(object+off::ObjectPvsData,membership) && membership==reinterpret_cast<std::uintptr_t>(data) &&
+        ReadSource(object,source) && Eligible(source,settings);
+    if (selected) pvsOverrides.fetch_add(1,std::memory_order_relaxed);
+    ReleaseSRWLockShared(&mutationLock);
+    return native || selected;
+}
 void HookGenerate(void* descriptor,void* objectPointer,void* argsPointer,void* listPointer) noexcept {
     WorldDrawList before{};
     const bool captured=active.load(std::memory_order_acquire) &&
@@ -152,14 +183,20 @@ void HookGenerate(void* descriptor,void* objectPointer,void* argsPointer,void* l
         !Read(reinterpret_cast<std::uintptr_t>(listPointer),after)) {
         rejections.fetch_add(1,std::memory_order_relaxed);return;
     }
+    eligibleCallbacks.fetch_add(1,std::memory_order_relaxed);
+    if (ValidList(after) && after.fixedCount==before.fixedCount && after.overflowCount==before.overflowCount) {
+        emptyGenerations.fetch_add(1,std::memory_order_relaxed);return;
+    }
     if (!PlayerChamsMaterialsResolve(settings.style,view,material,mode,settings.throughWalls)) {
+        materialMisses.fetch_add(1,std::memory_order_relaxed);
         status.store(PlayerChamsMaterialsStatus(),std::memory_order_release);return;
     }
     AcquireSRWLockShared(&mutationLock);
     Source current{};
     if (active.load(std::memory_order_acquire) && ReadSource(object,current) && current==source && Eligible(current,settings)) {
         std::size_t changed=0;
-        const auto& tint=settings.style==PlayerChamsStyle::Iridescent?settings.iridescentColor:settings.color;
+        const auto& tint=settings.style==PlayerChamsStyle::Fresnel?settings.fresnelColor:
+            settings.style==PlayerChamsStyle::Iridescent?settings.iridescentColor:settings.color;
         if (!PlayerChamsApplyNewDraws(before,after,object,material,mode,tint,changed))
             rejections.fetch_add(1,std::memory_order_relaxed);
         if (changed) {
@@ -167,9 +204,13 @@ void HookGenerate(void* descriptor,void* objectPointer,void* argsPointer,void* l
             status.store(settings.throughWalls?"Player chams active; material depth test/write disabled.":
                 "Player chams active; native material depth enabled.",std::memory_order_release);
         }
-    }
+    } else staleSources.fetch_add(1,std::memory_order_relaxed);
     ReleaseSRWLockShared(&mutationLock);
 }
+}
+
+extern "C" bool PlayerChamsPvsAdapter(void* data,void* view,void* object,std::uintptr_t caller) noexcept {
+    return Pvs(data,view,object,caller);
 }
 
 std::uint32_t PlayerChamsOwnerHandle(std::uint32_t identity,std::uint32_t flags) noexcept {
@@ -217,19 +258,27 @@ bool PlayerChamsPrepare(PlayerChamsLogCallback callback) noexcept {
     scene=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"scenesystem.dll"));
     unsigned char bytes[sizeof(off::GenerateBytes)]{};
     std::uintptr_t target=0;
+    unsigned char pvsBytes[sizeof(off::PvsTestBytes)]{},sourceBytes[sizeof(off::PvsSourceLoadBytes)]{},
+        callerBytes[sizeof(off::PvsCallerBytes)]{};
     if (!Image(client,ent::ClientTimestamp,ent::ClientImageSize) || !Image(scene,off::SceneTimestamp,off::SceneImageSize) ||
         !Copy(scene+off::Generate,bytes,sizeof(bytes)) || std::memcmp(bytes,off::GenerateBytes,sizeof(bytes)) ||
         !Read(scene+off::DescriptorVtable+0x20,target) || target!=scene+off::Generate ||
+        !Copy(scene+off::PvsTest,pvsBytes,sizeof(pvsBytes)) || std::memcmp(pvsBytes,off::PvsTestBytes,sizeof(pvsBytes)) ||
+        !Copy(scene+off::PvsSourceLoad,sourceBytes,sizeof(sourceBytes)) || std::memcmp(sourceBytes,off::PvsSourceLoadBytes,sizeof(sourceBytes)) ||
+        !Copy(scene+off::PvsCaller,callerBytes,sizeof(callerBytes)) || std::memcmp(callerBytes,off::PvsCallerBytes,sizeof(callerBytes)) ||
         !PlayerChamsMaterialsInitialize(callback)) {
         status.store("Player chams native build verification failed.",std::memory_order_release);return false;
     }
     const auto hook=reinterpret_cast<void*>(scene+off::Generate);
     if (MH_CreateHook(hook,reinterpret_cast<void*>(&HookGenerate),reinterpret_cast<void**>(&original))!=MH_OK ||
-        !original || MH_QueueEnableHook(hook)!=MH_OK) {
+        !original || MH_QueueEnableHook(hook)!=MH_OK ||
+        MH_CreateHook(reinterpret_cast<void*>(scene+off::PvsTest),reinterpret_cast<void*>(&PlayerChamsPvsThunk),
+            reinterpret_cast<void**>(&originalPvs))!=MH_OK || !originalPvs ||
+        MH_QueueEnableHook(reinterpret_cast<void*>(scene+off::PvsTest))!=MH_OK) {
         status.store("Player chams hook setup failed.",std::memory_order_release);return false;
     }
     status.store("Player chams ready; starts disabled.",std::memory_order_release);
-    if (logger) logger("PLAYER_CHAMS_BUILD_VERIFIED descriptor=CAnimatableSceneObjectDesc callback=0x7D7C0 owner=0xC0 skeleton_interface=0x110; serialized ownership and native per-view variants; packet changes do not prove visible appearance");
+    if (logger) logger("PLAYER_CHAMS_BUILD_VERIFIED descriptor=CAnimatableSceneObjectDesc callback=0x7D7C0 owner=0xC0 skeleton_interface=0x110 pvs=0x36840 caller=0xF0941; through-walls selected-player PVS override; serialized ownership and native per-view variants; packet changes do not prove visible appearance");
     return true;
 }
 void PlayerChamsActivate() noexcept {
@@ -252,13 +301,16 @@ void PlayerChamsFlushTelemetry() noexcept {
     if (!logger) return;
     const auto now=GetTickCount64();if (lastReport && now-lastReport<2000) return;lastReport=now;
     const auto calls=callbacks.load(),changes=changedPackets.load(),rejects=rejections.load();
-    if (calls==lastCalls && changes==lastChanges && rejects==lastRejections) return;
-    lastCalls=calls;lastChanges=changes;lastRejections=rejects;
-    char line[512]{};std::snprintf(line,sizeof(line),"PLAYER_CHAMS callbacks=%llu packets=%llu rejected=%llu status=%s; native callback counts do not establish visible rendering",calls,changes,rejects,PlayerChamsStatus());logger(line);
+    const auto pvs=pvsTests.load();
+    if (calls==lastCalls && changes==lastChanges && rejects==lastRejections && pvs==lastPvsTests) return;
+    lastCalls=calls;lastChanges=changes;lastRejections=rejects;lastPvsTests=pvs;
+    char line[768]{};std::snprintf(line,sizeof(line),"PLAYER_CHAMS callbacks=%llu packets=%llu rejected=%llu eligible=%llu empty=%llu material_misses=%llu stale=%llu pvs_tests=%llu pvs_overrides=%llu status=%s; native callback counts do not establish visible rendering",calls,changes,rejects,
+        eligibleCallbacks.load(),emptyGenerations.load(),materialMisses.load(),staleSources.load(),pvs,pvsOverrides.load(),PlayerChamsStatus());logger(line);
 }
 #ifdef CS2_PLAYER_CHAMS_CHECKS
-void PlayerChamsTestConfigure(std::uintptr_t clientBase,std::uintptr_t sceneBase,PlayerChamsGenerateFn fn) noexcept {
-    client=clientBase;scene=sceneBase;original=fn;testRuntime=true;stopped.store(false);active.store(true);
+void PlayerChamsTestConfigure(std::uintptr_t clientBase,std::uintptr_t sceneBase,PlayerChamsGenerateFn fn,PlayerChamsPvsFn pvs) noexcept {
+    client=clientBase;scene=sceneBase;original=fn;originalPvs=pvs;testRuntime=true;stopped.store(false);active.store(true);
 }
 void PlayerChamsTestGenerate(void* descriptor,void* object,void* args,void* list) noexcept {HookGenerate(descriptor,object,args,list);}
+bool PlayerChamsTestPvs(void* data,void* view,void* object,std::uintptr_t caller) noexcept {return Pvs(data,view,object,caller);}
 #endif

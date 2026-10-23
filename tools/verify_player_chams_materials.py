@@ -113,10 +113,11 @@ def verify(game, header):
             'depth_state_contract': {
                 'evidence': 'Full shader hashes pin the separately decoded feature metadata; reproduce with inspect_player_chams_depth.py',
                 'feature': 'F_DISABLE_Z_BUFFERING',
-                'feature_indexes': {'csgo_unlitgeneric': 1, 'csgo_character': 3},
+                'feature_indexes': {'csgo_unlitgeneric': 1, 'csgo_character': 3, 'csgo_effects': 3},
                 'native_states': {'DepthEnable': '0xFFFF0010', 'DepthWriteEnable': '0xFFFF0011'},
                 'expression': 'F_DISABLE_Z_BUFFERING ? 0 : 1',
-                'depth_test_with_flag_one': False, 'depth_write_with_flag_one': False},
+                'depth_test_with_flag_one': False, 'depth_write_with_flag_one': False,
+                'effects_depth_write': 'unconditional zero; normal and depth-disabled variants'},
             'live_observation': False}
 
 
@@ -200,7 +201,16 @@ ASSETS = [('csgo',
   '49253137b21a55ee3cdb8a7f7d57036c19bdc64168427cc3f5d5394fb479ac66'),
  ('csgo',
   'shaders/vfx/csgo_unlitgeneric_pc_50_ps.vcs',
-  '3c3c2bdad0876533567335b6a5dc07329af5caee51cd7ff3cd13bf0b1c8a603a')]
+  '3c3c2bdad0876533567335b6a5dc07329af5caee51cd7ff3cd13bf0b1c8a603a'),
+ ('csgo',
+  'shaders/vfx/csgo_effects_pc_50_features.vcs',
+  'facd6e30e4b1c662d6a336172f758540da600110ab5535cccc159f81798123d4'),
+ ('csgo',
+  'shaders/vfx/csgo_effects_pc_50_vs.vcs',
+  '4acc2cf98aa151e5b4e0de88795ba0bffa05de4e272b0148aa5a9506687494d5'),
+ ('csgo',
+  'shaders/vfx/csgo_effects_pc_50_ps.vcs',
+  '447feac05b603d8528fa604f0b15ce24d362c8f53b25c15a52488ce46426937e')]
 
 IDENTITIES["scene"] = ('bin/win64/scenesystem.dll', '0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b')
 WINDOWS["scene"] = {'NativePacketTintGPUConsumer': (376480, 3984, '8d6dd1a6cd6d0107a704771d9280b12102c7686879c8190c3a623730e4f44d37')}

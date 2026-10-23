@@ -330,7 +330,7 @@ void CameraControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
-void EditChamsColor(const char* control, bool iridescent) {
+void EditChamsColor(const char* control, PlayerChamsStyle style) {
     const auto before = PlayerChamsGetSettings();
     const ImGuiID swatch = ImHashStr("##ColorButton", 0, Body()->GetID(control));
     ClickControl("player chams color swatch", 0.5f, Body(), swatch);
@@ -346,17 +346,20 @@ void EditChamsColor(const char* control, bool iridescent) {
     const auto alpha = ControlRect("chams alpha", popup, ImHashStr("alpha", 0, picker));
     Click({ alpha.GetCenter().x, alpha.Min.y + alpha.GetHeight() * 0.75f });
     const auto edited = PlayerChamsGetSettings();
-    const float* value = iridescent ? edited.iridescentColor : edited.color;
-    const float* oldValue = iridescent ? before.iridescentColor : before.color;
+    const float* colors[]{edited.color, edited.iridescentColor, edited.fresnelColor};
+    const float* oldColors[]{before.color, before.iridescentColor, before.fresnelColor};
+    const int selected = static_cast<int>(style);
+    const float* value = colors[selected];
+    const float* oldValue = oldColors[selected];
     bool rgbChanged = false;
     bool otherColorUnchanged = true;
     for (int channel = 0; channel < 4; ++channel) {
         if (channel < 3) rgbChanged |= value[channel] != oldValue[channel];
-        otherColorUnchanged &= iridescent ? edited.color[channel] == before.color[channel]
-                                         : edited.iridescentColor[channel] == before.iridescentColor[channel];
+        for (int material = 0; material < 3; ++material)
+            if (material != selected) otherColorUnchanged &= colors[material][channel] == oldColors[material][channel];
     }
     Expect(rgbChanged && value[3] > 0.15f && value[3] < 0.35f && otherColorUnchanged,
-        "player chams RGBA picker publishes color and opacity without changing the other material color");
+        "player chams RGBA picker publishes color and opacity without changing either other material color");
     Click({ Menu()->Pos.x + 5, Menu()->Pos.y + 5 });
 }
 void PlayerChamsControls() {
@@ -379,15 +382,27 @@ void PlayerChamsControls() {
     Expect(PlayerChamsGetSettings().enabled && !EspGetSettings().enabled,
         "player chams enable independently while ESP is disabled");
     const auto flatText = SubmittedMenuText();
-    Expect(flatText.find("Flat color") != std::string::npos && flatText.find("Iridescent color") == std::string::npos,
+    Expect(flatText.find("Flat color") != std::string::npos && flatText.find("Iridescent color") == std::string::npos &&
+        flatText.find("Fresnel color") == std::string::npos,
         "flat chams expose only the selected material's flat RGBA color");
-    EditChamsColor("##PlayerChamsColor", false);
+    EditChamsColor("##PlayerChamsColor", PlayerChamsStyle::Flat);
     SelectEspCombo("##PlayerChamsStyle", "Iridescent", 1);
     const auto iridescentText = SubmittedMenuText();
     Expect(PlayerChamsGetSettings().style == PlayerChamsStyle::Iridescent &&
-        iridescentText.find("Iridescent color") != std::string::npos && iridescentText.find("Flat color") == std::string::npos,
+        iridescentText.find("Iridescent color") != std::string::npos && iridescentText.find("Flat color") == std::string::npos &&
+        iridescentText.find("Fresnel color") == std::string::npos,
         "iridescent material selection exposes only its own RGBA tint");
-    EditChamsColor("##PlayerChamsIridescentColor", true);
+    EditChamsColor("##PlayerChamsIridescentColor", PlayerChamsStyle::Iridescent);
+    const auto beforeFresnel = PlayerChamsGetSettings();
+    SelectEspCombo("##PlayerChamsStyle", "Fresnel", 2);
+    const auto fresnelText = SubmittedMenuText();
+    auto expectedFresnel = beforeFresnel;
+    expectedFresnel.style = PlayerChamsStyle::Fresnel;
+    Expect(PlayerChamsGetSettings() == expectedFresnel &&
+        fresnelText.find("Fresnel color") != std::string::npos && fresnelText.find("Flat color") == std::string::npos &&
+        fresnelText.find("Iridescent color") == std::string::npos,
+        "Fresnel selection exposes its own tint and preserves all three colors and other settings");
+    EditChamsColor("##PlayerChamsFresnelColor", PlayerChamsStyle::Fresnel);
     ClickControl("Chams on teammates");
     ClickControl("Chams on local player");
     const auto beforeWalls = PlayerChamsGetSettings();
@@ -404,9 +419,15 @@ void PlayerChamsControls() {
         "player chams teammate and local-player targets publish independently of through-walls selection");
     SelectEspCombo("##PlayerChamsStyle", "Flat", 0);
     const auto flat = PlayerChamsGetSettings();
-    Expect(flat.style == PlayerChamsStyle::Flat && flat.color[3] == edited.color[3] &&
-        flat.iridescentColor[3] == edited.iridescentColor[3] && flat.teammates && flat.localPlayer && !flat.throughWalls,
-        "switching back to flat preserves both custom colors, targets and through-walls switch");
+    auto expectedFlat = edited;
+    expectedFlat.style = PlayerChamsStyle::Flat;
+    Expect(flat == expectedFlat,
+        "switching from Fresnel back to flat preserves all three custom RGBA colors, targets and through-walls switch");
+    SelectEspCombo("##PlayerChamsStyle", "Iridescent", 1);
+    auto expectedIridescent = edited;
+    expectedIridescent.style = PlayerChamsStyle::Iridescent;
+    Expect(PlayerChamsGetSettings() == expectedIridescent,
+        "returning to iridescent preserves every independent custom RGBA color and target setting");
     ClickControl("Enable player chams");
     ClickControl("Reset player chams");
     Expect(PlayerChamsGetSettings() == PlayerChamsSettings{} && PlayerChamsGetSettings().throughWalls,

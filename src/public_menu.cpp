@@ -461,11 +461,13 @@ void DrawPublicMenu() {
                     ImGui::TextUnformatted("Material");
                     int style = static_cast<int>(chams.style);
                     ImGui::SetNextItemWidth(-1);
-                    if (ImGui::Combo("##PlayerChamsStyle", &style, "Flat\0Iridescent\0")) {
+                    if (ImGui::Combo("##PlayerChamsStyle", &style, "Flat\0Iridescent\0Fresnel\0")) {
                         chams.style = static_cast<PlayerChamsStyle>(style);
                         chamsChanged = true;
                     }
-                    if (chams.style == PlayerChamsStyle::Iridescent)
+                    if (chams.style == PlayerChamsStyle::Fresnel)
+                        chamsChanged |= color("Fresnel color", "##PlayerChamsFresnelColor", chams.fresnelColor);
+                    else if (chams.style == PlayerChamsStyle::Iridescent)
                         chamsChanged |= color("Iridescent color", "##PlayerChamsIridescentColor", chams.iridescentColor);
                     else
                         chamsChanged |= color("Flat color", "##PlayerChamsColor", chams.color);

@@ -296,10 +296,36 @@ imports. No CS2 client/server was launched.
 
 ## Player chams
 
+**Visibility correction, October 23, 2026:** Through walls now admits selected
+players past the native scene PVS rejection that can omit their model before
+the material callback runs. It validates the current pawn, controller and
+skeleton on each query, including after a round/respawn; it keeps no first-seen
+cache. Other players and normal depth-tested chams retain native PVS behavior.
+Frustum, distance, model/mesh availability and later render passes still apply.
+See [native visibility evidence](tools/CS2_PLAYER_CHAMS_VISIBILITY_EVIDENCE.md).
+
+The existing build commands also assemble a small x64 register adapter using
+Visual Studio's bundled MASM (`ml64`); no separate launch step is added. Restart
+CS2 normally and use **Load Overlay.cmd** to load the rebuilt DLL. Stopped and
+resident is not physically unloaded. Live appearance of this correction has
+not yet been observed.
+
+Public and diagnostic x64 Release builds each pass **58/58 CTest suites**,
+including **195 player chams checks** exercising the actual register adapter,
+first-query admission, replacement identities and pending-call stop. All
+**29/29 installed-file checks** pass; all nine altered PVS header contracts
+reject. Both DLLs retain zero static TLS/delay imports. Logs are saved as
+`logs/chams-visibility-*`.
+
 Under **Visuals**, open **Player chams** and turn on **Enable player chams**.
-Choose **Flat** for a solid unlit material or **Iridescent** for the character
-shader's angle-dependent effect. Customize the selected style's **Flat color**
-or **Iridescent color**, including alpha. Both style tints save independently.
+Choose **Flat** for a solid unlit material, **Iridescent** for the character
+shader's angle-dependent effect, or **Fresnel** for a colored rim that fades
+toward surfaces facing the camera. Customize the selected style's **Flat color**,
+**Iridescent color**, or **Fresnel color**, including alpha. All three style
+tints save independently; older presets restore the default cyan Fresnel tint.
+The Fresnel recipe uses the installed unlit translucent effects shader; its
+verified native inputs and opacity calculation are recorded in the
+[material evidence](tools/CS2_PLAYER_CHAMS_MATERIAL_EVIDENCE.md#fresnel-style-october-23-2026).
 **Through walls** starts checked and selects the style's material with depth
 testing and depth writes disabled. Uncheck it for normal depth-tested chams.
 Enemy players are selected by default. **Chams on teammates** and **Chams on local player** independently
@@ -320,7 +346,19 @@ command. Standalone menu previews, without starting CS2:
 ```powershell
 .\build\Release\public_menu_preview.exe .\logs\player-chams-flat-menu.bmp 13 100000
 .\build\Release\public_menu_preview.exe .\logs\player-chams-iridescent-menu.bmp 14 100000
+.\build\Release\public_menu_preview.exe .\logs\player-chams-fresnel-menu.bmp 18 100000
 ```
+
+**Fresnel verification, October 23, 2026:** public and diagnostic x64 Release
+builds succeed without project warnings and each pass **58/58 CTest suites**.
+The new checks cover independent color/config persistence, menu selection,
+visible/occluded material selection, partial creation failure and packet RGBA.
+All **29/29 installed-file checks** pass, including eleven shader/texture
+resources. Both DLLs retain zero static TLS/delay imports. The standalone
+D3D11 Fresnel menu preview was inspected; no CS2 client/server was launched.
+Final model appearance, vertex-color stream binding and translucent sorting
+remain unobserved. Logs are under `logs/fresnel-*` and
+`logs/compatibility/fresnel/`.
 
 **Verification, October 18, 2026:** public and diagnostic x64 Release builds
 succeed, with **47/47 CTest suites passing in each**. The player adapter runs

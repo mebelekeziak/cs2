@@ -8,10 +8,11 @@
 
 namespace {
 int checks=0,failures=0,constructs=0,destroys=0,parses=0,creates=0,preloads=0,modes=0,occludedParses=0,failCreateAt=0;
+int fresnelParses=0;
 bool parseSuccess=true,preloadSuccess=true,createSuccess=true,rootSuccess=true;
 bool alive=false,blockCreate=false,reenter=false;
 HANDLE entered=nullptr,releaseCreate=nullptr;
-std::uintptr_t bindings[]{0x100001,0x100002,0x100003,0x100004};
+std::uintptr_t bindings[]{0x100001,0x100002,0x100003,0x100004,0x100005,0x100006};
 void* expectedArena=nullptr;
 void Check(bool result,const char* label) {
     ++checks;
@@ -26,6 +27,14 @@ void Destroy(void* arena) { ++destroys; Check(alive && arena==expectedArena,"des
 bool Parse(void* node,void* error,const char* text,const void* format,const char* name,unsigned flags) {
     ++parses; Check(alive && node==static_cast<unsigned char*>(expectedArena)+0x78 && !error && format && name && !*name && !flags,"parser ABI and owner");
     Check(text && std::strstr(text,"format:generic:version{") && std::strstr(text,"shader ="),"native material source schema");
+    if (std::strstr(text,"csgo_effects.vfx")) {
+        ++fresnelParses;
+        Check(std::strstr(text,"g_flFresnelMin = 1.0") && std::strstr(text,"g_flFresnelMax = 0.001") &&
+            std::strstr(text,"g_flFresnelExponent = 2.0") && std::strstr(text,"g_flFresnelFalloff = 1.0"),
+            "fresnel recipe inverts the native facing factor to emphasize the rim");
+        Check(!std::strstr(text,"F_ADDITIVE_BLEND = 1") && std::strstr(text,"g_flOpacityScale = 1.0"),
+            "fresnel keeps ordinary alpha blending for configured opacity");
+    }
     if (std::strstr(text,"F_DISABLE_Z_BUFFERING = 1")) {
         ++occludedParses;
         Check(std::strstr(text,"F_DISABLE_Z_PREPASS = 1")!=nullptr,"occluded shader disables native depth prepass too");
@@ -36,7 +45,8 @@ void* Create(void* manager,void** output,const char* name,void* node,unsigned fl
     ++creates; Check(manager && alive && node && flags==1 && finalFlag && name,"material create ABI consumes live root");
     if (reenter) PlayerChamsMaterialsOwnerFrame();
     if (blockCreate) { SetEvent(entered); WaitForSingleObject(releaseCreate,INFINITE); }
-    const unsigned style=(std::strstr(name,"iridescent") ? 1u : 0u)+(std::strstr(name,"_occluded") ? 2u : 0u);
+    const unsigned style=(std::strstr(name,"fresnel") ? 2u : std::strstr(name,"iridescent") ? 1u : 0u)+
+        (std::strstr(name,"_occluded") ? 3u : 0u);
     *output=createSuccess && creates!=failCreateAt ? &bindings[style] : nullptr; return output;
 }
 std::uintptr_t Mode(void* material,void* view) {
@@ -45,6 +55,7 @@ std::uintptr_t Mode(void* material,void* view) {
 bool Preload(const char* path) { ++preloads; Check(path && std::strstr(path,".vtex"),"load dependency before create"); return preloadSuccess; }
 void Reset() {
     constructs=destroys=parses=creates=preloads=modes=occludedParses=failCreateAt=0;
+    fresnelParses=0;
     parseSuccess=preloadSuccess=createSuccess=rootSuccess=true;
     alive=blockCreate=reenter=false;
     PlayerChamsMaterialsTestConfigure({Construct,Root,Destroy,Parse,Create,Mode,Preload});
@@ -65,22 +76,28 @@ int main() {
     Check(!constructs && !preloads,"disabled defaults never load resources");
     Check(!Resolve(),"resolve unavailable before prepare");
     Enable(); reenter=true; PlayerChamsMaterialsOwnerFrame();
-    Check(constructs==4 && destroys==4 && creates==4 && preloads==2 && !alive,"four immutable visible/occluded materials and dependency loads");
-    Check(occludedParses==2,"only the two occluded material sources disable depth");
-    Check(Resolve() && Resolve(PlayerChamsStyle::Iridescent),"both styles published");
-    Check(Resolve(PlayerChamsStyle::Flat,true) && Resolve(PlayerChamsStyle::Iridescent,true),"both depth-disabled styles published");
+    Check(constructs==6 && destroys==6 && creates==6 && preloads==2 && !alive,"six immutable visible/occluded materials and dependency loads");
+    Check(occludedParses==3,"only the three occluded material sources disable depth");
+    Check(fresnelParses==2,"both fresnel depth variants use the verified effects shader");
+    Check(Resolve() && Resolve(PlayerChamsStyle::Iridescent) && Resolve(PlayerChamsStyle::Fresnel),"all three styles published");
+    Check(Resolve(PlayerChamsStyle::Flat,true) && Resolve(PlayerChamsStyle::Iridescent,true) && Resolve(PlayerChamsStyle::Fresnel,true),"all three depth-disabled styles published");
     std::uintptr_t visible=0,hidden=0,mode=0;
     Check(PlayerChamsMaterialsResolve(PlayerChamsStyle::Flat,0x12345000,visible,mode) &&
         PlayerChamsMaterialsResolve(PlayerChamsStyle::Flat,0x12345000,hidden,mode,true) && visible!=hidden,
         "occluded resolver selects its own native binding");
+    Check(PlayerChamsMaterialsResolve(PlayerChamsStyle::Fresnel,0x12345000,visible,mode) &&
+        visible==bindings[2] &&
+        PlayerChamsMaterialsResolve(PlayerChamsStyle::Fresnel,0x12345000,hidden,mode,true) && hidden==bindings[5],
+        "fresnel selects its own visible and occluded bindings");
     for (int i=0;i<40;++i) {
         auto settings=PlayerChamsGetSettings(); settings.color[0]=i/40.0f; settings.iridescentColor[1]=i/40.0f;
+        settings.fresnelColor[2]=i/40.0f;
         PlayerChamsSetSettings(settings); PlayerChamsMaterialsOwnerFrame();
     }
-    Check(constructs==4 && creates==4 && preloads==2,"palette edits do not recreate or leak native resources");
+    Check(constructs==6 && creates==6 && preloads==2,"palette edits do not recreate or leak native resources");
     Check(!Resolve(static_cast<PlayerChamsStyle>(44)),"invalid style rejected");
     PlayerChamsMaterialsStop(); Check(!Resolve(),"stop disarms publication");
-    PlayerChamsMaterialsOwnerFrame(); Check(creates==4,"stop forbids new creation");
+    PlayerChamsMaterialsOwnerFrame(); Check(creates==6,"stop forbids new creation");
 
     Reset(); Enable(); parseSuccess=false; PlayerChamsMaterialsOwnerFrame();
     Check(constructs==1 && destroys==1 && !creates && !alive,"parse failure destroys native arena");
@@ -92,9 +109,12 @@ int main() {
     Check(!constructs && !creates && preloads==1,"dependency failure leaves draw unchanged");
     Reset(); Enable(); createSuccess=false; PlayerChamsMaterialsOwnerFrame();
     Check(constructs==1 && destroys==1 && creates==1 && !Resolve(),"null native binding cleanup");
-    Reset(); Enable(); failCreateAt=4; PlayerChamsMaterialsOwnerFrame();
-    Check(constructs==4 && destroys==4 && !Resolve() && !Resolve(PlayerChamsStyle::Flat,true),
-        "partial occluded preparation never publishes a mixed material set");
+    for (int failed=3;failed<=6;++failed) {
+        Reset(); Enable(); failCreateAt=failed; PlayerChamsMaterialsOwnerFrame();
+        Check(constructs==failed && destroys==failed && !Resolve() && !Resolve(PlayerChamsStyle::Fresnel) &&
+            !Resolve(PlayerChamsStyle::Flat,true) && !Resolve(PlayerChamsStyle::Fresnel,true),
+            "partial fresnel or occluded preparation never publishes a mixed material set");
+    }
 
     Reset(); Enable(); blockCreate=true;
     entered=CreateEventW(nullptr,TRUE,FALSE,nullptr); releaseCreate=CreateEventW(nullptr,TRUE,FALSE,nullptr);

@@ -27,13 +27,16 @@ SRWLOCK lifetime = SRWLOCK_INIT;
 std::atomic<bool> enabled{false};
 std::atomic<unsigned> phase{0}; // Idle, constructing, ready, failed.
 std::atomic<const char*> status{"Player materials not initialized."};
-struct Retained { std::uintptr_t binding = 0, material = 0; } retained[4];
+constexpr unsigned styleCount = 3;
+constexpr unsigned materialCount = styleCount * 2;
+struct Retained { std::uintptr_t binding = 0, material = 0; } retained[materialCount];
 struct KV3ID { const char* name; std::uint64_t low, high; };
 constexpr KV3ID format{"generic", 0x469806E97412167Cull, 0xE73790B53EE6F2AFull};
 constexpr const char* textures[]{"materials/dev/primary_white_color_tga_21186c76.vtex",
     "materials/default/default_normal.vtex"};
 constexpr const char* names[]{"materials/codex_player_flat.vmat", "materials/codex_player_iridescent.vmat",
-    "materials/codex_player_flat_occluded.vmat", "materials/codex_player_iridescent_occluded.vmat"};
+    "materials/codex_player_fresnel.vmat", "materials/codex_player_flat_occluded.vmat",
+    "materials/codex_player_iridescent_occluded.vmat", "materials/codex_player_fresnel_occluded.vmat"};
 constexpr const char* recipes[]{
 R"kv3(<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->
 {
@@ -60,7 +63,34 @@ R"kv3(<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} forma
  g_tIridescentThickness_Mask = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
  g_tMetalness = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
 }
+)kv3",
+R"kv3(<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:generic:version{7412167c-06e9-4698-aff2-e63eb59037e7} -->
+{
+ shader = "csgo_effects.vfx"
+ F_ADDITIVE_BLEND = 0
+ F_DEPTH_FEATHER = 0
+ F_TINT_MASK = 0
+ g_vColorTint = [ 1.0, 1.0, 1.0, 1.0 ]
+ g_bFogEnabled = 0
+ g_flColorBoost = 1.0
+ g_flOpacityScale = 1.0
+ g_flFresnelExponent = 2.0
+ g_flFresnelFalloff = 1.0
+ g_flFresnelMin = 1.0
+ g_flFresnelMax = 0.001
+ g_flFadeDistance = 1.0
+ g_flFadeFalloff = 1.0
+ g_flFadeMin = 1.0
+ g_flFadeMax = 1.0
+ g_tColor = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
+ g_tMask1 = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
+ g_tMask2 = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
+ g_tMask3 = resource:"materials/dev/primary_white_color_tga_21186c76.vtex"
+}
 )kv3"};
+static_assert(sizeof(recipes) / sizeof(*recipes) == styleCount);
+static_assert(sizeof(names) / sizeof(*names) == materialCount);
+static_assert(static_cast<unsigned>(PlayerChamsStyle::Fresnel) + 1 == styleCount);
 #ifdef CS2_PLAYER_CHAMS_MATERIAL_CHECKS
 bool testing = false;
 PlayerChamsMaterialTestApi testApi{};
@@ -143,9 +173,9 @@ bool Retain(void* output, const char* expected, Retained& result) noexcept {
 }
 bool Build(unsigned index, Retained& output) noexcept {
     alignas(16) unsigned char arena[off::ArenaSize]{};
-    const auto* baseRecipe = recipes[index % 2];
+    const auto* baseRecipe = recipes[index % styleCount];
     char occludedRecipe[4096]{};
-    if (index >= 2) {
+    if (index >= styleCount) {
         const auto* end = std::strrchr(baseRecipe, '}');
         if (!end || std::snprintf(occludedRecipe, sizeof(occludedRecipe),
             "%.*s\n F_DISABLE_Z_BUFFERING = 1\n F_DISABLE_Z_PREPASS = 1\n}\n",
@@ -157,7 +187,7 @@ bool Build(unsigned index, Retained& output) noexcept {
         construct(arena, 0);
         constructed = true;
         if (void* node = root(arena)) {
-            parsed = parse(node, nullptr, index >= 2 ? occludedRecipe : baseRecipe, &format, "", 0);
+            parsed = parse(node, nullptr, index >= styleCount ? occludedRecipe : baseRecipe, &format, "", 0);
             if (parsed) create(reinterpret_cast<void*>(manager), &binding, names[index], node, 1, true);
         }
         constructed = false;
@@ -224,7 +254,7 @@ void PlayerChamsMaterialsOwnerFrame() noexcept {
     unsigned idle = 0;
     if (!phase.compare_exchange_strong(idle, 1)) return;
     bool success = enabled.load(std::memory_order_acquire) && Current();
-    Retained prepared[4]{};
+    Retained prepared[materialCount]{};
 #ifdef CS2_PLAYER_CHAMS_MATERIAL_CHECKS
     if (testing) manager = 1;
     else
@@ -241,16 +271,16 @@ void PlayerChamsMaterialsOwnerFrame() noexcept {
             Read(table + 29 * sizeof(void*), method) && method == materialModule + off::CreateMaterial;
     }
     if (success) for (const auto* path : textures) if (!Preload(path)) { success = false; break; }
-    if (success) for (unsigned index = 0; index < 4; ++index) {
+    if (success) for (unsigned index = 0; index < materialCount; ++index) {
         if (!enabled.load(std::memory_order_acquire) || !Build(index, prepared[index])) { success = false; break; }
     }
     // Blocking resource work can dispatch render jobs. Never hold our
     // publication lock across native loading, parsing, creation, or mode calls.
     AcquireSRWLockExclusive(&lifetime);
     if (enabled.load(std::memory_order_acquire) && Current()) {
-        if (success) for (unsigned index = 0; index < 4; ++index) retained[index] = prepared[index];
+        if (success) for (unsigned index = 0; index < materialCount; ++index) retained[index] = prepared[index];
         phase.store(success ? 2u : 3u, std::memory_order_release);
-        Report(success ? "Player materials ready (native flat and iridescent)." : "Player material preparation failed; restart required to retry.");
+        Report(success ? "Player materials ready (native flat, iridescent and fresnel)." : "Player material preparation failed; restart required to retry.");
     } else phase.store(3, std::memory_order_release);
     ReleaseSRWLockExclusive(&lifetime);
 }
@@ -259,10 +289,11 @@ bool PlayerChamsMaterialsResolve(PlayerChamsStyle style, std::uintptr_t view,
     std::uintptr_t& material, std::uintptr_t& mode, bool occluded) noexcept {
     material = mode = 0;
     if (!enabled.load(std::memory_order_acquire) || phase.load(std::memory_order_acquire) != 2 ||
-        (style != PlayerChamsStyle::Flat && style != PlayerChamsStyle::Iridescent) || !view) return false;
+        (style != PlayerChamsStyle::Flat && style != PlayerChamsStyle::Iridescent &&
+            style != PlayerChamsStyle::Fresnel) || !view) return false;
     AcquireSRWLockShared(&lifetime);
     bool success = enabled.load(std::memory_order_acquire) && Current();
-    const auto snapshot = retained[static_cast<unsigned>(style)+(occluded ? 2u : 0u)];
+    const auto snapshot = retained[static_cast<unsigned>(style)+(occluded ? styleCount : 0u)];
     ReleaseSRWLockShared(&lifetime);
     const auto candidate = snapshot.material;
     std::uintptr_t table = 0, method = 0, bindingMaterial = 0;
