@@ -5,6 +5,7 @@
 #include "scoped_crosshair.h"
 #include "movement_math.h"
 #include "movement_jump.h"
+#include "movement_jumpbug.h"
 #include "movement_jump_trace.h"
 #include "movement_steering.h"
 #include "movement_command.h"
@@ -291,6 +292,21 @@ bool ReadJumpRules(const Pawn& pawn, JumpInput& input, float& interval, float& p
     return true;
 }
 
+bool JumpbugCanOwnDuck(std::uintptr_t base, const MovementButtons& buttons) noexcept {
+    if ((buttons.down | buttons.changed | buttons.third) & off::Duck) return false;
+    int size = 0;
+    std::uintptr_t rep = 0;
+    if (!Read(base + off::base::SubtickSize, size) || size < 0 || size > 128 ||
+        !Read(base + off::base::SubtickRep, rep) || (size && !rep)) return false;
+    for (int index = 0; index < size; ++index) {
+        std::uintptr_t address = 0;
+        MovementSubtick step{};
+        if (!Read(rep + 8 + static_cast<std::uintptr_t>(index) * 8, address) || !address ||
+            !Read(address, step) || ((step.presence & 1) && (step.button & off::Duck))) return false;
+    }
+    return true;
+}
+
 // Existing command messages are borrowed; additional timed transitions use
 // the verified game arena/container APIs. Original event order is preserved.
 struct Edit {
@@ -302,7 +318,7 @@ struct Patch {
     MovementButtons buttons{};
     std::uint32_t commandPresence = 0, basePresence = 0;
     float forward = 0, left = 0;
-    bool jump = false, strafe = false;
+    bool jump = false, strafe = false, duck = false;
     std::array<Edit, 128> steps{};
     int size = 0;
     int originalSize = 0;
@@ -316,7 +332,7 @@ bool Apply(const Patch& patch) noexcept {
     // Keep SEH in a function without C++ unwinding objects. The command callback
     // owns these allocations; preflight checks reject malformed/stale layouts.
     __try {
-        if (patch.jump || patch.strafe) std::memcpy(reinterpret_cast<void*>(patch.command + off::command::Buttons), &patch.buttons, sizeof(patch.buttons));
+        if (patch.jump || patch.strafe || patch.duck) std::memcpy(reinterpret_cast<void*>(patch.command + off::command::Buttons), &patch.buttons, sizeof(patch.buttons));
         if (patch.strafe) {
             std::memcpy(reinterpret_cast<void*>(patch.base + off::base::Forward), &patch.forward, sizeof(float));
             std::memcpy(reinterpret_cast<void*>(patch.base + off::base::Left), &patch.left, sizeof(float));
@@ -366,7 +382,7 @@ bool PrepareSteps(Patch& patch, const ReplayCache* saved = nullptr) noexcept {
             // pointer-order mutation; do not reorder the user's actions.
             if (step.value.when < previousOriginalWhen) return false;
             previousOriginalWhen = step.value.when;
-            MovementSanitizeSubtick(step.value, patch.jump, patch.strafe);
+            MovementSanitizeSubtick(step.value, patch.jump, patch.strafe, patch.duck);
         }
     }
     return true;
@@ -466,6 +482,7 @@ MovementReplayContext ReplayContext(const Pawn& pawn, const Patch& patch, int se
     MovementReplayContext context{};
     context.valid = true; context.held = true;
     context.bunnyhop = settings.bunnyhop; context.autostrafe = settings.autostrafe;
+    context.jumpbug = settings.jumpbug;
     context.sequence = sequence; context.commandTick = tick;
     context.grounded = (pawn.flags & off::OnGround) != 0;
     context.owner = owner; context.simulationTick = pawn.simulationTick;
@@ -540,7 +557,7 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
     const auto plan = refresh.plan;
     const auto incoming = patch.buttons;
     const auto mask = MovementReplayMask(plan);
-    patch.jump = plan.jump; patch.strafe = plan.strafe;
+    patch.jump = plan.jump; patch.strafe = plan.strafe; patch.duck = plan.jumpbug;
     patch.buttons = MovementReplayButtons(patch.buttons, plan);
     if (patch.strafe) {
         patch.forward = plan.forward; patch.left = plan.left;
@@ -627,14 +644,15 @@ void Process(void* input, void* commandPointer) noexcept {
         enabled.store(false, std::memory_order_release); Reset(); State("movement stopped by End"); return;
     }
     const auto settings = MovementGetSettings();
-    if (haveInputSettings && (inputSettings.bunnyhop != settings.bunnyhop || inputSettings.autostrafe != settings.autostrafe)) {
+    if (haveInputSettings && (inputSettings.bunnyhop != settings.bunnyhop || inputSettings.autostrafe != settings.autostrafe ||
+        inputSettings.jumpbug != settings.jumpbug)) {
         replay = {}; ResetJump(jumpState); ResetAirSteering(steeringState);
         physicalIntentState = {};
         strafeControlled = false; haveGround = false;
     }
     inputSettings = settings; haveInputSettings = true;
     const bool held = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
-    if (!held || (!settings.bunnyhop && !settings.autostrafe)) {
+    if (!held || (!settings.bunnyhop && !settings.autostrafe && !settings.jumpbug)) {
         ResetJump(jumpState); ResetAirSteering(steeringState); haveGround = false;
         physicalIntentState = {};
         strafeControlled = false; replay = {};
@@ -734,6 +752,23 @@ void Process(void* input, void* commandPointer) noexcept {
             MovementEncodeJump(patch.buttons, jump.down, jumpState.down);
         }
     }
+    // Plan once from this sequence's source state. Prediction rebuilds restore
+    // the exact landing fraction and all four transitions through RepairReplay.
+    // Physical crouch retains ownership; jumpbug never synthesizes its release.
+    MovementJumpbugResult jumpbug{};
+    if (settings.jumpbug && !grounded && pawn.velocity[2] <= 0 && JumpbugCanOwnDuck(patch.base, patch.buttons)) {
+        jumpbug = MovementProbeJumpbug(pawn.address, pawn.services, pawn.velocity, false);
+        if (jumpbug.valid && jumpbug.landing && std::isfinite(jumpbug.fraction) &&
+            jumpbug.fraction > 0 && jumpbug.fraction < 1) {
+            patch.jump = patch.duck = true;
+            // Final state after the timed crouch/release/jump sequence.
+            // The explicit edges below carry the jump even when Space was held.
+            patch.buttons.down = (patch.buttons.down | off::Jump) & ~off::Duck;
+            patch.buttons.changed = (patch.buttons.changed | off::Jump) & ~off::Duck;
+            patch.buttons.third &= ~(off::Jump | off::Duck);
+            ResetJump(nextJumpState);
+        }
+    }
     SteeringOutput strafe{};
     SteeringCommand strafeCommand{};
     MarkStage(Stage::Jump);
@@ -782,6 +817,10 @@ void Process(void* input, void* commandPointer) noexcept {
     if (!patch.jump && !patch.strafe) { State("movement physics unavailable"); return; }
     MovementReplayPlan plan{patch.jump, patch.strafe, patch.jump && (jump.fresh || jump.released),
                            jump.down, patch.forward, patch.left, patch.buttons};
+    if (patch.duck) {
+        plan.jumpbug = true; plan.landingFraction = jumpbug.fraction;
+        plan.jumpDown = true; plan.jumpEdge = false;
+    }
     if (patch.strafe) {
         plan = strafeCommand.valid ? MovementRefreshReplaySteeringCommand(plan, strafeCommand, initialDirections) :
             MovementRefreshReplaySteering(plan, patch.forward, patch.left, initialDirections);
@@ -817,8 +856,13 @@ void Process(void* input, void* commandPointer) noexcept {
     else ResetJump(jumpState);
     if (patch.strafe) steeringState = nextSteeringState;
     else ResetAirSteering(steeringState);
-    if (jump.fresh) ++presses;
-    if (jump.fresh || jump.released) {
+    if (jump.fresh || plan.jumpbug) ++presses;
+    if (plan.jumpbug) {
+        Log("MOVE_JUMPBUG sequence=%d tick=%d simtick=%u fraction=%.6f normal=%.4f,%.4f,%.4f; predicted landing only",
+            sequence, tick, pawn.simulationTick, plan.landingFraction,
+            jumpbug.normal[0], jumpbug.normal[1], jumpbug.normal[2]);
+    }
+    if (!plan.jumpbug && (jump.fresh || jump.released)) {
         Log("MOVE_JUMP sequence=%d tick=%d simtick=%u ground=%u down=%u fresh=%u release=%u ack=%u phase=%u actual=%d/%.6f usable=%d/%.6f landed=%d/%.6f engine_down=%u penalty=%.6f window=%.6f legacy=%u auto=%u",
             sequence, tick, pawn.simulationTick, grounded, jump.down, jump.fresh, jump.released, jump.acknowledged, static_cast<unsigned>(jump.phase),
             jumpInput.actual.tick, jumpInput.actual.fraction, jumpInput.usable.tick, jumpInput.usable.fraction,
@@ -827,14 +871,14 @@ void Process(void* input, void* commandPointer) noexcept {
     ++modified; strafes += strafe.valid;
     if (groundHandoff) Log("MOVE_GROUND_HANDOFF sequence=%d tick=%d history=%.5f,%.5f physical=%.5f,%.5f speed=%.3f; restore physical axes before ground integration",
         sequence, tick, historicalForward, historicalLeft, patch.forward, patch.left, speed);
-    State(strafe.valid ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
+    State(plan.jumpbug ? "jumpbug landing timing" : strafe.valid ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
     const auto now = GetTickCount64();
     if (!lastReport || now - lastReport >= 2000) {
         lastReport = now;
         std::uint8_t precision = 0;
         const bool rules = Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::JumpPrecision, precision);
         Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u target_heading=%.3f predicted_valid=%u predicted_speed=%.3f air_handoff=%u slices=%zu",
-            sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], jump.down, jump.fresh,
+            sequence, tick, grounded, speed, pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], plan.jumpDown, jump.fresh || plan.jumpbug,
             patch.strafe, patch.forward, patch.left, intent.forward, intent.left, yaw, strafe.wishYaw, strafe.accelerationStep,
             patch.buttons.down, patch.buttons.changed, patch.buttons.third, patch.size, callbacks, modified, presses, strafes, rejected,
             physics.wishSpeedCap, physics.acceleration, physics.wishSpeed, physics.surfaceFriction, physics.interval,
@@ -981,10 +1025,11 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     if (queue != MH_OK) { Log("MOVE_HOOK_FAILED queue=%s", MH_StatusToString(queue)); State("command hook queue failed"); return false; }
     jumpTracePrepared = MovementJumpTracePrepare(MovementTelemetryPush);
     if (!jumpTracePrepared) Log("MOVE_JUMP_TRACE_UNAVAILABLE; assistance remains enabled with command/ingestion telemetry");
+    if (!MovementJumpbugPrepare(client)) Log("MOVE_JUMPBUG_UNAVAILABLE; bunnyhop and autostrafe remain available");
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=10 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=axion_wasd smooth=50 stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_axes replay_jump=sequence_stable replay_steering=frozen_input_refresh subticks=command1", static_cast<unsigned long long>(off::LegacyJump));
+    Log("MOVE_IMPLEMENTATION revision=11 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=velocity_timed stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_axes replay_jump=sequence_stable replay_steering=frozen_input_refresh subticks=%zu jumpbug=independent", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

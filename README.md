@@ -3,7 +3,7 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-eight
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-nine
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -22,6 +22,32 @@ evidence and validation. No client/server was launched; live behavior remains
 unobserved. Use the existing **Load Overlay.cmd** workflow, restarting CS2
 normally first if an older DLL is resident. Stopped and resident is not
 physically unloaded.
+
+## Timed autostrafe and jumpbug - October 23, 2026
+
+Autostrafe now uses an independent adaptation of the linked Velocity algorithm:
+32 timed wishes per command, with physics-dependent ideal angles and velocity
+prediction between slices. Physical WASD selects the heading; releasing it keeps
+normal coasting. Existing F9 and hold-Space controls still apply.
+
+Under **Movement**, **Jumpbug (hold Space)** is a separate option, disabled by
+default and saved as `movement.jumpbug`. It can run with bunnyhop disabled. A
+verified native player-hull trace predicts a descending, near-flat landing and
+schedules crouch/release/jump transitions at that fraction. Physical crouch
+input takes priority. Repeated command rebuilds retain the chosen transitions.
+These predictions do not establish reliable jumpbugs or fall-damage avoidance.
+
+Build and load with the existing **Load Overlay.cmd** workflow. Restart CS2
+normally before loading a rebuilt DLL if an older copy remains resident;
+stopped and resident is not physically unloaded. See [implementation and source
+references](docs/MOVEMENT_VELOCITY.md). Live behavior remains unobserved.
+
+**Verification:** public and diagnostic x64 Release builds succeed without
+project warnings; each passes **58/58 CTest suites**. All **29/29 installed-file
+checks** pass, including the new movement hull trace contract. All 17 altered
+jumpbug offset/fingerprint headers reject. The standalone Movement menu preview
+was inspected. Both DLLs retain zero static TLS/delay imports. No client/server
+was launched.
 
 ## Aim consistency and quickstop - October 22, 2026
 
@@ -1561,7 +1587,7 @@ isolate jumping. Logs identify `MOVE_IMPLEMENTATION revision=9`, and
 `MOVE_REPLAY` includes `clock_corrections` with the current/prior command clocks.
 See [movement evidence](tools/CS2_MOVEMENT_EVIDENCE.md#october-16-revision-9-prediction-correction-fix).
 
-**October 22, revision 10: Axion autostrafe port.** Autostrafe now uses the
+**October 22, revision 10: Axion autostrafe port (superseded by revision 11 above).** This revision used the
 MIT-licensed Axion steering algorithm: `atan2(15, horizontal speed)` with a
 45-degree clamp, velocity-yaw correction above speed 80, and command-sequence
 parity to alternate near the requested heading. Smoothing is now **50**, giving

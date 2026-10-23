@@ -607,6 +607,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("F6 third person: %s | F7 armor: %s", ThirdPersonGetSettings().enabled ? "ON" : "OFF", settings.armor ? "ON" : "OFF");
         const auto movement = MovementGetSettings();
         ImGui::Text("F8 bunnyhop: %s | F9 autostrafe: %s | hold Space", movement.bunnyhop ? "ON" : "OFF", movement.autostrafe ? "ON" : "OFF");
+        ImGui::Text("Jumpbug: %s | hold Space", movement.jumpbug ? "ON" : "OFF");
         if (!players.distanceAvailable) ImGui::TextUnformatted("Distance unavailable: awaiting local live pawn.");
         ImGui::Separator();
         ImGui::TextUnformatted("Insert: panel   End: stop");

@@ -2,7 +2,8 @@
 
 Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
-Version date: October 22, 2026, 14:13:16. All **28/28** installed-file checks pass.
+Version date: October 22, 2026, 14:13:16. All **29/29** installed-file checks pass,
+including the subsequently added jumpbug landing-hull contract.
 These are exact-build constants. Runtime rendering/gameplay remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
@@ -85,6 +86,25 @@ client.dll; CCSGOInput history slot and native protobuf producer/consumer, prese
 | `HistorySlot` | `0x19` |
 | `HistorySize` | `0x30` |
 | `Attack1Index` | `0x4C` |
+
+## Jumpbug landing hull
+
+Header: [movement_jumpbug_offsets.h](../include/movement_jumpbug_offsets.h);
+verifier: [inspect_jumpbug.py](../tools/inspect_jumpbug.py);
+[evidence](../tools/CS2_JUMPBUG_EVIDENCE.md).
+
+client.dll; native movement filter and bbox callers, ground-result consumers,
+actual-gravity schema/integration operand, named cvars and crouch-input decoding.
+
+| Symbol | Current value |
+| --- | --- |
+| `InitializeFilter` | `0x8BE590` |
+| `TraceHull` | `0x8E15D0` |
+| `InitializeTrace` | `0x177B560` |
+| `TraceCache` (services member) | `0x7B0` |
+| `TraceNormal` / `TraceFraction` / `TraceSolid` | `0x90` / `0xAC` / `0xBB` |
+| `ActualGravityScale` / `CollisionMask` (pawn members) | `0x564` / `0xD50` |
+| `Gravity` / `StandableNormal` (cvar wrappers) | `0x23BF1C0` / `0x25344A0` |
 
 ## Anti aim and replay
 

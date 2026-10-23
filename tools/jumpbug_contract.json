@@ -1,0 +1,76 @@
+{
+  "client_sha256": "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5",
+  "constants": {
+    "InitializeFilter": 9168272,
+    "TraceHull": 9311696,
+    "InitializeTrace": 24622432,
+    "TraceCache": 1968,
+    "Gravity": 37482944,
+    "StandableNormal": 39011488,
+    "ActualGravityScale": 1380,
+    "CollisionMask": 3408,
+    "TraceNormal": 144,
+    "TraceFraction": 172,
+    "TraceSolid": 187,
+    "FilterSize": 72,
+    "TraceSize": 192,
+    "Duck": 4
+  },
+  "windows": {
+    "movement_filter": {
+      "rva": 9168272,
+      "size": 339,
+      "sha256": "6aff7694b0aaa9749b007ac56c627a90f5d06cc365f9e1b692e3d516d9a0951e"
+    },
+    "movement_bbox": {
+      "rva": 9311696,
+      "size": 1174,
+      "sha256": "9a5d7ba4a76720d5ce43f443b2eae10e6b3797ddbc75d6482587016dc40f5510"
+    },
+    "bbox_fallback": {
+      "rva": 9309968,
+      "size": 1690,
+      "sha256": "b27d8cc8d018b15f8229fb2478aa8328cb6287063dba3c481b93748b3e349044"
+    },
+    "trace_initializer": {
+      "rva": 24622432,
+      "size": 600,
+      "sha256": "a1f6a950d807695ccec68cacba93b8d5544e68bf99916eb26327e0da931b7546"
+    },
+    "mask_getter": {
+      "rva": 9313424,
+      "size": 94,
+      "sha256": "c6cdf3b13769442ad3d158f130af68bb4b21125857b96cc46a3d9cd89bb82e57"
+    },
+    "ground_trace_consumer": {
+      "rva": 9334352,
+      "size": 797,
+      "sha256": "2eaac20bce14e0c0846d81cd89f3852ba8f508bd49d8d588403b60cc2b90cf7e"
+    },
+    "half_gravity": {
+      "rva": 9307074,
+      "size": 53,
+      "sha256": "a34275231868873d8c531741a25b4099e06ee359ffcbe6dac384e1476c74ad37"
+    },
+    "duck_button": {
+      "rva": 9215389,
+      "size": 18,
+      "sha256": "591ad9680426d7a19144f032cc77ee45a540c350611ba85e7f3c2019ea981c36"
+    },
+    "gravity_registration": {
+      "rva": 441090,
+      "size": 80,
+      "sha256": "634051e175f88313bc60793145f39fc77dcd54b32bd7cb5420417a2dd0db77ac"
+    },
+    "normal_registration": {
+      "rva": 732130,
+      "size": 114,
+      "sha256": "82ded07ac82d1b13aebc7dab065a7a273eccacff5d0c64b9d75fcadf5bfbe5c4"
+    }
+  },
+  "prefixes": {
+    "InitializeFilter": "48895c24084889742410574883ec200fb6413933ffc74134ffff000f24c966c7",
+    "TraceHull": "48897424185557415441554156488dac2460ffffff4881eca00100004c8bb5f0",
+    "InitializeTrace": "4055415541574883ec304c8b3defa7fb004533ed488be94d85ff0f858e010000"
+  }
+}

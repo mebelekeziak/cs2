@@ -36,12 +36,12 @@ int main() {
                 SteeringOutput output{};
                 if (whole) {
                     const auto command = PlanAirSteeringCommand(state, input, physics[i % physics.size()]);
-                    validCounts &= hasIntent ? command.valid && command.count == 1 : !command.valid && !command.count;
+                    validCounts &= hasIntent ? command.valid && command.count == AirSteeringSliceCount : !command.valid && !command.count;
                     output = command.summary;
 #ifdef CS2_STEERING_BENCHMARK
                     const unsigned int count = SteeringCommandEvaluationsForBenchmark();
                     maximumCommandEvaluations = std::max(maximumCommandEvaluations, count);
-                    validCounts &= hasIntent ? count == 1 : count == 0;
+                    validCounts &= hasIntent ? count == AirSteeringSliceCount : count == 0;
 #endif
                 } else {
                     output = PlanAirSteering(state, input, physics[i % physics.size()]);
@@ -55,14 +55,14 @@ int main() {
             }
             const double microseconds = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
             std::printf("path=%s trial=%d commands=%d us_per_command=%.6f checksum=%.9f\n",
-                        whole ? "axion_single_command" : "axion_direct_planner", trial + 1,
+                        whole ? "velocity_timed_command" : "velocity_direct_planner", trial + 1,
                         commands, microseconds / commands, checksum);
         }
     }
 #ifdef CS2_STEERING_BENCHMARK
-    std::printf("maximum_fragment_candidate_evaluations=%u bound=1 maximum_command_candidate_evaluations=%u bound=1 exact_counts=%s\n",
+    std::printf("maximum_fragment_candidate_evaluations=%u bound=1 maximum_command_candidate_evaluations=%u bound=32 exact_counts=%s\n",
                 maximumFragmentEvaluations, maximumCommandEvaluations, validCounts ? "pass" : "fail");
-    return !validCounts || maximumFragmentEvaluations > 1 || maximumCommandEvaluations > 1 ? 1 : 0;
+    return !validCounts || maximumFragmentEvaluations > 1 || maximumCommandEvaluations > AirSteeringSliceCount ? 1 : 0;
 #else
     (void)maximumFragmentEvaluations; (void)maximumCommandEvaluations;
     return validCounts ? 0 : 1;

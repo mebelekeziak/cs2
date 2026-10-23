@@ -50,6 +50,7 @@ def component_commands(game):
         ("grenade_areas", "inspect_grenade_areas.py", ["--game", str(game)]),
         ("grenade_effects", "inspect_grenade_effects.py", ["--client", client]),
         ("movement", "inspect_movement.py", ["--client", client]),
+        ("jumpbug", "inspect_jumpbug.py", ["--client", client]),
         ("silent_aim", "inspect_silent_aim.py", ["--client", client]),
         ("anti_aim", "inspect_anti_aim.py", ["--client", client]),
         ("third_person", "inspect_third_person.py", ["--client", client]),
@@ -135,6 +136,8 @@ def main():
                     ROOT / "src/scope_overlay.cpp", ROOT / "src/scoped_crosshair.cpp",
                     ROOT / "tools/verify_player_chams_materials.py",
                     ROOT / "tools/aim_autowall_contract.json",
+                    ROOT / "tools/jumpbug_contract.json",
+                    ROOT / "src/movement_jumpbug.cpp",
                     *(ROOT / "tools" / script for _, script, _ in component_commands(game)),
                     ROOT / "tools/check_compatibility.py"]
     snapshot["source_sha256"] = {

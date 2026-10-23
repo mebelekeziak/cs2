@@ -534,6 +534,7 @@ void DrawPublicMenu() {
             if (ImGui::BeginChild("##MovementSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Auto bunnyhop (hold Space)", settings.bunnyhop);
                 changed |= FeatureCheckbox("Aggressive autostrafe (hold Space)", settings.autostrafe);
+                changed |= FeatureCheckbox("Jumpbug (hold Space)", settings.jumpbug);
                 ImGui::Separator();
                 ImGui::TextDisabled("WASD  Direction and speed gain");
                 ImGui::TextDisabled("Release  No autostop");

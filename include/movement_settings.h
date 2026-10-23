@@ -3,6 +3,7 @@
 struct MovementSettings {
     bool bunnyhop = true;
     bool autostrafe = true;
+    bool jumpbug = false;
 };
 using MovementLogCallback = void (*)(const char* message);
 

@@ -35,7 +35,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/anti_aim_settings.cpp src/anti_aim_math.cpp src/anti_aim_command.cpp src/anti_aim_view.cpp src/anti_aim_boundary.cpp src/anti_aim_history.cpp src/anti_aim.cpp
   src/silent_aim.cpp src/silent_aim_settings.cpp src/silent_aim_math.cpp src/silent_aim_command.cpp src/silent_aim_target.cpp
   src/movement_settings.cpp src/movement_math.cpp src/movement.cpp src/movement_command.cpp src/quickstop_command.cpp
-  src/movement_jump.cpp src/movement_steering.cpp src/movement_telemetry.cpp src/movement_jump_trace.cpp
+  src/movement_jump.cpp src/movement_jumpbug.cpp src/movement_steering.cpp src/movement_telemetry.cpp src/movement_jump_trace.cpp
   src/world_settings.cpp src/world_postprocess.cpp src/world_sky.cpp src/world_materials.cpp
   src/world_lighting_switches.cpp src/world_lighting.cpp src/world_environment_lighting.cpp)
 if(NOT CS2_DIAGNOSTIC_UI)
@@ -305,6 +305,11 @@ if(BUILD_TESTING)
   target_include_directories(jump_checks PRIVATE include)
   target_compile_options(jump_checks PRIVATE /W4)
   add_test(NAME jump_checks COMMAND jump_checks)
+  add_executable(jumpbug_checks tests/jumpbug_checks.cpp src/movement_jumpbug.cpp)
+  target_include_directories(jumpbug_checks PRIVATE include)
+  target_compile_definitions(jumpbug_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_JUMPBUG_CHECKS)
+  target_compile_options(jumpbug_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME jumpbug_checks COMMAND jumpbug_checks)
   add_executable(steering_checks tests/steering_checks.cpp src/movement_steering.cpp)
   target_include_directories(steering_checks PRIVATE include)
   target_compile_options(steering_checks PRIVATE /W4)

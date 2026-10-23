@@ -50,7 +50,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(esp, nameFont); FIELD(esp, nameSize); FIELD(esp, detailSize); COLOR(esp, detailColor);
     FIELD(esp, textOutline); COLOR(esp, outlineColor); COLOR(esp, healthColor);
     FIELD(esp, healthGradient); COLOR(esp, healthLowColor); FIELD(esp, healthBarWidth); FIELD(esp, healthText);
-    FIELD(movement, bunnyhop); FIELD(movement, autostrafe);
+    FIELD(movement, bunnyhop); FIELD(movement, autostrafe); FIELD(movement, jumpbug);
     FIELD(world, enabled); FIELD(world, exposureEv); FIELD(world, contrast);
     FIELD(world, saturation); FIELD(world, gamma); COLOR(world, tint);
     FIELD(world, vignette); FIELD(world, sharpening); FIELD(world, skyEnabled);

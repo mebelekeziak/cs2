@@ -124,7 +124,7 @@ int main() {
     current.simulationTick += 1;
     Expect(MovementCanReplay(cached, current), "same source command can rebuild as predicted simulation advances");
     bool invalidated = true;
-    for (int change = 0; change < 16; ++change) {
+    for (int change = 0; change < 17; ++change) {
         current = cached;
         switch (change) {
         case 0: current.held = false; break;
@@ -143,6 +143,7 @@ int main() {
         case 13: ++current.controllerIdentity; break;
         case 14: ++current.pawnHandle; break;
         case 15: ++current.controllerHandle; break;
+        case 16: current.jumpbug = true; break;
         }
         invalidated &= !MovementCanReplay(cached, current);
     }
@@ -228,20 +229,15 @@ int main() {
     steeringStart.directions = off::Forward;
     auto initialState = steeringStart.state;
     auto initialSteering = PlanAirSteeringCommand(initialState, steeringStart.input, steeringStart.physics);
-    Expect(initialSteering.valid && initialSteering.count == 1,
-        "Axion planner publishes one wish per command for the existing time-zero replay path");
-    const auto singleAirPlan = MovementRefreshReplaySteeringCommand(press, initialSteering, steeringStart.directions);
-    MovementSubtick singleEvent{}; bool singleActive = false;
-    Expect(singleAirPlan.analogCount == 1 && MovementReplayTransition(singleAirPlan, 0, -0.3f, 0.4f,
-        singleEvent, singleActive) && singleActive && singleEvent.when == 0 &&
-        std::abs(-0.3f + singleEvent.forwardDelta - initialSteering.summary.forward) < 0.00001f &&
-        std::abs(0.4f + singleEvent.leftDelta - initialSteering.summary.left) < 0.00001f,
-        "one time-zero Axion delta replaces historical axes and preserves the separate jump event");
-    // Synthetic legacy-capacity fixture: repeat one fixed wish to exercise all
-    // eight pool slots, ordering and retirement independently of planner count.
-    // Integrating the same wish in fragments still consumes one tick's budget.
-    initialSteering.count = AirSteeringSliceCount;
-    initialSteering.slices.fill(initialSteering.summary);
+    Expect(initialSteering.valid && initialSteering.count == AirSteeringSliceCount,
+        "Velocity planner publishes every timed wish from the real command integration");
+    const auto firstAirPlan = MovementRefreshReplaySteeringCommand(press, initialSteering, steeringStart.directions);
+    MovementSubtick firstEvent{}; bool firstActive = false;
+    Expect(firstAirPlan.analogCount == AirSteeringSliceCount && MovementReplayTransition(firstAirPlan, 0, -0.3f, 0.4f,
+        firstEvent, firstActive) && firstActive && firstEvent.when == 0 &&
+        std::abs(-0.3f + firstEvent.forwardDelta - initialSteering.slices[0].forward) < 0.00001f &&
+        std::abs(0.4f + firstEvent.leftDelta - initialSteering.slices[0].left) < 0.00001f,
+        "first timed wish replaces historical axes while preserving the separate jump event");
     auto initialAirPlan = press;
     initialAirPlan = MovementRefreshReplaySteeringCommand(initialAirPlan, initialSteering, steeringStart.directions);
     MovementReplayIntent initialIntent{1, 0, 0, true, keys::Forward};
@@ -333,8 +329,9 @@ int main() {
     Expect(acquireAir.refreshed && acquireAir.steering.valid && acquireAir.plan.strafe && sameJump(press, acquireAir.plan),
         "a new WASD press can acquire air steering in a command that originally had no directional assistance");
 
-    std::array<MovementSubtick, MovementReplayEventCount> timedEvents{};
-    std::array<bool, MovementReplayEventCount> activeEvents{};
+    constexpr std::size_t ordinaryEventCount = AirSteeringSliceCount + 1;
+    std::array<MovementSubtick, ordinaryEventCount> timedEvents{};
+    std::array<bool, ordinaryEventCount> activeEvents{};
     bool timedTransitionsValid = initialAirPlan.analogCount == AirSteeringSliceCount;
     float effectiveForward = -0.3f, effectiveLeft = 0.4f;
     for (std::size_t index = 0; index < timedEvents.size(); ++index) {
@@ -351,7 +348,7 @@ int main() {
     Expect(timedTransitionsValid && near(effectiveForward, initialAirPlan.forward) &&
         near(effectiveLeft, initialAirPlan.left) && activeEvents[MovementReplayJumpEventIndex] &&
         timedEvents[MovementReplayJumpEventIndex].button == off::Jump && !timedEvents[MovementReplayJumpEventIndex].when,
-        "eight timed analog deltas reach every planned axis in order and keep the jump as a separate time-zero event");
+        "all timed analog deltas reach every planned axis in order and keep the jump as a separate time-zero event");
 
     // Decode emitted analog events and independently integrate their actual
     // time fractions. The base axes arrive only after these slices execute.
@@ -380,9 +377,9 @@ int main() {
         std::abs(integratedX - initialSteering.summary.predictedVelocityX) < 0.002 &&
         std::abs(integratedY - initialSteering.summary.predictedVelocityY) < 0.002 &&
         std::abs(integratedImpulse - initialSteering.summary.accelerationStep) < 0.002,
-        "independent event integration matches the eight-slice prediction without spending more than one tick's acceleration");
+        "independent event integration matches real command prediction within one tick's acceleration budget");
 
-    std::array<MovementSubtickOrderEntry, MovementReplayEventCount + 6> unordered{};
+    std::array<MovementSubtickOrderEntry, ordinaryEventCount + 6> unordered{};
     const std::array<float, 6> originalTimes{0, 0.25f, 0.5f, 0.5f, 0.93f, 1};
     for (std::size_t index = 0; index < originalTimes.size(); ++index)
         unordered[index] = {0x5000 + index, originalTimes[index], false};
@@ -417,7 +414,7 @@ int main() {
         "invalid generated timing is rejected without a partially rewritten pointer stream");
 
     messages.clear(); allocator = 0x2000;
-    std::array<MovementReplayStep, MovementReplayEventCount> timedOwned{};
+    std::array<MovementReplayStep, ordinaryEventCount> timedOwned{};
     bool everyTimedReplayStable = true;
     for (int frame = 0; frame < 10000; ++frame) {
         const float historyForward = frame & 1 ? 0.9f : -0.3f, historyLeft = frame & 1 ? -0.1f : 0.4f;
@@ -432,10 +429,10 @@ int main() {
                     near(effectiveLeft, initialSteering.slices[index].left);
             }
         }
-        everyTimedReplayStable &= messages.size() == MovementReplayEventCount;
+        everyTimedReplayStable &= messages.size() == ordinaryEventCount;
     }
-    Expect(everyTimedReplayStable && allocator == 0x2000 + MovementReplayEventCount,
-        "10000 eight-slice rebuilds reuse exactly nine owned events and refresh only the first historical delta");
+    Expect(everyTimedReplayStable && allocator == 0x2000 + ordinaryEventCount,
+        "10000 command rebuilds reuse all owned analog/jump events and refresh only the first historical delta");
     const auto priorTimedAddresses = timedOwned;
     messages.erase(std::remove_if(messages.begin(), messages.end(), [&](const auto& message) {
         return message.address == timedOwned[2].address || message.address == timedOwned[5].address;
@@ -445,7 +442,7 @@ int main() {
         MovementReplayTransition(initialAirPlan, index, 0, 0, event, active);
         Reconcile(messages, timedOwned[index], event, allocator);
     }
-    Expect(messages.size() == MovementReplayEventCount && allocator == 0x2000 + MovementReplayEventCount + 2 &&
+    Expect(messages.size() == ordinaryEventCount && allocator == 0x2000 + ordinaryEventCount + 2 &&
         timedOwned[0].address == priorTimedAddresses[0].address && timedOwned[2].address != priorTimedAddresses[2].address &&
         timedOwned[5].address != priorTimedAddresses[5].address &&
         timedOwned[MovementReplayJumpEventIndex].address == priorTimedAddresses[MovementReplayJumpEventIndex].address,
@@ -455,7 +452,7 @@ int main() {
     for (std::size_t index = 0; index < expectedCommand.count; ++index)
         fullCommandRefresh &= near(retarget.plan.analogs[index].forward, expectedCommand.slices[index].forward) &&
             near(retarget.plan.analogs[index].left, expectedCommand.slices[index].left);
-    Expect(fullCommandRefresh, "changed physical intent replaces legacy slices with one frozen-start Axion wish and retains the jump edge");
+    Expect(fullCommandRefresh, "changed physical intent refreshes every timed wish from command start and retains the jump edge");
     bool retiredSlicesNeutral = releaseRefresh.plan.analogCount == 1;
     unsigned activeAfterRelease = 0;
     for (std::size_t index = 0; index < timedOwned.size(); ++index) {
@@ -467,7 +464,7 @@ int main() {
             retiredSlicesNeutral &= !active && event.presence == 4 && !event.button && !event.when &&
                 !event.forwardDelta && !event.leftDelta;
     }
-    Expect(retiredSlicesNeutral && activeAfterRelease == 2 && messages.size() == MovementReplayEventCount &&
+    Expect(retiredSlicesNeutral && activeAfterRelease == 2 && messages.size() == ordinaryEventCount &&
         sameJump(initialAirPlan, releaseRefresh.plan),
         "WASD release retains one time-zero analog handoff and the cached jump while neutralizing every later owned slice");
     const auto groundHandoffPlan = MovementRefreshReplaySteering(initialAirPlan, 1, 0, initialAirPlan.buttons.down);
@@ -485,5 +482,125 @@ int main() {
         !MovementReplayAnalogTransition(badSliceOrder, 2, 0, 0, untouchedEvent) &&
         untouchedEvent.button == 1 && untouchedEvent.presence == 7,
         "oversized or nonincreasing analog plans fail validation without replacing an existing event payload");
+
+    auto jumpbugPlan = initialAirPlan;
+    jumpbugPlan.jumpbug = true; jumpbugPlan.landingFraction = 0.375f;
+    jumpbugPlan.buttons.down = (jumpbugPlan.buttons.down | off::Jump) & ~off::Duck;
+    jumpbugPlan.buttons.changed |= off::Jump | off::Duck;
+    jumpbugPlan.buttons.third &= ~(off::Jump | off::Duck);
+    MovementSubtick suppressedJump{}; bool suppressedActive = true;
+    Expect(MovementReplayTransition(jumpbugPlan, MovementReplayJumpEventIndex, 0, 0,
+        suppressedJump, suppressedActive) && !suppressedActive && suppressedJump.presence == 4 &&
+        !suppressedJump.button && MovementReplayMask(jumpbugPlan) == (off::Directions | off::Jump | off::Duck),
+        "jumpbug owns jump/duck and suppresses the ordinary jump edge without changing its cached identity");
+    auto duckOnlyPlan = jumpbugPlan; duckOnlyPlan.jump = duckOnlyPlan.strafe = false;
+    Expect(MovementReplayMask(duckOnlyPlan) == (off::Jump | off::Duck),
+        "jumpbug controls both buttons independently of bunnyhop and steering settings");
+    const MovementButtons physicalActions{off::Duck | off::Right | 1, off::Duck | 1, off::Jump | off::Duck | 0x100};
+    const auto jumpbugButtons = MovementReplayButtons(physicalActions, jumpbugPlan);
+    Expect((jumpbugButtons.down & (off::Jump | off::Duck)) == off::Jump &&
+        (jumpbugButtons.changed & (off::Jump | off::Duck)) == (off::Jump | off::Duck) &&
+        !(jumpbugButtons.third & (off::Jump | off::Duck)) && (jumpbugButtons.down & 1) &&
+        (jumpbugButtons.changed & 1) && (jumpbugButtons.third & 0x100),
+        "jumpbug publishes its final jump-held duck-released masks and preserves unrelated native actions");
+
+    std::array<MovementSubtick, 4> bugEvents{};
+    bool exactBugTiming = true;
+    for (std::size_t index = 0; index < bugEvents.size(); ++index) {
+        bool active = false;
+        exactBugTiming &= MovementReplayTransition(jumpbugPlan, MovementReplayJumpbugEventIndex + index,
+            0, 0, bugEvents[index], active) && active && bugEvents[index].presence == 7 &&
+            bugEvents[index].button == (index < 2 ? off::Duck : off::Jump) &&
+            bugEvents[index].pressed == (index == 0 || index == 3) &&
+            bugEvents[index].when == (index ? jumpbugPlan.landingFraction : 0);
+    }
+    Expect(exactBugTiming,
+        "jumpbug serializes duck down at zero then duck up, jump up and jump down at the exact landing fraction");
+
+    std::array<MovementSubtickOrderEntry, 7> bugUnordered{};
+    bugUnordered[0] = {0x7100, 0, false};
+    bugUnordered[1] = {0x7101, jumpbugPlan.landingFraction, false};
+    bugUnordered[2] = {0x7102, jumpbugPlan.landingFraction, false};
+    for (std::size_t index = 0; index < bugEvents.size(); ++index)
+        bugUnordered[index + 3] = {0x7200 + index, bugEvents[index].when, true};
+    std::array<std::uintptr_t, bugUnordered.size()> bugOrdered{};
+    const std::array<std::uintptr_t, 7> expectedBugOrder{0x7200, 0x7100, 0x7201, 0x7202, 0x7203, 0x7101, 0x7102};
+    Expect(MovementOrderSubticks(bugUnordered, bugOrdered) && bugOrdered == expectedBugOrder,
+        "equal-time jumpbug release/press order is stable ahead of original camera and attack events");
+
+    bool invalidBugRejected = true;
+    for (const auto fraction : {0.0f, 1.0f, -0.001f, 1.001f,
+        std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        auto invalidBugPlan = jumpbugPlan; invalidBugPlan.landingFraction = fraction;
+        for (std::size_t index = 0; index < MovementReplayEventCount; ++index) {
+            MovementSubtick saved{}; saved.presence = 0x67; saved.button = 1; saved.yawDelta = 2;
+            bool savedActive = true;
+            invalidBugRejected &= !MovementReplayTransition(invalidBugPlan, index, 0, 0, saved, savedActive) &&
+                saved.presence == 0x67 && saved.button == 1 && saved.yawDelta == 2 && savedActive;
+        }
+    }
+    Expect(invalidBugRejected,
+        "invalid landing fractions reject every jumpbug event before touching existing payload or activity output");
+
+    MovementSubtick mixedDuck{};
+    mixedDuck.presence = 0x7f; mixedDuck.button = off::Duck | off::Jump | 1; mixedDuck.pressed = true;
+    mixedDuck.when = 0.25f; mixedDuck.pitchDelta = 1.5f; mixedDuck.yawDelta = -2;
+    mixedDuck.forwardDelta = 0.4f; mixedDuck.leftDelta = -0.2f;
+    auto unmanagedDuck = mixedDuck;
+    MovementSanitizeSubtick(unmanagedDuck, true, false);
+    Expect(unmanagedDuck.button == (off::Duck | 1) && unmanagedDuck.pressed && unmanagedDuck.presence == 0x7f,
+        "ordinary bunnyhop sanitization preserves unowned duck and other actions");
+    MovementSanitizeSubtick(mixedDuck, true, false, true);
+    Expect(mixedDuck.button == 1 && mixedDuck.pressed && mixedDuck.presence == 0x7f &&
+        mixedDuck.when == 0.25f && mixedDuck.pitchDelta == 1.5f && mixedDuck.yawDelta == -2 &&
+        mixedDuck.forwardDelta == 0.4f && mixedDuck.leftDelta == -0.2f,
+        "jumpbug strips only owned jump/duck from mixed camera, attack and analog input");
+    mixedDuck.button = off::Duck;
+    MovementSanitizeSubtick(mixedDuck, false, false, true);
+    Expect(!mixedDuck.button && !mixedDuck.pressed && mixedDuck.presence == 0x7c &&
+        mixedDuck.pitchDelta == 1.5f && mixedDuck.yawDelta == -2 && mixedDuck.when == 0.25f,
+        "duck-only button removal clears button/pressed presence while retaining timing and camera payload");
+
+    const auto bugRetarget = MovementPlanReplaySteering(steeringStart, initialIntent, leftIntent, jumpbugPlan);
+    const auto bugRelease = MovementPlanReplaySteering(steeringStart, leftIntent, releasedIntent, bugRetarget.plan);
+    const auto bugRetained = MovementPlanReplaySteering(steeringStart, releasedIntent, releasedIntent, bugRelease.plan);
+    Expect(bugRetarget.refreshed && bugRelease.refreshed && !bugRetained.refreshed &&
+        bugRetarget.plan.jumpbug && bugRelease.plan.jumpbug && bugRetained.plan.jumpbug &&
+        bugRetarget.plan.landingFraction == jumpbugPlan.landingFraction &&
+        bugRelease.plan.landingFraction == jumpbugPlan.landingFraction &&
+        bugRetained.plan.landingFraction == jumpbugPlan.landingFraction && sameJump(jumpbugPlan, bugRetained.plan) &&
+        !((jumpbugPlan.buttons.down ^ bugRetained.plan.buttons.down) & off::Duck),
+        "steering retarget, physical release and unchanged replay retain the selected jumpbug timing and button plan");
+    messages.clear(); allocator = 0x8000;
+    std::array<MovementReplayStep, 4> bugOwned{};
+    auto bugContext = airContext; bugContext.jumpbug = true;
+    bool stableBug = true;
+    for (int frame = 0; frame < 10000; ++frame) {
+        current = bugContext; current.grounded = (frame & 1) != 0;
+        current.commandTick += frame % 3; current.simulationTick -= frame % 5;
+        stableBug &= MovementCanReplay(bugContext, current);
+        for (std::size_t index = 0; index < bugOwned.size(); ++index) {
+            MovementSubtick event{}; bool active = false;
+            stableBug &= MovementReplayTransition(bugRetained.plan, MovementReplayJumpbugEventIndex + index,
+                frame & 1 ? -1.0f : 1.0f, 0, event, active) && active;
+            Reconcile(messages, bugOwned[index], event, allocator);
+            stableBug &= event.button == bugEvents[index].button && event.pressed == bugEvents[index].pressed &&
+                event.when == bugEvents[index].when;
+        }
+    }
+    Expect(stableBug && messages.size() == 4 && allocator == 0x8004,
+        "10000 prediction rewinds retain exactly four jumpbug messages with unchanged landing timing");
+    auto disabledBugContext = bugContext; disabledBugContext.jumpbug = false;
+    Expect(!MovementCanReplay(bugContext, disabledBugContext),
+        "toggling jumpbug invalidates cached timing even if every command and pawn identity remains unchanged");
+    bool retiredBugNeutral = true;
+    for (std::size_t index = 0; index < bugOwned.size(); ++index) {
+        MovementSubtick event{}; bool active = true;
+        retiredBugNeutral &= MovementReplayTransition(initialAirPlan, MovementReplayJumpbugEventIndex + index,
+            0, 0, event, active) && !active && event.presence == 4 && !event.when && !event.button;
+        Reconcile(messages, bugOwned[index], event, allocator);
+    }
+    Expect(retiredBugNeutral && messages.size() == 4 && allocator == 0x8004,
+        "retired jumpbug slots become neutral in their retained pool entries without allocating new messages");
     return failures ? 1 : 0;
 }

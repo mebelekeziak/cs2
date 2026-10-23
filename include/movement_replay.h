@@ -56,11 +56,13 @@ struct MovementReplayContext {
     std::uintptr_t controller = 0, controllerIdentity = 0;
     std::uint32_t pawnHandle = UINT32_MAX, controllerHandle = UINT32_MAX;
     MovementReplayIntent intent{};
+    bool jumpbug = false;
 };
 inline bool MovementReplaySameSource(const MovementReplayContext& cached,
                                     const MovementReplayContext& current) noexcept {
     return cached.valid && current.valid && current.held && cached.held &&
         cached.bunnyhop == current.bunnyhop && cached.autostrafe == current.autostrafe &&
+        cached.jumpbug == current.jumpbug &&
         cached.owner == current.owner &&
         cached.command == current.command && cached.base == current.base &&
         cached.pawn == current.pawn && cached.pawnIdentity == current.pawnIdentity &&
@@ -84,6 +86,8 @@ struct MovementReplayPlan {
     struct Analog { float forward = 0, left = 0, when = 0; };
     std::size_t analogCount = 0;
     std::array<Analog, AirSteeringSliceCount> analogs{};
+    bool jumpbug = false;
+    float landingFraction = 0;
 };
 inline MovementReplayPlan MovementRefreshReplaySteering(MovementReplayPlan plan,
     float forward, float left, std::uint64_t previousDirections) noexcept {
@@ -121,17 +125,28 @@ inline bool MovementReplayAnalogTransition(const MovementReplayPlan& plan, std::
     return true;
 }
 inline constexpr std::size_t MovementReplayJumpEventIndex = AirSteeringSliceCount;
-inline constexpr std::size_t MovementReplayEventCount = AirSteeringSliceCount + 1;
+inline constexpr std::size_t MovementReplayJumpbugEventIndex = AirSteeringSliceCount + 1;
+inline constexpr std::size_t MovementReplayEventCount = AirSteeringSliceCount + 5;
 inline bool MovementReplayTransition(const MovementReplayPlan& plan, std::size_t eventIndex,
     float historicalForward, float historicalLeft, MovementSubtick& event, bool& active) noexcept {
-    if (eventIndex >= MovementReplayEventCount || MovementReplayAnalogCount(plan) > AirSteeringSliceCount) return false;
+    if (eventIndex >= MovementReplayEventCount || MovementReplayAnalogCount(plan) > AirSteeringSliceCount ||
+        (plan.jumpbug && (!std::isfinite(plan.landingFraction) || plan.landingFraction <= 0 ||
+            plan.landingFraction >= 1))) return false;
     active = false; event = {}; event.presence = 4; // Neutralize retired owned events at time zero.
     if (eventIndex < MovementReplayAnalogCount(plan)) {
         active = true;
         return MovementReplayAnalogTransition(plan, eventIndex, historicalForward, historicalLeft, event);
     }
-    if (eventIndex == MovementReplayJumpEventIndex && plan.jumpEdge) {
+    if (eventIndex == MovementReplayJumpEventIndex && plan.jumpEdge && !plan.jumpbug) {
         active = true; event = MovementJumpTransition(plan.jumpDown);
+    }
+    if (eventIndex >= MovementReplayJumpbugEventIndex && plan.jumpbug) {
+        const auto transition = eventIndex - MovementReplayJumpbugEventIndex;
+        active = true;
+        event.presence = 7;
+        event.button = transition < 2 ? movement_offsets::Duck : movement_offsets::Jump;
+        event.pressed = transition == 0 || transition == 3;
+        event.when = transition ? plan.landingFraction : 0;
     }
     return true;
 }
@@ -169,7 +184,8 @@ inline MovementReplaySteeringResult MovementPlanReplaySteering(const MovementRep
     return result;
 }
 inline std::uint64_t MovementReplayMask(const MovementReplayPlan& plan) noexcept {
-    return (plan.jump ? movement_offsets::Jump : 0) |
+    return ((plan.jump || plan.jumpbug) ? movement_offsets::Jump : 0) |
+           (plan.jumpbug ? movement_offsets::Duck : 0) |
            (plan.strafe ? movement_offsets::Directions : 0);
 }
 inline MovementButtons MovementReplayButtons(MovementButtons current,

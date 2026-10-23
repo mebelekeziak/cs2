@@ -21,9 +21,10 @@ void MovementEncodeStrafe(MovementButtons& buttons, float forward, float left, s
     buttons.third &= ~off::Directions;
 }
 
-void MovementSanitizeSubtick(MovementSubtick& step, bool jump, bool strafe) noexcept {
+void MovementSanitizeSubtick(MovementSubtick& step, bool jump, bool strafe, bool duck) noexcept {
     const std::uint64_t mask = (jump ? movement_offsets::Jump : 0) |
-                              (strafe ? movement_offsets::Directions : 0);
+                              (strafe ? movement_offsets::Directions : 0) |
+                              (duck ? movement_offsets::Duck : 0);
     if ((step.presence & 1) && (step.button & mask)) {
         step.button &= ~mask;
         if (!step.button) {

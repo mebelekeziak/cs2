@@ -79,6 +79,7 @@ inline constexpr std::ptrdiff_t Fraction = 0xDC;
 inline constexpr std::uint32_t OnGround = 1, WaterJump = 4, Frozen = 32;
 inline constexpr std::uint8_t Walk = 2;
 inline constexpr std::uint64_t Jump = 2;
+inline constexpr std::uint64_t Duck = 4;
 inline constexpr std::uint64_t Forward = 0x8, Back = 0x10, Left = 0x200, Right = 0x400;
 inline constexpr std::uint64_t Directions = Forward | Back | Left | Right;
 namespace command {

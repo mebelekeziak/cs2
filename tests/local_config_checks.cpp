@@ -45,6 +45,7 @@ int main() {
     const auto secondPath = directory / (second + ".cfg");
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
+    Expect(!MovementGetSettings().jumpbug, "jumpbug starts disabled independently of enabled bunnyhop and autostrafe");
     const GrenadeSettings grenadeDefaults;
     Expect(GrenadeGetSettings() == grenadeDefaults, "grenade removals and auras start disabled independently");
     auto invalidGrenades = grenadeDefaults;
@@ -132,6 +133,8 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
+    Expect(defaults.find("movement.bunnyhop=1\nmovement.autostrafe=1\nmovement.jumpbug=0\n") != std::string::npos,
+        "default preset saves independent movement toggles with jumpbug disabled");
     Expect(defaults.find("grenades.removeSmoke=0\ngrenades.removeFlash=0\ngrenades.smokeAura=0\ngrenades.molotovAura=0\n") != std::string::npos &&
         defaults.find("grenades.smokeColor.3=1\n") != std::string::npos &&
         defaults.find("grenades.molotovColor.3=1\n") != std::string::npos && defaults.find("grenades.auraWidth=2\n") != std::string::npos,
@@ -163,7 +166,7 @@ int main() {
     for (unsigned c = 0; c < std::size(colors); ++c)
         for (unsigned i = 0; i < 4; ++i) colors[c][i] = (c + i + 1) / 16.0f;
     EspSetSettings(esp);
-    MovementSetSettings({false, false});
+    MovementSetSettings({false, false, true});
     WorldSettings world{};
     world.enabled = true; world.exposureEv = -1.25f; world.contrast = 1.25f;
     world.saturation = 0.25f; world.gamma = 1.75f; world.vignette = 0.25f; world.sharpening = 0.75f;
@@ -211,6 +214,8 @@ int main() {
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
+    Expect(custom.find("movement.bunnyhop=0\nmovement.autostrafe=0\nmovement.jumpbug=1\n") != std::string::npos,
+        "custom preset stores jumpbug independently of bunnyhop and autostrafe");
     Expect(custom.find("aim.visualize=1\n") != std::string::npos && custom.find("aim.visualize_color.3=0.75\n") != std::string::npos,
         "custom preset stores visualization toggle and RGBA");
     Expect(custom.find("grenades.removeSmoke=1\ngrenades.removeFlash=1\ngrenades.smokeAura=1\ngrenades.molotovAura=1\n") != std::string::npos,
@@ -218,7 +223,7 @@ int main() {
     Expect(custom != defaults, "separate presets retain different options");
     Expect(custom.find("anti_aim.enabled=1\n") != std::string::npos, "custom preset saves enabled anti aim");
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
-        MovementGetSettings().bunnyhop && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
+        MovementGetSettings().bunnyhop && !MovementGetSettings().jumpbug && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
         ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{} &&
         PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
@@ -257,7 +262,7 @@ int main() {
     for (unsigned c = 0; c < std::size(worldColors); ++c)
         for (unsigned i = 0; i < 3; ++i) sameWorld &= loadedColors[c][i] == worldColors[c][i];
     Expect(sameWorld, "all world fields and array channels roundtrip");
-    Expect(!MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe &&
+    Expect(!MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe && MovementGetSettings().jumpbug &&
         SilentAimGetSettings().enabled && SilentAimGetSettings().fov == expectedAim.fov &&
         SilentAimGetSettings().hitbox == AimHitbox::Pelvis && AntiAimGetSettings().enabled,
         "movement, silent aim and anti aim roundtrip");
@@ -272,7 +277,8 @@ int main() {
     for (const std::string invalid : {
         "version=2\n", "esp.enabled=1\n", "version=1\nversion=1\n", "version=1\nesp.enabled=true\n",
         "version=1\nesp.boxThickness=nan\n", "version=1\nworld.tint.1=0.5junk\n",
-        "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n",
+        "version=1\naim.hitbox=1.2\n", "version=1\nmovement.bunnyhop=2\n", "version=1\nmovement.jumpbug=2\n",
+        "version=1\nmovement.jumpbug=true\n", "version=1\nmovement.jumpbug=1\nmovement.jumpbug=0\n",
         "version=1\naim.hitgroups=-1\n", "version=1\naim.hitgroups=1.5\n",
         "version=1\naim.hitgroups=nan\n", "version=1\naim.hitgroups=4294967296\n",
         "version=1\naim.hitgroups=1\naim.hitgroups=2\n",
@@ -333,6 +339,8 @@ int main() {
         SilentAimGetSettings().fov == 180 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
     Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
+    Expect(MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe && !MovementGetSettings().jumpbug,
+        "older presets without movement keys reset enabled jumpbug to its disabled default");
     Expect(AimVisualizationGetSettings() == AimVisualizationSettings{}, "older presets restore disabled visualization and white RGBA");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
         SilentAimGetSettings().samples == 256 && !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
@@ -343,6 +351,13 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
     Expect(GrenadeGetSettings() == grenadeDefaults, "older presets without grenades restore disabled removals and auras");
+    MovementSetSettings({true, true, true});
+    Write(badPath, "version=1\nmovement.bunnyhop=0\nmovement.autostrafe=0\n");
+    Expect(LocalConfigLoad(bad, error) && !MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe &&
+        !MovementGetSettings().jumpbug, "older movement presets reset jumpbug instead of inheriting its current enabled state");
+    Write(badPath, "version=1\nmovement.jumpbug=1\n");
+    Expect(LocalConfigLoad(bad, error) && MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe &&
+        MovementGetSettings().jumpbug, "jumpbug-only preset preserves independent bunnyhop and autostrafe defaults");
     for (int legacy = 0; legacy < 4; ++legacy) {
         Write(badPath, "version=1\naim.hitbox=" + std::to_string(legacy) + "\n");
         Expect(LocalConfigLoad(bad, error) && SilentAimGetSettings().hitgroups == (1u << legacy),

@@ -674,6 +674,7 @@ int main() {
     Frame(); // Settle the new child window before using its geometry.
     Expect(Body() && std::strstr(Body()->Name, "##MovementSettings"),
            "movement tab switches to functional movement controls");
+    Expect(!MovementGetSettings().jumpbug, "jumpbug control starts disabled");
     Click(MovementPosition(0));
     Expect(!MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe,
            "bunnyhop control changes its shared setting independently");
@@ -683,12 +684,19 @@ int main() {
     Click(MovementPosition(0));
     Expect(MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
            "bunnyhop can be enabled independently while autostrafe is off");
+    Click(MovementPosition(2));
+    Expect(MovementGetSettings().jumpbug && MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "jumpbug can be enabled independently of bunnyhop and autostrafe");
+    Click(MovementPosition(2));
+    Expect(!MovementGetSettings().jumpbug && MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe,
+           "jumpbug can be disabled without changing bunnyhop and autostrafe");
     ImGui::NewFrame();
     ImGui::LogToBuffer();
     DrawPublicMenu();
     const char* movementLabels = ImGui::GetCurrentContext()->LogBuffer.c_str();
     Expect(std::strstr(movementLabels, "Auto bunnyhop (hold Space)") &&
            std::strstr(movementLabels, "Aggressive autostrafe (hold Space)") &&
+           std::strstr(movementLabels, "Jumpbug (hold Space)") &&
            std::strstr(movementLabels, "WASD  Direction and speed gain") &&
            std::strstr(movementLabels, "Release  No autostop") &&
            std::strstr(movementLabels, "F8") && std::strstr(movementLabels, "F9") &&

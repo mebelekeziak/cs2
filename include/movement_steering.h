@@ -19,8 +19,8 @@ struct SteeringOutput {
     SteeringMode mode = SteeringMode::Idle;
 };
 
-// Retain replay capacity so previously owned events can be retired safely.
-inline constexpr std::size_t AirSteeringSliceCount = 8;
+// Timed analog wishes are consumed over one command interval.
+inline constexpr std::size_t AirSteeringSliceCount = 32;
 struct SteeringCommand {
     bool valid = false;
     std::size_t count = 0;
@@ -30,16 +30,19 @@ struct SteeringCommand {
 
 // Physical WASD selects camera-relative travel heading, including diagonals.
 // No net input returns an invalid plan, leaving ordinary release behavior alone.
-// Axion's speed-based ideal angle, velocity correction and command-parity
-// alternation select full-input movement. Smoothing is tuned to 50 (Axion default: 99).
-// W-only input participates; no reference command-ring or engine layout is used.
+// Physics-based angle selection and velocity correction follow the algorithmic
+// approach inspected in wubly/velocity's airstrafe.cpp. Independent implementation;
+// no upstream command structures, engine offsets or prediction interfaces are used.
+// W-only input participates. Below 10 units/s input follows the desired heading.
 // Camera is unchanged. Prediction uses the supplied engine physics.
 // Reset state at pawn/airborne lifecycle changes and whenever steering is disabled.
 SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& input,
                               const AirPhysics& physics) noexcept;
 void ResetAirSteering(SteeringState& state) noexcept;
 
-// One chosen wish per command, published at time zero through the existing
-// analog transition/replay path. Sequence parity does not advance on rebuilds.
+// Recalculate the wish after every 1/32 interval of predicted acceleration.
+// Each slice's prediction uses that fraction of the supplied interval; the
+// summary uses the final axes/velocity and whole-command impulse/heading change.
+// Sequence and slice parity are deterministic across retained-command rebuilds.
 SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& input,
                                       const AirPhysics& physics) noexcept;

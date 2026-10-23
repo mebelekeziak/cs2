@@ -10,7 +10,8 @@ bool keyDown[2]{}; // Render thread only.
 void Report(unsigned bits) noexcept {
     if (const auto callback = logger.load(std::memory_order_acquire)) {
         char text[128]{};
-        snprintf(text, sizeof(text), "MOVE_SETTINGS bunnyhop=%u autostrafe=%u", bits & 1, (bits >> 1) & 1);
+        snprintf(text, sizeof(text), "MOVE_SETTINGS bunnyhop=%u autostrafe=%u jumpbug=%u",
+            bits & 1, (bits >> 1) & 1, (bits >> 2) & 1);
         callback(text);
     }
 }
@@ -18,10 +19,11 @@ void Report(unsigned bits) noexcept {
 
 MovementSettings MovementGetSettings() noexcept {
     const unsigned bits = settingsBits.load(std::memory_order_acquire);
-    return { (bits & 1) != 0, (bits & 2) != 0 };
+    return { (bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0 };
 }
 void MovementSetSettings(const MovementSettings& settings) noexcept {
-    const unsigned bits = (settings.bunnyhop ? 1u : 0u) | (settings.autostrafe ? 2u : 0u);
+    const unsigned bits = (settings.bunnyhop ? 1u : 0u) | (settings.autostrafe ? 2u : 0u) |
+        (settings.jumpbug ? 4u : 0u);
     if (settingsBits.exchange(bits, std::memory_order_acq_rel) != bits) Report(bits);
 }
 void MovementSetLogCallback(MovementLogCallback callback) noexcept {
