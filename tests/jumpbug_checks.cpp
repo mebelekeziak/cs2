@@ -91,6 +91,9 @@ int main() {
     Check(MovementJumpbugPrepare(module), "reprepare"); Reset();
     auto result = Probe(); Check(result.valid && result.landing && std::fabs(result.fraction - 937.0f / 1700.0f) < 1e-6f,
         "flat landing maps extended trace fraction to command time");
+    Check(result.origin == std::array<float, 3>{10, 20, 30} &&
+        result.mins == std::array<float, 3>{-16, -16, 0} && result.maxs == std::array<float, 3>{16, 16, 72},
+        "diagnostics retain the exact validated trace source without native pointers");
     Reset(); expectedMask = 0x123; Put(pawn.data(), movement_offsets::pawn::Flags, std::uint32_t{0x10});
     Check(Probe().landing, "native mask bit16 adds20");
     for (float value : {0.0f, 1.0f}) { Reset(); fraction = value; result = Probe(); Check(result.valid && !result.landing, "endpoint is not landing"); }

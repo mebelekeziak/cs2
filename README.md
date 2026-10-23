@@ -23,6 +23,22 @@ unobserved. Use the existing **Load Overlay.cmd** workflow, restarting CS2
 normally first if an older DLL is resident. Stopped and resident is not
 physically unloaded.
 
+## Jumpbug recovery — October 23, revision 13
+
+The user reports good air steering at `sv_airaccelerate 32` and substantially
+better hopping with Jumpbug off. Revision 12 is saved as checkpoint `c885645`.
+The new log confirms missed jumpbug attempts followed by delayed ground jumps.
+Revision 13 removes one unnecessary recovery tick after a timed attempt;
+autostrafe and ordinary bunnyhop are unchanged. Both Release builds pass
+**58/58 CTest suites**.
+
+The contact predictor remains experimental. Additional probe-position and
+native crouch-step diagnostics will distinguish where its prediction diverges.
+Keep **Jumpbug off** for the working hopping behavior. Revision 13 gameplay has
+not yet been observed; it is not a claim of reliable jumpbugs or damage avoidance.
+See [evidence and validation](docs/MOVEMENT_REVISION13.md). The normal restart
+and **Load Overlay.cmd** workflow applies; stopped code remains resident.
+
 ## Movement speed and jumpbug input fixes — October 23, revision 12
 
 Autostrafe now uses the verified air-acceleration projection instead of the

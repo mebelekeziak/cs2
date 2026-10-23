@@ -1,3 +1,31 @@
+# Jumpbug investigation, revision 13 — October 23, 2026
+
+Revision 12 is committed as `c885645`. User reports air steering works well at
+airaccelerate 32 and hopping improves with Jumpbug off. Do not alter steering
+to compensate for missed jumpbug attempts. Tentative predictive ordinary
+bunnyhop changes were removed; saved only in
+`logs/movement-r13-deferred-bunnyhop.patch`.
+
+New run `overlay-33312-134372389997829026.log`: 82 jumpbug attempt ticks with
+native observations, zero same-tick takeoffs. Sample 1645 timed press misses,
+1646 release, 1647 ground speed 330.492, fallback 1648 speed 156.210. Ordinary
+no-jumpbug run `overlay-27888-134372393324387841.log` also has losses; aggregate
+runs are not controlled comparisons. Do not promise all loss is fixed.
+
+Revision 13 removes an extra recovery tick only for an uncorrected timed
+request: its full-interval uncertainty margin already covers a press strictly
+inside the request tick, so equality with penalty + interval suffices after
+observed release and a full released tick. Rewind discards this bound. Builds
+and both 58-test suites pass. Native jump telemetry now includes move-data
+origin and airborne duck edges; probe logs include copied source bounds/origin.
+The installed MoveOrigin +0xC8 operand is independently decoded and crouch
+bodies frozen in `tools/jumpbug_contract.json`. No new hook or native call.
+
+Contact timing is STILL unresolved. Native finish-duck/unduck adjusts origin
+and categorizes before jumping; the current standing-hull probe alone does
+not prove these transitions. New diagnostics support the next user-run test.
+No agent client/server launch or injection. Details: `docs/MOVEMENT_REVISION13.md`.
+
 # Movement revision 12 — October 23, 2026
 
 User reported air/landing speed loss, low-speed A/D kicks and uncertain jumpbug.

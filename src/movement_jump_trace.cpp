@@ -3,6 +3,7 @@
 #include "movement_memory.h"
 #include "movement_command.h"
 #include "movement_jump.h"
+#include "movement_jumpbug_offsets.h"
 #include "cs2_offsets.h"
 #include <MinHook.h>
 #include <array>
@@ -62,7 +63,7 @@ struct Snapshot {
     std::uint32_t flags = 0;
     std::int32_t tick = 0;
     float fraction = 0;
-    std::array<float, 3> velocity{};
+    std::array<float, 3> velocity{}, origin{};
     MovementButtons buttons{};
     JumpStamp actual{}, usable{}, landed{};
 };
@@ -71,12 +72,14 @@ bool Capture(const Source& source, std::uintptr_t moveData, Snapshot& snap) noex
         !Read(moveData + off::move_data::Tick, snap.tick) ||
         !Read(moveData + off::move_data::Fraction, snap.fraction) ||
         !Read(moveData + off::move_data::Velocity, snap.velocity) ||
+        !Read(moveData + movement_jumpbug_offsets::MoveOrigin, snap.origin) ||
         !Read(source.services + off::services::Buttons, snap.buttons) ||
         !Read(source.services + off::services::ModernActual, snap.actual) ||
         !Read(source.services + off::services::ModernUsable, snap.usable) ||
         !Read(source.services + off::services::ModernLanded, snap.landed) ||
         !std::isfinite(snap.fraction)) return false;
     for (float value : snap.velocity) if (!std::isfinite(value)) return false;
+    for (float value : snap.origin) if (!std::isfinite(value)) return false;
     return std::isfinite(snap.actual.fraction) && std::isfinite(snap.usable.fraction) && std::isfinite(snap.landed.fraction);
 }
 void Hook(void* statePointer, void* movePointer) {
@@ -91,7 +94,8 @@ void Hook(void* statePointer, void* movePointer) {
     const unsigned raw = ((before.buttons.down & off::Jump) ? 1u : 0u) |
         ((before.buttons.changed & off::Jump) ? 2u : 0u) | ((before.buttons.third & off::Jump) ? 4u : 0u);
     const bool fresh = raw >= 3;
-    if (!fresh && !(before.flags & off::OnGround)) return;
+    const bool duckEdge = ((before.buttons.changed | before.buttons.third) & off::Duck) != 0;
+    if (!fresh && !duckEdge && !(before.flags & off::OnGround)) return;
     Source afterSource{}; Snapshot after{};
     if (!ReadSource(state, afterSource) || !SameSource(beforeSource, afterSource) ||
         !Capture(afterSource, moveData, after)) return;
@@ -109,18 +113,20 @@ void Hook(void* statePointer, void* movePointer) {
         bufferChanged ? "buffer_changed_no_takeoff" :
         (before.buttons.down & off::Jump) ? "held_no_takeoff" : "no_takeoff";
     // Unchanged airborne slices emit nothing; the shared queue bounds producers.
-    if (!fresh && !cleared && !((before.flags & off::OnGround) && (before.buttons.down & off::Jump))) return;
+    if (!fresh && !duckEdge && !cleared && !((before.flags & off::OnGround) && (before.buttons.down & off::Jump))) return;
     char message[1400]{};
     std::snprintf(message, sizeof(message),
         "MOVE_JUMP_EXEC handle=0x%x rawtick=%d fraction=%.6f raw_state=%u fresh=%u ground_cleared=%u "
         "outcome=%s takeoff=%u request_recorded=%u buffer_changed=%u vertical_impulse=%.3f "
         "flags=0x%x/0x%x velocity_before=%.3f,%.3f,%.3f velocity_after=%.3f,%.3f,%.3f "
+        "origin_before=%.3f,%.3f,%.3f origin_after=%.3f,%.3f,%.3f duck_edge=%u "
         "buttons_before=0x%llx/0x%llx/0x%llx buttons_after=0x%llx/0x%llx/0x%llx "
         "actual_before=%d/%.6f actual_after=%d/%.6f usable_before=%d/%.6f usable_after=%d/%.6f "
         "landed_before=%d/%.6f landed_after=%d/%.6f; client jump-handler observation, request stamps alone are not takeoff or jumpbug proof",
         beforeSource.handle, before.tick, before.fraction, raw, fresh, cleared,
         outcome, takeoff, requestRecorded, bufferChanged, verticalImpulse, before.flags, after.flags,
         before.velocity[0], before.velocity[1], before.velocity[2], after.velocity[0], after.velocity[1], after.velocity[2],
+        before.origin[0], before.origin[1], before.origin[2], after.origin[0], after.origin[1], after.origin[2], duckEdge,
         before.buttons.down, before.buttons.changed, before.buttons.third,
         after.buttons.down, after.buttons.changed, after.buttons.third,
         before.actual.tick, before.actual.fraction, after.actual.tick, after.actual.fraction,

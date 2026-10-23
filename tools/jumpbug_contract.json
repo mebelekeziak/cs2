@@ -14,7 +14,8 @@
     "TraceSolid": 187,
     "FilterSize": 72,
     "TraceSize": 192,
-    "Duck": 4
+    "Duck": 4,
+    "MoveOrigin": 200
   },
   "windows": {
     "movement_filter": {
@@ -66,6 +67,26 @@
       "rva": 732130,
       "size": 114,
       "sha256": "82ded07ac82d1b13aebc7dab065a7a273eccacff5d0c64b9d75fcadf5bfbe5c4"
+    },
+    "movement_origin": {
+      "rva": 9189169,
+      "size": 14,
+      "sha256": "645bd66c8d229605f2d2048e75b65169cd66f4cf0d0fd5b63da7529dc35b5ce7"
+    },
+    "duck_process": {
+      "rva": 9215136,
+      "size": 2632,
+      "sha256": "3072acf88cdd717b21b1259509a07a8ab5f94597633f64aa8e25d9205f9f3908"
+    },
+    "finish_duck": {
+      "rva": 9224816,
+      "size": 716,
+      "sha256": "498d9a7ab78da37f2c37deb19884a8dc322108b3e144c57758a36f1126ffd7e4"
+    },
+    "finish_unduck": {
+      "rva": 9226672,
+      "size": 598,
+      "sha256": "695d72447dd33f937aecc5601794cf2d0a741c0bab865fc605bb8bd108069d9a"
     }
   },
   "prefixes": {

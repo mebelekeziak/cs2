@@ -45,6 +45,13 @@ def verify(client, header):
         raise SystemExit("Gravity/normal cvar registration differs")
     if image[0x8C9DA9:0x8C9DAC] != bytes.fromhex("c0eb02") or contract["constants"]["Duck"] != 1 << image[0x8C9DAB]:
         raise SystemExit("Native crouch input bit differs")
+    # CategorizePosition copies XY and Z from the move-data origin. This is
+    # the movement position, unlike the separately sampled scene-node origin.
+    if (image[0x8C3731:0x8C3735] != bytes.fromhex("f20f1086") or
+            image[0x8C3739:0x8C373B] != bytes.fromhex("8b86") or
+            struct.unpack_from("<I", image, 0x8C3735)[0] != contract["constants"]["MoveOrigin"] or
+            struct.unpack_from("<I", image, 0x8C373B)[0] != contract["constants"]["MoveOrigin"] + 8):
+        raise SystemExit("Native movement origin operands differ")
     # Ground-consumer stack frame: RBP=entry_RSP-0x80, RSP=entry_RSP-0x180;
     # trace at [RSP+0x70] is [RBP-0x90]. Decode each consumer member anew.
     # LEA RDX,[RSP+70] at 0x8E704B establishes the result pointer.

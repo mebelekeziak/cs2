@@ -100,8 +100,31 @@ from the pawn's current duck posture.
 
 ## Verification and limitations
 
+### Revision 13: native position and crouch ordering
+
+The same installed client hash was rechecked on October 23. Ground
+categorization at `0x8C3731` copies XY from `[moveData+0xC8]`; `0x8C3739`
+copies Z from `+0xD0`. `inspect_jumpbug.py` independently decodes both operands
+for the new read-only observer field. This distinguishes native movement
+position from the scene-node origin used by the probe.
+
+The per-slice caller invokes crouch processing at `0x8E0558`, then the modern
+jump handler at `0x8E0582`. Finish-duck `0x8CC270..0x8CC53B` adjusts airborne
+origin by half the standing/crouched hull size difference. Finish-unduck
+`0x8CC9B0..0x8CCC05` uses the opposite factor; the inspected constants are
+`0x1AC8080 = 0.5` and `0x1AED240 = -0.5`. They obtain the hull sizes from
+the native vector provider, not hardcoded posture dimensions. Both routines
+call ground categorization (`0x8C3640`) after moving the origin. The complete
+two routines and crouch processor `0x8C9CA0..0x8CA6E7` are now frozen windows.
+Disassembly is retained under `logs/research/jumpbug/`.
+
+The observer logs native origin and includes airborne duck edges. This adds no
+mutation or hook and does not establish that the producer's predicted contact
+matches the subsequent crouch/uncrouch state. See the missed-attempt evidence
+and recovery-only correction in `docs/MOVEMENT_REVISION13.md`.
+
 `python tools/inspect_jumpbug.py` checks the installed whole-file identity,
-ten complete function/consumer instruction windows, independent schema/cvar
+fourteen complete function/consumer instruction windows, independent schema/cvar
 operands, crouch bit decoding, and every source offset/fingerprint against
 the frozen native contract. `--header` permits altered-source rejection tests.
 The full contract is in `tools/jumpbug_contract.json`; investigation scripts

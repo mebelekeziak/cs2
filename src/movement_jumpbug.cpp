@@ -143,6 +143,7 @@ MovementJumpbugResult MovementProbeJumpbug(std::uintptr_t pawn, std::uintptr_t s
         !Read(client + movement_offsets::TickIntervalConstant, intervalAfter) || interval != intervalAfter ||
         !std::isfinite(output.fraction) || output.fraction < 0 || output.fraction > 1 || !Finite(output.normal)) return {};
     output.valid = true;
+    output.origin = before.origin; output.mins = before.mins; output.maxs = before.maxs;
     // Steep surfaces remain native movement; only near-flat landing schedules assistance.
     if (!(output.fraction > 0 && output.fraction < 1) ||
         output.normal[2] < normal || output.normal[2] < 0.985f) return output;

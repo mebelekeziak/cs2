@@ -873,9 +873,12 @@ void Process(void* input, void* commandPointer) noexcept {
     else ResetAirSteering(steeringState);
     if (jump.fresh || plan.jumpbug) ++presses;
     if (plan.jumpbug) {
-        Log("MOVE_JUMPBUG sequence=%d tick=%d simtick=%u fraction=%.6f normal=%.4f,%.4f,%.4f; predicted landing only",
+        Log("MOVE_JUMPBUG sequence=%d tick=%d simtick=%u fraction=%.6f normal=%.4f,%.4f,%.4f origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f velocity=%.3f,%.3f,%.3f; predicted landing only",
             sequence, tick, pawn.simulationTick, plan.landingFraction,
-            jumpbug.normal[0], jumpbug.normal[1], jumpbug.normal[2]);
+            jumpbug.normal[0], jumpbug.normal[1], jumpbug.normal[2],
+            jumpbug.origin[0], jumpbug.origin[1], jumpbug.origin[2],
+            jumpbug.mins[0], jumpbug.mins[1], jumpbug.mins[2], jumpbug.maxs[0], jumpbug.maxs[1], jumpbug.maxs[2],
+            pawn.velocity[0], pawn.velocity[1], pawn.velocity[2]);
     }
     if (!plan.jumpbug && (jump.fresh || jump.released)) {
         Log("MOVE_JUMP sequence=%d tick=%d simtick=%u ground=%u down=%u fresh=%u release=%u ack=%u phase=%u actual=%d/%.6f usable=%d/%.6f landed=%d/%.6f engine_down=%u penalty=%.6f window=%.6f legacy=%u auto=%u",
@@ -1044,7 +1047,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=12 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=nonbraking_projection stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh ascent_subticks=%zu descent_subticks=1 jumpbug=owned_release", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
+    Log("MOVE_IMPLEMENTATION revision=13 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=nonbraking_projection stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh ascent_subticks=%zu descent_subticks=1 jumpbug=bounded_release_recovery", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

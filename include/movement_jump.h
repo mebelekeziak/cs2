@@ -13,7 +13,7 @@ struct JumpState {
     bool down = false;
     std::uint32_t requestTick = 0, releaseTick = 0, lastSimulationTick = 0, consumptionTick = 0;
     bool haveClock = false, haveConsumption = false, usableBuffered = false;
-    bool timedPress = false;
+    bool timedPress = false, timedRequest = false;
     JumpStamp baselineActual{}, baselineUsable{};
 };
 struct JumpInput {

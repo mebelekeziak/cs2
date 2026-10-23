@@ -6,6 +6,8 @@ struct MovementJumpbugResult {
     bool valid = false, landing = false;
     float fraction = 0;
     std::array<float, 3> normal{};
+    // Copied probe inputs for correlation with native movement, never pointers.
+    std::array<float, 3> origin{}, mins{}, maxs{};
 };
 // Called under the command owner lock; no pointers escape synchronous probing.
 bool MovementJumpbugPrepare(std::uintptr_t client) noexcept;

@@ -238,5 +238,45 @@ int main() {
     RecordTimedJump(state, 1000); input.simulationTick = 1001; input.autoBunnyhop = true;
     out = PlanJump(state, input);
     Expect(out.released && !out.down, "server auto-bhop mode cannot preserve a fresh timed press across steering slices");
+
+    // Captured revision 12: timed request 1645/.546875, release 1646,
+    // landed 1646/.468750, first grounded observation 1647. Waiting until
+    // 1648 spends an unnecessary full command on the ground (330 -> 156).
+    input = {}; input.modern = true; input.commandTick = 1646;
+    input.interval = input.penalty = 1.0f / 64; input.bufferWindow = input.interval / 2;
+    RecordTimedJump(state, 1645);
+    input.simulationTick = 1646;
+    out = PlanJump(state, input);
+    Expect(out.released && state.timedRequest, "timed cleanup retains the exclusive end-of-request-tick bound");
+    input.grounded = true; input.engineDown = false;
+    out = PlanJump(state, input);
+    Expect(!out.down && !out.fresh, "timed recovery cannot retry in the release tick");
+    input.simulationTick = 1647; input.engineDown = true;
+    out = PlanJump(state, input);
+    Expect(!out.down, "timed recovery still requires observed engine release");
+    input.engineDown = false;
+    out = PlanJump(state, input);
+    Expect(out.fresh && out.down && !state.timedRequest,
+        "captured landing retries at 1647 after release and full command uncertainty plus cooldown");
+    out = PlanJump(state, input);
+    Expect(out.down && !out.fresh, "timed fallback publishes only one fresh ordinary retry");
+
+    RecordTimedJump(state, 3000); ReleaseTimedJump(state, 3001);
+    input.simulationTick = 3002; input.penalty = 2 * input.interval;
+    out = PlanJump(state, input);
+    Expect(!out.down, "long timed penalty keeps recovery behind the latest possible subtick press");
+    input.simulationTick = 3003;
+    out = PlanJump(state, input);
+    Expect(out.fresh, "long timed penalty does not add a second margin tick at the conservative bound");
+
+    RecordTimedJump(state, 4000); ReleaseTimedJump(state, 4001);
+    input.penalty = input.interval; input.simulationTick = 100;
+    out = PlanJump(state, input);
+    Expect(!out.down && !state.timedRequest, "rewind invalidates the timed request clock bound");
+    input.simulationTick = 102;
+    out = PlanJump(state, input);
+    Expect(!out.down, "corrected timed recovery retains the ordinary strict uncertainty margin");
+    input.simulationTick = 103;
+    Expect(PlanJump(state, input).fresh, "corrected timed recovery remains bounded after sufficient clock progress");
     return failures ? 1 : 0;
 }

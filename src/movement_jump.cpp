@@ -12,6 +12,7 @@ bool AdvancedStamp(const JumpStamp& stamp, const JumpStamp& baseline) noexcept {
 }
 void BeginRequest(JumpState& state, const JumpInput& in) noexcept {
     state.phase = JumpPhase::Pending; state.down = true;
+    state.timedRequest = false;
     state.requestTick = in.simulationTick; state.baselineActual = in.actual; state.baselineUsable = in.usable;
     state.haveConsumption = false; state.usableBuffered = false;
 }
@@ -20,13 +21,16 @@ void BeginRequest(JumpState& state, const JumpInput& in) noexcept {
 void ResetJump(JumpState& state) noexcept { state = {}; }
 void RecordTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept {
     ResetJump(state);
-    state.down = state.timedPress = state.haveClock = true;
+    state.down = state.timedPress = state.timedRequest = state.haveClock = true;
     state.phase = JumpPhase::Pending;
     state.requestTick = state.lastSimulationTick = simulationTick;
 }
 JumpOutput ReleaseTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept {
     if (!state.timedPress) return {};
-    if (simulationTick < state.lastSimulationTick) state.requestTick = simulationTick;
+    if (simulationTick < state.lastSimulationTick) {
+        state.requestTick = simulationTick;
+        state.timedRequest = false;
+    }
     state.timedPress = state.down = false;
     state.phase = JumpPhase::Releasing;
     state.releaseTick = state.lastSimulationTick = simulationTick;
@@ -50,6 +54,7 @@ JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
         // do not prove processing in this branch. Establish fresh baselines
         // without manufacturing a new press.
         state.haveConsumption = false; state.usableBuffered = false;
+        state.timedRequest = false;
         state.baselineActual = in.actual; state.baselineUsable = in.usable;
     }
     state.haveClock = true; state.lastSimulationTick = in.simulationTick;
@@ -94,7 +99,14 @@ JumpOutput PlanJump(JumpState& state, const JumpInput& in) noexcept {
         // arbitrary tick of cooldown margin is unnecessary. Without that
         // observation retain the earlier request-time safety margin.
         const double cooldown = static_cast<double>(in.penalty) + (state.haveConsumption ? 0 : in.interval);
-        if (!in.engineDown && releasedFor >= in.interval && sincePress > cooldown) {
+        // A timed command's last possible press lies strictly before the end
+        // of its request tick. The full interval above already covers that
+        // uncertainty: equality with penalty + interval is sufficient here.
+        // Using > adds an entire grounded tick for integral-tick penalties.
+        // Ordinary requests and corrected clocks retain their existing rule.
+        const bool cooled = state.timedRequest && !state.haveConsumption ?
+            sincePress >= cooldown : sincePress > cooldown;
+        if (!in.engineDown && releasedFor >= in.interval && cooled) {
             BeginRequest(state, in);
         }
     }
