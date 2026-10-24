@@ -1,10 +1,99 @@
-# Landing hull and jumpbug input contracts — October 23, 2026
+# Landing hull and jumpbug input contracts — October 24, 2026
 
 Client-only, AMD64 Windows, installed CS2 **1.41.9.2**, client **2000935**,
 Steam build **26144732**. The binary is read from
 `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\bin\win64\client.dll`.
 SHA256 is `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`.
 No client/server was launched; installed files were not changed.
+
+## Revision 14: native posture and discrete capture window
+
+The previous contact-time model traced the current standing collision hull,
+then requested duck at time zero and unduck/jump at the estimated standing
+contact. It did not verify the intervening posture or unduck clearance. Exact
+contact is also a poor event boundary: native input snaps event fractions to
+1/64 of a tick, so rounding can move an attempted unduck below the floor.
+
+The new adapter copies both postures through the installed vector provider
+`0xAC20F0`, ABI `const vector_set*()`. Its entire 30-byte routine is frozen.
+It returns the active game-mode provider's vtable slot `+0x118` result, or its
+native fallback. The ground trace consumer independently establishes standing
+minimum/maximum offsets `+0xC/+0x18` and crouched offsets `+0x24/+0x30`.
+No player dimensions are hardcoded in production. The returned provider
+identity and copied vectors are checked again after all synchronous traces.
+
+The named `CCSPlayer_MovementServices` schema independently confirms
+`m_bDucked +0x408`, `m_flDuckAmount +0x40C`, `m_bDuckOverride +0x414`, and
+`m_bDucking +0x416`. The planner accepts only the initial native standing pose,
+with its current collision bounds equal to the copied standing bounds. Native
+duck flags, transitional/partial ducking, physical duck, custom lateral hull
+changes and unsupported movement retain ordinary input.
+
+Airborne finish-duck multiplies the standing-minus-crouched size difference
+by the scalar loaded at `0x8CC346`: `0x1AC8080 = +0.5`. Finish-unduck uses
+`0x8CCA65 -> 0x1AED240 = -0.5`. Both move the origin and call ground
+categorization before the slice's jump handler. Duck raises the origin; an
+unduck lowers it by the opposite copied offset. The new model tracks this
+explicitly instead of treating a standing-hull trace as a crouched trajectory.
+
+Native `CanUnduck`, `0x8C2F70..0x8C3422`, tests the **full standing hull**
+from the current crouched origin to the lowered standing origin. Checking only
+the final standing occupancy misses the overhead part of that sweep. The
+adapter reproduces that sweep with its existing synchronous movement trace
+wrapper; it never calls native mutating posture routines.
+
+Ordinary ground categorization uses a six-unit sweep: start origin **+4 Z**,
+end origin **-2 Z**, with the upper hull shortened **4 units**. Operands
+`0x8C3984` and `0x8C3901` resolve independently to `0x1AC8098 = 4`, and
+`0x8C3853` resolves to `0x1ACCF58 = -2`. These native constants are copied
+and checked, alongside the gravity/normal rules, before and after probing.
+
+The command-step converter, `0xA75960..0xA75BC7` including split unwind
+ranges, loads **131072.0f** at `0xA75A2C -> 0x1C15694`. It loads the
+source event fraction at `0xA75B06`, adds that scalar at `0xA75B10`, subtracts
+it at `0xA75B19`, and stores the result at `0xA75B1E`. The float32 ULP of
+131072 is **1/64**, independently establishing the event grid. A one-ULP
+`nextafter` adjustment at ordinary fractions cannot preserve distinct times
+through this conversion. The adapter selects an exactly representable
+interior event on this grid.
+
+The first standing-hull trace establishes a nearby near-flat plane. With its
+signed starting gap `g`, upward unit normal `n`, velocity `v`, gravity `a`,
+and candidate elapsed time `t`, the free-flight gap is
+`g + dot(n,v)*t - 0.5*a*n.z*t*t`. The eligible unduck interval lies **above**
+contact, within the native two-unit ground capture range. Candidates must
+retain a 0.25-unit vertical margin from both bounds; the planner chooses the
+candidate with the greatest margin, usually about one unit above contact.
+The margin and 0.985 minimum normal Z are assistance policy, not native rules.
+
+Every accepted plan requires four successful checks: the initial plane probe,
+the raised-origin crouched sweep to the candidate, the native-style standing
+unduck sweep, and the native-style ground sweep at that candidate. The last
+trace must find a matching near-flat plane and agree with the predicted gap
+within 0.125 units. Blocked headroom, intervening collisions, missing ground,
+sub-grid windows and source drift cancel the attempt. Provider/pawn/cvar
+snapshots and native exceptions invalidate the result rather than publishing
+partial input. The caller remains responsible for jump readiness/cooldown and
+recording an attempted timed request only after its command transaction commits.
+
+The exported `fraction` is now the verified **unduck capture event**, not a
+standing contact fraction. Copied diagnostics add the accepted grid-window
+bounds, standing clearance, crouched bounds, duck origin delta and predicted
+standing event origin. No native pointer escapes.
+
+`jumpbug_checks` passes **435 assertions** using an independent swept-box
+versus plane/ceiling fixture. It covers geometry from alternate provider
+dimensions, the full overhead unduck path, native ground shape, event snapping,
+oblique support geometry, unavailable/narrow windows, missing/blocked ground,
+all callback-phase faults and stale snapshots. All **33/33** altered constant
+or entry-prefix headers reject. The installed verifier passes **19** frozen
+windows plus independently decoded schema, instructions, calls and scalars.
+Focused results are under `logs/research/movement-r14/jumpbug/`.
+
+These are model and static checks, not observed gameplay. Horizontal acceleration
+during the command, dynamic geometry, later native subdivisions and server state
+can still differ from the copied snapshot. Reliability, speed retention and
+damage avoidance require an authorized offline/private trial; none was run.
 
 ## Reference and implementation provenance
 
@@ -70,7 +159,9 @@ The engine interval constant is the existing movement contract **0x1AC8074**.
 The projection uses half gravity and a two-unit downward probe extension;
 the extension and 0.985 slope cutoff are assistance tuning, not native defaults.
 
-The two-unit extension finds a nearby contact plane; it is not part of the
+Earlier revisions used the following standing contact-time conversion. The
+revision 14 posture/capture planner above supersedes it. The two-unit extension
+finds a nearby contact plane; it is not part of the
 command's physical displacement. Scheduling its raw trace fraction directly,
 as the reference does, would jump early and can schedule contact beyond this
 command. With copied normal `n`, unextended displacement `d`, extended
@@ -124,17 +215,12 @@ matches the subsequent crouch/uncrouch state. See the missed-attempt evidence
 and recovery-only correction in `docs/MOVEMENT_REVISION13.md`.
 
 `python tools/inspect_jumpbug.py` checks the installed whole-file identity,
-fourteen complete function/consumer instruction windows, independent schema/cvar
+nineteen complete function/consumer instruction windows, independent schema/cvar
 operands, crouch bit decoding, and every source offset/fingerprint against
 the frozen native contract. `--header` permits altered-source rejection tests.
 The full contract is in `tools/jumpbug_contract.json`; investigation scripts
 remain under `logs/research/jumpbug/`.
 
 `tests/jumpbug_checks.cpp` supplies native-call fixtures that exercise the real
-adapter: exact receiver/filter/hull/projection, initialized aligned storage,
-landing/slope/fraction rules, invalid inputs, source changes during native
-callbacks, native faults, crouch ownership, and unsupported locomotion. Timing
-fixtures independently cover flat/oblique plane conversion, extension-only
-contacts, nonapproaching motion, and unclipped early/late command times. These
-fixtures and static checks cannot establish live jumpbug timing or effectiveness.
-No statement of live client/server behavior is made.
+adapter. The current geometry/timing checks are documented in revision 14 above.
+They cannot establish live jumpbug timing or effectiveness.

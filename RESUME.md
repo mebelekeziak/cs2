@@ -1,3 +1,42 @@
+# Quantized movement and jumpbug, revision 14 — October 24, 2026
+
+User confirms prior analog autostrafe works well with quantization off and
+requests smooth movement with the normal server rule enabled. New path reads
+`sv_quantize_movement_input` (verified wrapper 0x2534510), computes one ideal
+whole-interval wish and publishes a digital fallback first. Existing anti-aim
+command/replay owner upgrades eligible commands to matching world yaw plus
+exact Forward 1 / Left 0, retaining physical camera. No server cvar override.
+Action commands keep physical view/mouse/actions and digital fallback; its
+nonbraking model assumes sampled yaw, so rapid action mouse turns can differ.
+Quantization-off steering retains 32 ascent wishes and 1 descent/jump wish.
+
+Both quant representations coalesce actual native sequence-1 axes in the
+existing owned time-zero event. No extra boundary allocation; exact restore
+precedes movement replay. Scoped requests, action recheck after autofire,
+stale sources, fallback publication and physical camera protection use the
+shared owner. Independent review caught/fixed missing startup action fallback
+handoff gate. Quant mode prioritizes movement yaw over anti aim; AA UI can be off.
+
+Jumpbug now copies native posture bounds/provider, models opposite half-hull
+origin changes, chooses an interior native 1/64-tick capture event, and verifies duck
+approach, CanUnduck-style full standing sweep/headroom and categorize ground.
+Same-time unduck/jump avoids an extra friction interval. Separate cooldown
+survives ordinary airborne hop resets; rules read with bhop off too. Native
+observer logs new capture/posture data. Quickstop refuses raw subtick Jump taps.
+
+Both x64 Release builds succeed warning-free; each passes 66/66 CTests. All 33/33
+static components pass: logs/compatibility/20261024T115852087340Z/. Jumpbug's 435
+assertions pass; 19 native windows verified; 33 altered headers and bad quant
+wrapper reject. Final DLL metadata: logs/movement-r14-artifacts.json, both
+zero static TLS/delay imports. Logs movement-r14-build/tests-public/diagnostic.
+No agent client/server launch/injection; gameplay smoothness and damage avoidance
+not measured. User subsequently reports substantially improved working movement,
+but extreme character-facing twitching and subtle viewmodel twitching. Jumpbug
+was not separately confirmed. Restart normally, Load Overlay.cmd; test quantization 1 offline/private.
+Stopped code remains resident. Full research/behavior: docs/MOVEMENT_REVISION14.md.
+
+The previous movement continuation follows for historical context.
+
 # Jumpbug investigation, revision 13 — October 23, 2026
 
 Revision 12 is committed as `c885645`. User reports air steering works well at

@@ -284,6 +284,31 @@ int main() {
     Expect(overflowDirect.valid && std::isfinite(overflowDirect.predictedVelocityX) &&
         std::isfinite(overflowDirect.predictedVelocityY) && !overflowCommand.valid && state.mode == SteeringMode::Idle,
         "finite physics that overflow serialized prediction reject without publishing partial slices");
+    auto digitalRules = normal; digitalRules.quantized = true;
+    bool digitalFixedPoints = true, fallbackNonbraking = true, basisEquivalent = true;
+    for (float camera : {-179.9f, -73.0f, 0.0f, 38.0f, 179.9f}) {
+        for (float speed : {0.0f, 10.0f, 80.0f, 250.0f, 800.0f}) {
+            for (const auto& direction : directions) {
+                SteeringState digitalState{}, referenceState{};
+                const StrafeInput input{speed * 0.8f, speed * 0.6f, camera, direction[0], direction[1], 22};
+                const auto digital = PlanAirSteeringCommand(digitalState, input, digitalRules);
+                const auto reference = PlanAirSteeringCommand(referenceState, input, normal, 1);
+                const auto& d = digital.summary;
+                digitalFixedPoints &= digital.valid && digital.count == 1 && digital.commandBasis &&
+                    std::round(d.forward) == d.forward && std::round(d.left) == d.left;
+                const auto applied = Apply(input.velocityX, input.velocityY, camera, d, normal);
+                fallbackNonbraking &= std::hypot(applied.x, applied.y) + 0.0001 >= speed &&
+                    Near(applied.x, d.predictedVelocityX, 0.004) && Near(applied.y, d.predictedVelocityY, 0.004);
+                SteeringOutput fullForward{}; fullForward.forward = 1;
+                const auto oriented = Apply(input.velocityX, input.velocityY, digital.basisWishYaw, fullForward, normal);
+                basisEquivalent &= Near(oriented.x, reference.summary.predictedVelocityX, 0.004) &&
+                    Near(oriented.y, reference.summary.predictedVelocityY, 0.004);
+            }
+        }
+    }
+    Expect(digitalFixedPoints, "quantized steering emits one digital fallback that native rounding leaves unchanged");
+    Expect(fallbackNonbraking, "unavailable command orientation cannot turn the digital fallback into an air brake");
+    Expect(basisEquivalent, "full Forward in the selected command yaw reproduces continuous ideal acceleration across headings and speeds");
     PlanAirSteering(state, {250, 0, 0, 0, 1, 2}, normal);
     ResetAirSteering(state);
     Expect(state.mode == SteeringMode::Idle && !state.turnSide, "lifecycle reset clears retained steering state");

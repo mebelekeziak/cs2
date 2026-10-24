@@ -90,9 +90,116 @@ bool Apply(Fixture& f, QuickstopCommandPatch& p, float forward = -1, float left 
     return QuickstopApplyCommand(Address(f.command), forward, left, historyF, historyL,
         off::Forward, reinterpret_cast<std::uintptr_t>(&Allocate), reinterpret_cast<std::uintptr_t>(&Append), p, preserve);
 }
+void ClearJump(Fixture& f) {
+    auto buttons = f.Buttons();
+    buttons.down &= ~off::Jump; buttons.changed &= ~off::Jump; buttons.third &= ~off::Jump;
+    Put(Address(f.command) + off::command::Buttons, buttons);
+    for (auto& step : f.steps) step.button &= ~off::Jump;
+}
 }
 
 int main() {
+    {
+        bool detected = true;
+        for (int word = 0; word < 3; ++word) {
+            Fixture f; ClearJump(f);
+            auto buttons = f.Buttons();
+            if (word == 0) buttons.down |= off::Jump;
+            else if (word == 1) buttons.changed |= off::Jump;
+            else buttons.third |= off::Jump;
+            Put(Address(f.command) + off::command::Buttons, buttons);
+            detected &= QuickstopCommandHasJump(Address(f.command));
+        }
+        Expect(detected, "ground braking excludes held, released and tapped jump button words");
+    }
+    {
+        Fixture f; ClearJump(f);
+        f.steps[1].button = f.steps[2].button = off::Jump;
+        f.steps[1].pressed = true; f.steps[2].pressed = false;
+        const auto command = f.command, base = f.base;
+        const auto steps = f.steps;
+        const auto representations = f.representations;
+        bool safe = QuickstopCommandHasJump(Address(f.command)) && !(f.Buttons().down & off::Jump) &&
+            f.command == command && f.base == base && Equal(f.steps, steps) && f.representations == representations &&
+            f.allocations == 0 && f.appends == 0;
+        f.steps[1].button = 1;
+        safe &= QuickstopCommandHasJump(Address(f.command));
+        f.steps[2].presence = 4; // Native decoder still consumes the raw button.
+        safe &= QuickstopCommandHasJump(Address(f.command));
+        Expect(safe, "timed jump press/release and raw released edges exclude braking with final down clear and no mutation");
+    }
+    {
+        Fixture f; ClearJump(f);
+        const auto command = f.command, base = f.base, angles = f.angles;
+        const auto steps = f.steps;
+        const auto representations = f.representations;
+        Expect(!QuickstopCommandHasJump(Address(f.command)) && f.command == command && f.base == base &&
+            f.angles == angles && Equal(f.steps, steps) && f.representations == representations &&
+            f.allocations == 0 && f.appends == 0,
+            "jump detection leaves unrelated attack, directional, analog and camera actions intact");
+        Put(Address(f.base) + off::base::SubtickSize, 0);
+        Put(Address(f.base) + off::base::SubtickCapacity, 0);
+        Put(Address(f.base) + off::base::SubtickRep, std::uintptr_t{0});
+        Expect(!QuickstopCommandHasJump(Address(f.command)), "valid empty native subtick stream permits ground braking");
+    }
+    {
+        bool refused = QuickstopCommandHasJump(0) && QuickstopCommandHasJump(UINTPTR_MAX);
+        for (int malformed = 0; malformed < 11; ++malformed) {
+            Fixture f; ClearJump(f);
+            switch (malformed) {
+            case 0: Put(Address(f.command) + off::command::Presence, std::uint32_t{0}); break;
+            case 1: Put(Address(f.command) + off::command::Base, std::uintptr_t{0}); break;
+            case 2: Put(Address(f.base) + off::base::SubtickSize, -1); break;
+            case 3: Put(Address(f.base) + off::base::SubtickSize, 129); break;
+            case 4: Put(Address(f.base) + off::base::SubtickCapacity, 3); break;
+            case 5: Put(Address(f.base) + off::base::SubtickRep, std::uintptr_t{0}); break;
+            case 6: Put(f.Rep(), 3); break;
+            case 7: Put(f.Rep() + 8, std::uintptr_t{0}); break;
+            case 8: f.steps[0].when = std::numeric_limits<float>::quiet_NaN(); break;
+            case 9: f.steps[1].when = -0.1f; break;
+            case 10: f.steps[3].when = 0.1f; break;
+            }
+            const auto command = f.command, base = f.base;
+            const auto steps = f.steps;
+            const auto representations = f.representations;
+            refused &= QuickstopCommandHasJump(Address(f.command)) && f.command == command && f.base == base &&
+                Equal(f.steps, steps) && f.representations == representations;
+        }
+        Expect(refused, "unreadable pointers, malformed native containers and invalid event timing conservatively exclude braking without mutation");
+    }
+    {
+        Fixture f; ClearJump(f);
+        void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        bool guarded = page != nullptr;
+        if (page) {
+            std::memcpy(page, f.command.data(), f.command.size());
+            DWORD old = 0;
+            guarded &= VirtualProtect(page, 4096, PAGE_READONLY, &old) != 0;
+            guarded &= !QuickstopCommandHasJump(reinterpret_cast<std::uintptr_t>(page));
+            guarded &= VirtualProtect(page, 4096, PAGE_NOACCESS, &old) != 0;
+            guarded &= QuickstopCommandHasJump(reinterpret_cast<std::uintptr_t>(page));
+            VirtualFree(page, 0, MEM_RELEASE);
+        }
+        Expect(guarded, "read-only native snapshots need no write access and inaccessible command pages conservatively exclude braking");
+    }
+    {
+        Fixture f; ClearJump(f);
+        std::array<MovementSubtick, 128> steps{};
+        std::array<std::uintptr_t, 129> rep{};
+        Put(Address(rep), 128);
+        for (std::size_t index = 0; index < steps.size(); ++index) {
+            steps[index].presence = 4;
+            steps[index].when = static_cast<float>(index) / static_cast<float>(steps.size());
+            rep[index + 1] = Address(steps[index]);
+        }
+        Put(Address(f.base) + off::base::SubtickSize, 128);
+        Put(Address(f.base) + off::base::SubtickCapacity, 128);
+        Put(Address(f.base) + off::base::SubtickRep, Address(rep));
+        bool bounded = !QuickstopCommandHasJump(Address(f.command));
+        steps.back().presence = 7; steps.back().button = off::Jump; steps.back().pressed = false;
+        bounded &= QuickstopCommandHasJump(Address(f.command));
+        Expect(bounded, "bounded scan accepts 128 native events and detects a final timed jump release");
+    }
     {
         bool braking = true;
         for (float yaw : {-720.0f, -135.0f, -90.0f, 0.0f, 45.0f, 90.0f, 180.0f, 720.0f}) {

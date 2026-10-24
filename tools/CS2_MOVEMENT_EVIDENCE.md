@@ -1,5 +1,39 @@
 # Movement evidence for the installed client
 
+## Quantized input — October 24, 2026, movement revision 14
+
+The same installed client hash below remains verified. Registration LEAs
+`0xB2610` (name) and `0xB2617` (wrapper) independently resolve
+`sv_quantize_movement_input` to wrapper **0x2534510**. The native movement
+consumer at **0x8E592F** loads wrapper+8 and checks byte value+0x58. When
+enabled it rounds all three move-data axes (`+0x2C`, `+0x30`, `+0x34`) at
+`0x8E593C..0x8E5967`, before `AngleVectors` at `0x8E597F`. All three calls
+resolve IAT **0x1AAEB00**, `tier0.dll!V_roundf`. Full digital axes are fixed
+points of that operation. A normalized fractional wish need not survive it.
+The named registration, source wrapper, native consumer and complete
+rounding-before-angle window are now checked by `inspect_movement.py`.
+
+The command-basis steering implementation represents its continuous ideal
+wish as full Forward in a matching command yaw. It uses the existing camera,
+history, command restore and owner-thread machinery; it never changes the
+replicated rule. Quantized commands use a single whole-interval wish. The
+published fallback is chosen from actual digital directions with nonnegative
+velocity projection, so an unavailable orientation need not become a brake.
+The analog-off-rule path retains its prior 32-ascent/one-descent policy.
+
+Native event decoding accumulates raw pitch/yaw deltas at `0xA75B88`, even
+when their protobuf presence is absent. The movement loop applies decoded
+view at `0xA66AB8..0xA66AC5` before integration calls
+`0xA66B98/0xA66BA7/0xA66BB6`. Therefore a fixed assisted command basis also
+owns outgoing raw mouse deltas for that command, with exact restoration;
+otherwise mouse motion could rotate the wish behind velocity. The physical
+camera is retained by the already established replay owner. Attack commands
+retain their original firing/view inputs and use the digital fallback.
+
+These are installed-client contracts and model evidence. No post-change
+client/server observation has established smoothness or server agreement.
+See [revision 14](../docs/MOVEMENT_REVISION14.md) for behavior and validation.
+
 ## Static update — October 23, 2026, Steam build 26144732
 
 Target: installed Windows AMD64 **client**, patch **1.41.9.2**, client/server

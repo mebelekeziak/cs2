@@ -33,3 +33,14 @@ void ResetJump(JumpState& state) noexcept;
 // until a following command publishes its explicit time-zero release.
 void RecordTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept;
 JumpOutput ReleaseTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept;
+
+// Separate from the ordinary hop phase: airborne hop resets must not forget
+// the cooldown of a timed attempt that missed. This clock uses controller
+// simulation ticks only, never engine press timestamps from another domain.
+struct JumpAttemptClock {
+    bool haveRequest = false, haveClock = false;
+    std::uint32_t requestTick = 0, lastTick = 0;
+};
+bool TimedJumpAttemptReady(JumpAttemptClock& clock, std::uint32_t simulationTick,
+                          float interval, float penalty) noexcept;
+void RecordJumpAttempt(JumpAttemptClock& clock, std::uint32_t simulationTick) noexcept;

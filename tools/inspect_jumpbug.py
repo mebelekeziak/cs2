@@ -25,6 +25,9 @@ def verify(client, header):
         got = bytes(int(x.strip(), 0) for x in match[1].split(",") if x.strip()) if match else b""
         if got.hex() != expected:
             raise SystemExit(f"Jumpbug source fingerprint differs: {name}")
+        start = contract["constants"][name]
+        if bytes(image[start:start + len(got)]) != got:
+            raise SystemExit(f"Jumpbug installed fingerprint differs: {name}")
     for name, window in contract["windows"].items():
         start, size = window["rva"], window["size"]
         if hashlib.sha256(image[start:start + size]).hexdigest() != window["sha256"]:
@@ -62,9 +65,69 @@ def verify(client, header):
     native_normal = image[0x8E7118] - trace_rbp_offset - 8
     if native_fraction != contract["constants"]["TraceFraction"] or native_normal != contract["constants"]["TraceNormal"]:
         raise SystemExit("Ground trace fraction/normal operands differ")
+
+    # Decode posture members from named CCSPlayer_MovementServices schema
+    # registration, independently from the instructions and source literals.
+    registration = 0x2223168
+    fields = struct.unpack_from("<Q", image, registration + 0x28)[0] - base
+    posture = {}
+    for index in range(struct.unpack_from("<H", image, registration + 0x1C)[0]):
+        record = fields + index * 32
+        pointer = struct.unpack_from("<Q", image, record)[0] - base
+        name = bytes(image[pointer:image.find(0, pointer)]).decode("ascii")
+        posture[name] = struct.unpack_from("<I", image, record + 0x10)[0]
+    for name, schema in {"Ducked": "m_bDucked", "DuckAmount": "m_flDuckAmount",
+                         "DuckOverride": "m_bDuckOverride", "Ducking": "m_bDucking"}.items():
+        if posture[schema] != contract["constants"][name]:
+            raise SystemExit(f"Posture schema differs: {schema}")
+
+    # The native ground consumer selects provider vectors for the current
+    # posture. Decode its displacement bytes, rather than copying hull sizes.
+    for name, site, prefix in [("StandingMins", 0x8E703B, "4883c0"),
+                               ("StandingMaxs", 0x8E6FF7, "488d58"),
+                               ("CrouchedMins", 0x8E7030, "4883c0"),
+                               ("CrouchedMaxs", 0x8E6FEC, "488d58")]:
+        if image[site:site + 3] != bytes.fromhex(prefix) or image[site + 3] != contract["constants"][name]:
+            raise SystemExit(f"Native posture vector operand differs: {name}")
+    def call(site):
+        if image[site] != 0xE8:
+            raise SystemExit(f"Native direct-call opcode differs: {site:#x}")
+        return site + 5 + struct.unpack_from("<i", image, site + 1)[0]
+    for site in [0x8CC305, 0x8CC30D, 0x8CC32B, 0x8CC333,
+                 0x8CCA32, 0x8CCA3A, 0x8CCA58, 0x8CCA60, 0x8C3366, 0x8C336E]:
+        if call(site) != contract["constants"]["HullVectors"]:
+            raise SystemExit("Native crouch/unduck vector-provider target differs")
+    floats = {}
+    for name, site, size, displacement, opcode, expected in [
+            ("DuckOriginFactor", 0x8CC346, 8, 4, "f30f1025", 0.5),
+            ("UnduckOriginFactor", 0x8CCA65, 8, 4, "f30f101d", -0.5),
+            ("GroundTraceDropConstant", 0x8C3853, 8, 4, "f30f5805", -2.0),
+            ("GroundTraceLiftConstant", 0x8C3984, 8, 4, "f30f5805", 4.0),
+            ("GroundTraceLiftConstant", 0x8C3901, 8, 4, "f30f5c3d", 4.0),
+            ("SubtickTimeSnapConstant", 0xA75A2C, 9, 5, "f3440f1005", 131072.0)]:
+        target = site + size + struct.unpack_from("<i", image, site + displacement)[0]
+        value = struct.unpack_from("<f", image, target)[0]
+        if (image[site:site + displacement] != bytes.fromhex(opcode) or
+                target != contract["constants"][name] or value != expected):
+            raise SystemExit(f"Native posture/timing constant operand differs: {name}")
+        floats[name] = value
+    if (image[0xA75B06:0xA75B0C] != bytes.fromhex("f3410f104724") or
+            image[0xA75B10:0xA75B15] != bytes.fromhex("f3410f58c0") or
+            image[0xA75B19:0xA75B23] != bytes.fromhex("f3410f5cc0f30f114500")):
+        raise SystemExit("Native subtick fraction add/subtract rounding differs")
+    bits = struct.unpack_from("<I", image, contract["constants"]["SubtickTimeSnapConstant"])[0]
+    event_grid = 2.0 ** (((bits >> 23) & 255) - 127 - 23)
+    if event_grid != 1.0 / 64.0:
+        raise SystemExit("Native fraction snap ULP differs")
+    if (call(0x8CC50C) != 0x8C3640 or call(0x8CCBD0) != 0x8C3640 or
+            call(0x8E0558) != 0x8C9CA0 or call(0x8E0582) != 0x8C4320):
+        raise SystemExit("Native crouch/categorize/jump call ordering differs")
     return {"client_sha256": contract["client_sha256"], "windows": contract["windows"],
             "schema_actual_gravity": hex(found["m_flActualGravityScale"]),
             "abi": "void(cache*, trace*, start*, end*, bbox*, movement_filter*)",
+            "hull_provider_abi": "const vector_set*()", "posture_schema": {
+                key: hex(value) for key, value in posture.items() if "Duck" in key},
+            "posture_constants": floats, "native_event_fraction_grid": event_grid,
             "duck_input_bit": 4, "live_observation": False}
 
 

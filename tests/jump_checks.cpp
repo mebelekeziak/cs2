@@ -278,5 +278,21 @@ int main() {
     Expect(!out.down, "corrected timed recovery retains the ordinary strict uncertainty margin");
     input.simulationTick = 103;
     Expect(PlanJump(state, input).fresh, "corrected timed recovery remains bounded after sufficient clock progress");
+    JumpAttemptClock clock{};
+    Expect(TimedJumpAttemptReady(clock, 100, 1.0f / 64, 1.0f / 64), "first timed attempt has no owned cooldown");
+    RecordJumpAttempt(clock, 100);
+    Expect(!TimedJumpAttemptReady(clock, 100, 1.0f / 64, 1.0f / 64) &&
+        !TimedJumpAttemptReady(clock, 101, 1.0f / 64, 1.0f / 64),
+        "duplicate callbacks and next tick cannot restart a missed timed press");
+    Expect(TimedJumpAttemptReady(clock, 102, 1.0f / 64, 1.0f / 64),
+        "timed eligibility resumes after the complete request interval plus penalty");
+    ResetJump(state);
+    Expect(!TimedJumpAttemptReady(clock, 101, 1.0f / 64, 1.0f / 64),
+        "ordinary airborne planner reset cannot erase the separate timed-attempt cooldown");
+    Expect(!TimedJumpAttemptReady(clock, 40, 1.0f / 64, 1.0f / 64) &&
+        TimedJumpAttemptReady(clock, 42, 1.0f / 64, 1.0f / 64),
+        "prediction rewind rebases timed eligibility without unsigned elapsed-time underflow");
+    Expect(!TimedJumpAttemptReady(clock, 50, 0, 0) && !TimedJumpAttemptReady(clock, 50, 1.0f / 64, -1),
+        "unavailable or invalid native cooldown rules reject scheduling");
     return failures ? 1 : 0;
 }

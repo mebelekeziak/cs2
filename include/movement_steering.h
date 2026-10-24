@@ -26,6 +26,11 @@ struct SteeringCommand {
     std::size_t count = 0;
     std::array<SteeringOutput, AirSteeringSliceCount> slices{};
     SteeringOutput summary{};
+    // Quantized commands publish a safe digital fallback first. The command
+    // orientation owner can represent the continuous wish as full Forward in
+    // this world basis, preserving the local camera through its normal replay.
+    bool commandBasis = false;
+    float basisWishYaw = 0;
 };
 
 // Physical WASD selects camera-relative travel heading, including diagonals.
@@ -48,6 +53,9 @@ void ResetAirSteering(SteeringState& state) noexcept;
 // Each slice's prediction uses that fraction of the supplied interval; the
 // summary uses the final axes/velocity and whole-command impulse/heading change.
 // Sequence and slice parity are deterministic across retained-command rebuilds.
+// Quantized input selects one whole-interval wish, a digital fallback, and its
+// ideal command basis. The orientation owner reports whether it was applied;
+// fallback summary prediction does not claim the upgraded native outcome.
 SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& input,
                                       const AirPhysics& physics,
                                       std::size_t sliceCount = AirSteeringSliceCount) noexcept;

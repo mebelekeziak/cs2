@@ -24,6 +24,7 @@ inline constexpr unsigned char FinalizeBytes[]{
 };
 inline constexpr std::ptrdiff_t AirCap = 0x2534470;
 inline constexpr std::ptrdiff_t AirAccelerate = 0x2566E50;
+inline constexpr std::ptrdiff_t QuantizeInput = 0x2534510;
 inline constexpr std::ptrdiff_t GroundAccelerate = 0x2566E40;
 inline constexpr std::ptrdiff_t GroundFriction = 0x2566EB0;
 inline constexpr std::ptrdiff_t StopSpeed = 0x2566DB0;

@@ -617,5 +617,17 @@ int main() {
     Expect(descentRetarget.refreshed && descentRetarget.command.count == 1 && descentRetarget.plan.analogCount == 1 &&
         descentRetarget.plan.analogs[0].when == 0 && sameJump(initialAirPlan, descentRetarget.plan),
         "changed WASD keeps the frozen one-slice landing policy and the original jump edge on replay");
+    auto quantizedStart = steeringStart; quantizedStart.physics.quantized = true;
+    const auto quantized = MovementPlanReplaySteering(quantizedStart, initialIntent, leftIntent, initialAirPlan);
+    Expect(quantized.refreshed && quantized.plan.commandBasis && quantized.plan.analogCount == 1 &&
+        quantized.plan.basisWishYaw == quantized.command.basisWishYaw && sameJump(initialAirPlan, quantized.plan),
+        "quantized replay carries the ideal command basis beside one safe digital fallback and retains jump identity");
+    const auto quantizedRelease = MovementPlanReplaySteering(quantizedStart, leftIntent, releasedIntent, quantized.plan);
+    Expect(quantizedRelease.refreshed && !quantizedRelease.plan.commandBasis &&
+        quantizedRelease.plan.forward == 0 && quantizedRelease.plan.left == 0,
+        "releasing movement cancels the basis request and restores coasting on the same command");
+    const auto rulesChanged = MovementPlanReplaySteering(quantizedStart, leftIntent, leftIntent, initialAirPlan, true);
+    Expect(rulesChanged.refreshed && rulesChanged.plan.commandBasis && sameJump(initialAirPlan, rulesChanged.plan),
+        "a replicated quantization change refreshes steering without manufacturing another jump");
     return failures ? 1 : 0;
 }

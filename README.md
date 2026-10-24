@@ -2,6 +2,35 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Vanilla movement quantization — October 24, revision 14
+
+Autostrafe now supports the enabled `sv_quantize_movement_input` rule. It
+represents the ideal wish with a matching command yaw and full digital input,
+using the existing owner to preserve the physical camera. The server rule is
+read only. This path uses one whole-interval wish; quantization off retains
+the prior timed-analog behavior. Firing/Use keep their normal views and use a
+more limited digital fallback. Movement takes priority over anti-aim yaw during
+an eligible quantized strafe; the Anti aim toggle need not be enabled.
+
+Jumpbug now models the installed crouch/unduck hull and origin changes, selects
+an interior event on the native timestamp grid, and verifies approach,
+unduck clearance and ground capture. A separate cooldown prevents missed
+attempts from immediately retriggering. Quickstop also yields to subtick jump
+taps whose final Jump-down bit is clear.
+
+Restart CS2 normally, then use **Load Overlay.cmd** and the existing Movement
+controls. Leave quantization at **1** for the intended offline/private test.
+Jumpbug remains separate and experimental. The user reports substantially
+better movement with this revision, with extreme character-facing twitching
+and subtle viewmodel twitching. Jumpbug reliability is not separately established.
+Stopped code remains resident until normal process exit. See
+[implementation, research and limits](docs/MOVEMENT_REVISION14.md).
+
+Both x64 Release builds succeed without project warnings and each passes
+**66/66 CTest suites**. All **33/33 installed-file checks** pass; jumpbug's
+native probe fixture passes **435 assertions**. Both DLLs retain zero static
+TLS and delay imports. These checks do not establish in-game smoothness.
+
 ## Knife animation correction — October 24, 2026
 
 The user reports working skins with missing knife-specific animations. The

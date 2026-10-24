@@ -46,6 +46,7 @@ std::uint32_t sourceHandle = UINT32_MAX;
 int lastSequence = -1;
 bool wasGrounded = false, haveGround = false;
 JumpState jumpState{};
+JumpAttemptClock jumpAttemptClock{};
 SteeringState steeringState{};
 MovementPhysicalIntentState physicalIntentState{};
 bool strafeControlled = false;
@@ -139,6 +140,7 @@ void Reset() noexcept {
     lastSequence = -1;
     wasGrounded = haveGround = false; lastSpeed = 0;
     ResetJump(jumpState); ResetAirSteering(steeringState);
+    jumpAttemptClock = {};
     physicalIntentState = {};
     lastJumpReadState = nullptr;
     replay = {}; haveInputSettings = false;
@@ -552,8 +554,9 @@ void RememberReplay(const Patch& patch, const MovementReplayContext& context,
 }
 void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& context) noexcept {
     const auto previousContext = replay.context;
+    replay.steeringStart.physics.quantized = context.quantized;
     const auto refresh = MovementPlanReplaySteering(replay.steeringStart, replay.context.intent,
-        context.intent, replay.plan); // The selected jump input remains prediction-stable.
+        context.intent, replay.plan, context.quantized != previousContext.quantized);
     const auto plan = refresh.plan;
     const auto incoming = patch.buttons;
     const auto mask = MovementReplayMask(plan);
@@ -595,6 +598,9 @@ void RepairReplay(const Pawn& pawn, Patch& patch, const MovementReplayContext& c
     replayClockCorrections += context.commandTick != previousContext.commandTick ||
         context.simulationTick < previousContext.simulationTick;
     RememberReplay(patch, context, plan, true);
+    if (plan.commandBasis)
+        AntiAimRequestMovementYaw(reinterpret_cast<void*>(client + off::Input),
+            reinterpret_cast<void*>(patch.command), plan.basisWishYaw, replay.events[0].address);
     if (refresh.refreshed) {
         steeringState = refresh.state; strafeControlled = refresh.steering.valid;
         previousDirections = patch.buttons.down & off::Directions;
@@ -709,6 +715,9 @@ void Process(void* input, void* commandPointer) noexcept {
     intent.viewYaw = yaw;
     MarkStage(Stage::Keys);
     auto context = ReplayContext(pawn, patch, sequence, tick, settings, intent);
+    std::uint8_t quantize = 1;
+    // Unavailable replicated rules choose the conservative digital path.
+    context.quantized = !Cvar(off::QuantizeInput, quantize) || quantize != 0;
     if (MovementCanReplay(replay.context, context)) { RepairReplay(pawn, patch, context); return; }
     if (replay.context.valid && replay.context.sequence == sequence) {
         // A pooled command/base or a source identity changed under the same
@@ -738,7 +747,8 @@ void Process(void* input, void* commandPointer) noexcept {
     std::uint8_t autoBhop = 0, legacy = 0;
     MovementButtons engineButtons{};
     const char* jumpReadState = "disabled in settings";
-    const bool jumpRulesValid = settings.bunnyhop && ReadJumpRules(pawn, jumpInput, interval, penalty, autoBhop, legacy, engineButtons, jumpReadState);
+    const bool jumpRulesValid = (settings.bunnyhop || settings.jumpbug) &&
+        ReadJumpRules(pawn, jumpInput, interval, penalty, autoBhop, legacy, engineButtons, jumpReadState);
     if (!lastJumpReadState || strcmp(lastJumpReadState, jumpReadState) != 0) {
         lastJumpReadState = jumpReadState;
         Log("MOVE_JUMP_RULES valid=%u state=%s legacy_wrapper=0x%llx legacy=%u auto=%u penalty=%.6f window=%.6f interval=%.6f",
@@ -751,7 +761,7 @@ void Process(void* input, void* commandPointer) noexcept {
     if (jump.valid) {
         patch.jump = true;
         MovementEncodeJump(patch.buttons, false, true);
-    } else if (jumpRulesValid) {
+    } else if (settings.bunnyhop && jumpRulesValid) {
         jumpInput.grounded = grounded; jumpInput.engineDown = (engineButtons.down & off::Jump) != 0;
         jumpInput.modern = legacy == 0; jumpInput.autoBunnyhop = autoBhop != 0;
         jumpInput.commandTick = tick; jumpInput.interval = interval; jumpInput.penalty = penalty;
@@ -767,7 +777,9 @@ void Process(void* input, void* commandPointer) noexcept {
     // transitions through RepairReplay.
     // Physical crouch retains ownership; jumpbug never synthesizes its release.
     MovementJumpbugResult jumpbug{};
-    if (settings.jumpbug && !jumpState.timedPress && !grounded && pawn.velocity[2] <= 0 && JumpbugCanOwnDuck(patch.base, patch.buttons)) {
+    const bool timedReady = TimedJumpAttemptReady(jumpAttemptClock, pawn.simulationTick, interval, penalty);
+    if (settings.jumpbug && jumpRulesValid && timedReady && !jumpState.timedPress && !jump.released &&
+        !grounded && pawn.velocity[2] <= 0 && JumpbugCanOwnDuck(patch.base, patch.buttons)) {
         jumpbug = MovementProbeJumpbug(pawn.address, pawn.services, pawn.velocity, false);
         if (jumpbug.valid && jumpbug.landing && std::isfinite(jumpbug.fraction) &&
             jumpbug.fraction > 0 && jumpbug.fraction < 1) {
@@ -788,6 +800,7 @@ void Process(void* input, void* commandPointer) noexcept {
     const auto initialDirections = strafeControlled ? previousDirections : (patch.buttons.down ^ patch.buttons.changed);
     AirPhysics physics{};
     physics.surfaceFriction = pawn.friction;
+    physics.quantized = context.quantized;
     const bool airSpeedValid = settings.autostrafe && !grounded && AirSpeed(pawn, physics.wishSpeed);
     MarkStage(Stage::SpeedModifiers);
     const bool airSteeringAvailable = airSpeedValid && intent.viewValid &&
@@ -864,6 +877,8 @@ void Process(void* input, void* commandPointer) noexcept {
     MarkStage(Stage::Apply);
     lastSequence = sequence;
     RememberReplay(patch, context, plan);
+    if (plan.commandBasis)
+        AntiAimRequestMovementYaw(input, commandPointer, plan.basisWishYaw, replay.events[0].address);
     replay.steeringStart = {airSteeringAvailable, initialSteeringInput, initialSteeringState, physics, initialDirections, steeringSlices};
     strafeControlled = strafe.valid;
     previousDirections = patch.buttons.down & off::Directions;
@@ -872,13 +887,15 @@ void Process(void* input, void* commandPointer) noexcept {
     if (patch.strafe) steeringState = nextSteeringState;
     else ResetAirSteering(steeringState);
     if (jump.fresh || plan.jumpbug) ++presses;
+    if (jump.fresh || plan.jumpbug) RecordJumpAttempt(jumpAttemptClock, pawn.simulationTick);
     if (plan.jumpbug) {
-        Log("MOVE_JUMPBUG sequence=%d tick=%d simtick=%u fraction=%.6f normal=%.4f,%.4f,%.4f origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f velocity=%.3f,%.3f,%.3f; predicted landing only",
+        Log("MOVE_JUMPBUG sequence=%d tick=%d simtick=%u fraction=%.6f normal=%.4f,%.4f,%.4f origin=%.3f,%.3f,%.3f mins=%.3f,%.3f,%.3f maxs=%.3f,%.3f,%.3f velocity=%.3f,%.3f,%.3f capture=%.6f/%.6f clearance=%.4f posture_shift=%.3f event_origin=%.3f,%.3f,%.3f; predicted unduck capture only",
             sequence, tick, pawn.simulationTick, plan.landingFraction,
             jumpbug.normal[0], jumpbug.normal[1], jumpbug.normal[2],
             jumpbug.origin[0], jumpbug.origin[1], jumpbug.origin[2],
             jumpbug.mins[0], jumpbug.mins[1], jumpbug.mins[2], jumpbug.maxs[0], jumpbug.maxs[1], jumpbug.maxs[2],
-            pawn.velocity[0], pawn.velocity[1], pawn.velocity[2]);
+            pawn.velocity[0], pawn.velocity[1], pawn.velocity[2], jumpbug.captureMinFraction, jumpbug.captureMaxFraction,
+            jumpbug.clearance, jumpbug.duckOriginDelta[2], jumpbug.eventOrigin[0], jumpbug.eventOrigin[1], jumpbug.eventOrigin[2]);
     }
     if (!plan.jumpbug && (jump.fresh || jump.released)) {
         Log("MOVE_JUMP sequence=%d tick=%d simtick=%u ground=%u down=%u fresh=%u release=%u ack=%u phase=%u actual=%d/%.6f usable=%d/%.6f landed=%d/%.6f engine_down=%u penalty=%.6f window=%.6f legacy=%u auto=%u",
@@ -889,10 +906,13 @@ void Process(void* input, void* commandPointer) noexcept {
     ++modified; strafes += strafe.valid;
     if (groundHandoff) Log("MOVE_GROUND_HANDOFF sequence=%d tick=%d history=%.5f,%.5f physical=%.5f,%.5f speed=%.3f; restore physical axes before ground integration",
         sequence, tick, historicalForward, historicalLeft, patch.forward, patch.left, speed);
-    State(plan.jumpbug ? "jumpbug landing timing" : strafe.valid ? "air strafing" : grounded ? "ground jump timing" : "airborne jump released");
+    State(plan.jumpbug ? "jumpbug landing timing" : strafe.valid ?
+        (plan.commandBasis ? "air strafing; digital command basis" : "air strafing") : grounded ? "ground jump timing" : "airborne jump released");
     const auto now = GetTickCount64();
     if (!lastReport || now - lastReport >= 2000) {
         lastReport = now;
+        Log("MOVE_QUANTIZED sequence=%d enabled=%u basis_request=%u ideal_wish=%.3f fallback=%.0f,%.0f; replicated rule is read only, command-basis result is recorded by anti-aim owner",
+            sequence, context.quantized, plan.commandBasis, plan.basisWishYaw, patch.forward, patch.left);
         std::uint8_t precision = 0;
         const bool rules = Cvar(off::AutoBunnyhop, autoBhop) && Cvar(off::JumpPrecision, precision);
         Log("MOVE_CMD sequence=%d tick=%d ground=%u speed=%.3f velocity=%.3f,%.3f,%.3f jump_down=%u fresh_press=%u strafe=%u analog=%.5f,%.5f intent=%.5f,%.5f yaw=%.3f wish_yaw=%.3f gain=%.4f buttons=0x%llx/0x%llx/0x%llx subticks=%d callbacks=%llu modified=%llu presses=%llu strafes=%llu rejected=%llu cap=%.4f accel=%.4f maxspeed=%.4f friction=%.4f interval=%.6f penalty=%.6f server_autobhop=%u precision=%u rules_valid=%u start=%.5f,%.5f steering=%u error=%.3f turn=%.3f jump_rules_valid=%u jump_plan_valid=%u target_heading=%.3f predicted_valid=%u predicted_speed=%.3f air_handoff=%u slices=%zu",
@@ -1047,7 +1067,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=13 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=nonbraking_projection stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh ascent_subticks=%zu descent_subticks=1 jumpbug=bounded_release_recovery", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
+    Log("MOVE_IMPLEMENTATION revision=14 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=quantization_aware_command_basis stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh analog_ascent_subticks=%zu quantized_subticks=1 descent_subticks=1 jumpbug=posture_capture_window", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {
@@ -1114,7 +1134,7 @@ bool MovementQuickstop(void* command, bool brake) noexcept {
         // return unavailable to aim so it cannot publish a ground-stop shot.
         // Bunnyhop can synthesize release while physical Space remains held.
         bool refusedBrake = brake && (!(pawn.flags & off::OnGround) ||
-            (buttons.down & off::Jump) || (GetAsyncKeyState(VK_SPACE) & 0x8000));
+            QuickstopCommandHasJump(layout.command) || (GetAsyncKeyState(VK_SPACE) & 0x8000));
         QuickstopAxes axes{};
         QuickstopPhysics physics{};
         if (brake && !refusedBrake) {

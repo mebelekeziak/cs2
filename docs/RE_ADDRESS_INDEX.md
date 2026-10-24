@@ -61,6 +61,12 @@ client.dll; named static schema, entity-system load/store, embedded table initia
 
 Header: [movement_offsets.h](../include/movement_offsets.h); verifier: [inspect_movement.py](../tools/inspect_movement.py); [evidence](../tools/CS2_MOVEMENT_EVIDENCE.md).
 
+Revision 14 adds read-only `QuantizeInput = 0x2534510`, independently resolved
+from the named `sv_quantize_movement_input` registration and native consumer
+at `0x8E592F`. The consumer rounds axes before `AngleVectors`. Jumpbug's linked
+contract now also verifies the native hull provider, posture members,
+origin factors, ground sweep and 1/64-of-tick input timestamp grid.
+
 client.dll; CCSGOInput RTTI/constructor, native jump/ingest path, named cvars, decoded command and movement layouts.
 
 | Symbol | Current value |

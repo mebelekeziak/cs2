@@ -12,6 +12,7 @@ import struct
 
 EXPECTED_HASH = "ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5"
 CHECKS = {
+    "quantized_axis_rounding_before_angle_vectors": (0x8E592F, "488b05e2ebc401807858007430f30f10432cff15b9911c01f30f11432cf30f104330ff15a9911c01f30f114330f30f104334ff1599911c01f30f114334488d4b144c8d4c24204c8d442430488d542440e8ccf3e500"),
     "command_inline_presence": (0xB66F57, "488b7c24304885ff74064883c710eb03488bfa834f1001488b4730"),
     "command_viewangles_pointer": (0xCEE611, "488b4a40488d7a40"),
     "base_viewangles_pointer": (0xCEE62A, "488b4840"),
@@ -80,6 +81,7 @@ CVAR_REGISTRATIONS = {
     "GroundAccelerate": (0xD84C8, 0xD8462, "sv_accelerate"),
     "GroundFriction": (0xD878B, 0xD8782, "sv_friction"),
     "StopSpeed": (0xD926B, 0xD9262, "sv_stopspeed"),
+    "QuantizeInput": (0xB2617, 0xB2610, "sv_quantize_movement_input"),
 }
 
 
@@ -129,7 +131,7 @@ def verify_cvar_offsets(image, header_path):
         if bytes(image[compare_site:compare_site + 4]) != bytes((0x80, 0x78, values["CvarValue"], 0)):
             raise SystemExit(f"Legacy selector value addressing differs at 0x{compare_site:X}")
     for name, load_site in (("GroundAccelerate", 0x8EB527), ("GroundFriction", 0x8CCE51),
-                            ("StopSpeed", 0x8CCE84)):
+                            ("StopSpeed", 0x8CCE84), ("QuantizeInput", 0x8E592F)):
         if rip_target(image, load_site, "488b05") != values[name] + values["CvarValuePointer"]:
             raise SystemExit(f"Native ground movement cvar slot differs: {name}")
     return verified

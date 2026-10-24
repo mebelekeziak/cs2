@@ -1,6 +1,7 @@
 #include "anti_aim_command.h"
 #include "movement_memory.h"
 #include "silent_aim_offsets.h"
+#include "anti_aim_offsets.h"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -170,7 +171,7 @@ bool Validate(const AntiAimCommandPatch& p, bool currentlyOutgoing, bool viewOnl
         expected.cachedSize = n.original.cachedSize;
         if (!Equal(n.original, expected)) return false;
 #define CHECK_STEP(field) if (!CheckField(s.address + offsetof(MovementSubtick, field), n.original.field, s.original.field, s.edited.field, currentlyOutgoing)) return false
-        CHECK_STEP(presence); CHECK_STEP(button); CHECK_STEP(pressed); CHECK_STEP(forwardDelta); CHECK_STEP(leftDelta); CHECK_STEP(pitchDelta);
+        CHECK_STEP(presence); CHECK_STEP(button); CHECK_STEP(pressed); CHECK_STEP(forwardDelta); CHECK_STEP(leftDelta); CHECK_STEP(pitchDelta); CHECK_STEP(yawDelta);
 #undef CHECK_STEP
     }
     return true;
@@ -188,18 +189,46 @@ void Write(const AntiAimCommandPatch& p, bool outgoing) noexcept {
     for (int i = 0; i < p.count; ++i) {
         const auto& s = p.steps[static_cast<std::size_t>(i)];
 #define PUT_STEP(field) Put(s.address + offsetof(MovementSubtick, field), s.original.field, s.edited.field, outgoing)
-        PUT_STEP(presence); PUT_STEP(button); PUT_STEP(pressed); PUT_STEP(forwardDelta); PUT_STEP(leftDelta); PUT_STEP(pitchDelta);
+        PUT_STEP(presence); PUT_STEP(button); PUT_STEP(pressed); PUT_STEP(forwardDelta); PUT_STEP(leftDelta); PUT_STEP(pitchDelta); PUT_STEP(yawDelta);
 #undef PUT_STEP
     }
 }
+struct MovementBasis {
+    float yaw = 0;
+    std::uintptr_t transition = 0;
+    const AntiAimMovementHistory* history = nullptr;
+};
+bool MovementStream(const AntiAimCommandPatch& patch, std::uintptr_t transition, const char** reason) noexcept {
+    const auto fail = [&](const char* why) noexcept { if (reason) *reason = why; return false; };
+    if (!transition) return fail("movement_transition_missing");
+    if ((patch.originalForward != -1 && patch.originalForward != 0 && patch.originalForward != 1) ||
+        (patch.originalLeft != -1 && patch.originalLeft != 0 && patch.originalLeft != 1) ||
+        (patch.originalForward == 0 && patch.originalLeft == 0) ||
+        (!(patch.originalPresence & mo::base::ForwardPresent) && patch.originalForward != 0) ||
+        (!(patch.originalPresence & mo::base::LeftPresent) && patch.originalLeft != 0)) return fail("movement_fallback_axes");
+    bool found = false;
+    for (int i = 0; i < patch.count; ++i) {
+        const auto& step = patch.steps[static_cast<std::size_t>(i)];
+        if (step.address == transition) {
+            if (found || step.original.when != 0 || step.original.button != 0 ||
+                step.original.pitchDelta != 0 || step.original.yawDelta != 0) return fail("movement_transition_identity");
+            found = true;
+        } else if ((step.original.button & mo::Directions) || (step.original.presence & 0x18) ||
+                   step.original.forwardDelta != 0 || step.original.leftDelta != 0)
+            return fail("movement_multiple_intervals");
+    }
+    return found || fail("movement_transition_missing");
 }
-
-bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const char** reason,
-                         AntiAimCommandDiagnostics* diagnostics) noexcept {
-    return AntiAimApplyCommand(command, patch, AntiAimSettings{}, reason, diagnostics);
+bool Retarget(MovementSubtick& step, float forward, float left, const AntiAimMovementHistory& history) noexcept {
+    if (!std::isfinite(history.forward) || !std::isfinite(history.left)) return false;
+    step.forwardDelta = forward - history.forward; step.leftDelta = left - history.left;
+    if (!std::isfinite(step.forwardDelta) || !std::isfinite(step.leftDelta)) return false;
+    step.presence = (step.presence & ~0x18u) |
+        (step.forwardDelta != 0 ? 8u : 0u) | (step.leftDelta != 0 ? 0x10u : 0u);
+    return true;
 }
-bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const AntiAimSettings& settings,
-                         const char** reason, AntiAimCommandDiagnostics* diagnostics) noexcept {
+bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const AntiAimSettings& settings,
+                  const MovementBasis* movement, const char** reason, AntiAimCommandDiagnostics* diagnostics) noexcept {
     patch = {};
     if (diagnostics) *diagnostics = {};
     const auto diagnose = [&](const char* why) noexcept {
@@ -217,6 +246,23 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
     const auto fail = [&](const char* why) noexcept { diagnose(why); patch = {}; return false; };
     const char* snapshotReason = "not_read";
     if (!Snapshot(command, patch, &snapshotReason)) return fail(snapshotReason);
+    if (movement) {
+        constexpr auto actions = anti_aim_offsets::Attack | anti_aim_offsets::Attack2 | anti_aim_offsets::Use;
+        int attack = -1;
+        if (((patch.originalButtons.down | patch.originalButtons.changed | patch.originalButtons.third) & actions) ||
+            !Read(command + so::command::Attack1Index, attack) || ((patch.commandPresence & 0x20) && attack >= 0))
+            return fail("movement_action_passthrough");
+        if (!std::isfinite(movement->yaw) || patch.originalView.pitch < -89 || patch.originalView.pitch > 89 ||
+            patch.originalView.roll != 0) return fail("movement_view_basis");
+        // The caller has already applied a digital fallback. Do not convert an
+        // arbitrary analog/multi-interval command into a different trajectory.
+        const char* streamReason = nullptr;
+        if (!MovementStream(patch, movement->transition, &streamReason)) return fail(streamReason);
+        for (int i = 0; i < patch.count; ++i) {
+            const auto& step = patch.steps[static_cast<std::size_t>(i)];
+            if ((step.original.presence & 1) && (step.original.button & actions)) return fail("movement_action_passthrough");
+        }
+    }
     const auto options = AntiAimNormalizeSettings(settings);
     const bool legacyPayload = options.yawMode == AntiAimYawMode::Static && options.yawBase == AntiAimYawBase::View &&
         std::abs(options.yawOffset) == 180 && options.pitchMode == AntiAimPitchMode::Down;
@@ -321,10 +367,89 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
         }
         if (options.pitchMode != AntiAimPitchMode::Keep && (s.original.presence & 0x20)) s.edited.pitchDelta = 0;
     }
+    if (movement) {
+        for (int i = 0; i < patch.count; ++i) {
+            auto& step = patch.steps[static_cast<std::size_t>(i)];
+            // Native decoding adds raw deltas to the final base view, then
+            // applies that cumulative view before segment integration. The
+            // assisted fixed-basis solver requires a fixed outgoing basis.
+            // Physical input/camera is retained by the shared replay owner;
+            // rebuild restoration restores these original mouse bytes too.
+            step.edited.pitchDelta = 0; step.edited.yawDelta = 0;
+            step.edited.presence &= ~0x60u;
+            if (step.address != movement->transition) continue;
+            // Generic rotation produced R(D - physicalPrevious). Replacing D
+            // with the ideal full-forward vector gives 1 - R(physicalPrevious).
+            // When history is supplied, coalesce the native predecessor's
+            // basis change directly below instead of adding a boundary event.
+            if (movement->history) {
+                // The owned event can coalesce the history handoff directly.
+                // This requires no additional native allocation or event and
+                // cannot leave a partial change of basis on append failure.
+                if (!Retarget(step.edited, 1, 0, *movement->history)) return fail("movement_transition_nonfinite");
+            } else {
+                if (!Sum(step.edited.forwardDelta, 1.0f - patch.editedForward) ||
+                    !Sum(step.edited.leftDelta, -patch.editedLeft)) return fail("movement_transition_nonfinite");
+                step.edited.presence = (step.edited.presence & ~0x18u) |
+                    (step.edited.forwardDelta != 0 ? 8u : 0u) | (step.edited.leftDelta != 0 ? 0x10u : 0u);
+            }
+        }
+        patch.editedForward = 1; patch.editedLeft = 0;
+        patch.editedPresence = (patch.editedPresence & ~0xC0u) | mo::base::ForwardPresent;
+        patch.editedButtons.down = (patch.originalButtons.down & ~mo::Directions) | mo::Forward;
+        patch.editedButtons.changed &= ~mo::Directions;
+        patch.editedButtons.third &= ~mo::Directions;
+    }
     patch.valid = true;
     if (!Validate(patch, false, false)) return fail("command_changed_or_readonly");
     Write(patch, true);
     diagnose("applied");
+    return true;
+}
+}
+
+bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const char** reason,
+                         AntiAimCommandDiagnostics* diagnostics) noexcept {
+    return AntiAimApplyCommand(command, patch, AntiAimSettings{}, reason, diagnostics);
+}
+bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const AntiAimSettings& settings,
+                         const char** reason, AntiAimCommandDiagnostics* diagnostics) noexcept {
+    return ApplyCommand(command, patch, settings, nullptr, reason, diagnostics);
+}
+bool AntiAimApplyMovementCommand(std::uintptr_t command, float worldYaw,
+                                 std::uintptr_t analogTransition, AntiAimCommandPatch& patch,
+                                 const char** reason, AntiAimCommandDiagnostics* diagnostics,
+                                 const AntiAimMovementHistory* history) noexcept {
+    AntiAimSettings settings{};
+    settings.yawBase = AntiAimYawBase::World;
+    settings.pitchMode = AntiAimPitchMode::Keep;
+    double yaw = std::fmod(static_cast<double>(worldYaw), 360.0);
+    if (yaw >= 180) yaw -= 360;
+    if (yaw < -180) yaw += 360;
+    settings.yawOffset = static_cast<float>(yaw);
+    const MovementBasis movement{worldYaw, analogTransition, history};
+    return ApplyCommand(command, patch, settings, &movement, reason, diagnostics);
+}
+bool AntiAimApplyMovementHandoff(std::uintptr_t command, std::uintptr_t analogTransition,
+                                 const AntiAimMovementHistory& history, AntiAimCommandPatch& patch,
+                                 const char** reason) noexcept {
+    patch = {};
+    const auto fail = [&](const char* why) noexcept { if (reason) *reason = why; patch = {}; return false; };
+    const char* why = nullptr;
+    if (!Snapshot(command, patch, &why) || !MovementStream(patch, analogTransition, &why)) return fail(why);
+    patch.editedView = patch.originalView; patch.editedAnglePresence = patch.anglePresence;
+    patch.editedForward = patch.originalForward; patch.editedLeft = patch.originalLeft;
+    patch.editedPresence = patch.originalPresence; patch.editedButtons = patch.originalButtons;
+    for (int i = 0; i < patch.count; ++i) {
+        auto& step = patch.steps[static_cast<std::size_t>(i)];
+        step.edited = step.original;
+        if (step.address == analogTransition && !Retarget(step.edited, patch.originalForward, patch.originalLeft, history))
+            return fail("movement_transition_nonfinite");
+    }
+    patch.valid = true;
+    if (!Validate(patch, false, false)) return fail("command_changed_or_readonly");
+    Write(patch, true);
+    if (reason) *reason = "movement_handoff_applied";
     return true;
 }
 bool AntiAimRestoreCommand(const AntiAimCommandPatch& patch) noexcept {

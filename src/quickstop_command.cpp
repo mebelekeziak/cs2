@@ -133,6 +133,40 @@ QuickstopAxes QuickstopBrakeAxes(float vx, float vy, float vz, float yaw, const 
     return result;
 }
 
+bool QuickstopCommandHasJump(std::uintptr_t command) noexcept {
+    MovementButtons buttons{};
+    if (!Pointer(command, 0x78) || !Read(command + off::command::Buttons, buttons)) return true;
+    if ((buttons.down | buttons.changed | buttons.third) & off::Jump) return true;
+    std::uint32_t presence = 0;
+    std::uintptr_t base = 0, rep = 0;
+    int count = 0, capacity = 0, allocated = 0;
+    if (!Read(command + off::command::Presence, presence) || !(presence & 1) ||
+        !Read(command + off::command::Base, base) || !Pointer(base, 0x60) ||
+        Overlap(base, 0x60, command, 0x78) ||
+        !Read(base + off::base::SubtickSize, count) || count < 0 || count > 128 ||
+        !Read(base + off::base::SubtickCapacity, capacity) || capacity < count || capacity > 4096 ||
+        !Read(base + off::base::SubtickRep, rep)) return true;
+    const auto repBytes = 8 + static_cast<std::size_t>(capacity) * 8;
+    if (rep) {
+        if (!Pointer(rep, repBytes) || Overlap(rep, repBytes, command, 0x78) || Overlap(rep, repBytes, base, 0x60) ||
+            !Read(rep, allocated) || allocated < count || allocated > capacity) return true;
+    } else if (count || capacity) return true;
+    float previousWhen = -1;
+    for (int index = 0; index < count; ++index) {
+        std::uintptr_t address = 0;
+        MovementSubtick step{};
+        if (!Read(rep + 8 + static_cast<std::size_t>(index) * 8, address) || !Pointer(address, sizeof(step)) ||
+            Overlap(address, sizeof(step), command, 0x78) || Overlap(address, sizeof(step), base, 0x60) ||
+            Overlap(address, sizeof(step), rep, repBytes) || !Read(address, step) ||
+            !std::isfinite(step.when) || step.when < 0 || step.when > 1 || step.when < previousWhen) return true;
+        // The native decoder branches on raw button even without its presence
+        // bit. A released edge still means this interval contains jump input.
+        if (step.button & off::Jump) return true;
+        previousWhen = step.when;
+    }
+    return false;
+}
+
 bool QuickstopApplyCommand(std::uintptr_t command, float forward, float left, float historyF, float historyL,
     std::uint64_t previousDirections, std::uintptr_t allocator, std::uintptr_t append, QuickstopCommandPatch& p,
     bool preserveInput) noexcept {

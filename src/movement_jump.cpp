@@ -19,6 +19,22 @@ void BeginRequest(JumpState& state, const JumpInput& in) noexcept {
 }
 
 void ResetJump(JumpState& state) noexcept { state = {}; }
+bool TimedJumpAttemptReady(JumpAttemptClock& clock, std::uint32_t simulationTick,
+                          float interval, float penalty) noexcept {
+    if (!std::isfinite(interval) || interval <= 0 || interval > 0.1f ||
+        !std::isfinite(penalty) || penalty < 0 || penalty >= 10) return false;
+    if (clock.haveClock && simulationTick < clock.lastTick && clock.haveRequest)
+        clock.requestTick = simulationTick;
+    clock.haveClock = true; clock.lastTick = simulationTick;
+    // A previous timed press can be anywhere strictly inside requestTick.
+    // Include that whole interval before comparing with the native cooldown.
+    return !clock.haveRequest || static_cast<double>(simulationTick - clock.requestTick) * interval >=
+        static_cast<double>(penalty) + interval;
+}
+void RecordJumpAttempt(JumpAttemptClock& clock, std::uint32_t simulationTick) noexcept {
+    clock.haveClock = clock.haveRequest = true;
+    clock.requestTick = clock.lastTick = simulationTick;
+}
 void RecordTimedJump(JumpState& state, std::uint32_t simulationTick) noexcept {
     ResetJump(state);
     state.down = state.timedPress = state.timedRequest = state.haveClock = true;

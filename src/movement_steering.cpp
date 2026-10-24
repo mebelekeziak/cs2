@@ -71,6 +71,41 @@ SteeringOutput Slice(SteeringState& state, double x, double y, double camera, do
         std::isfinite(out.accelerationStep);
     return out;
 }
+SteeringOutput DigitalFallback(const SteeringOutput& ideal, double x, double y, double camera,
+                               double desired, const AirPhysics& p) noexcept {
+    SteeringOutput best{};
+    double closest = 1000;
+    const double initialSpeed = std::hypot(x, y);
+    const double initialYaw = std::atan2(y, x) / radians;
+    const double budget = static_cast<double>(p.acceleration) * p.wishSpeed * p.surfaceFriction * p.interval;
+    const double cap = std::min<double>(p.wishSpeedCap, p.wishSpeed);
+    // Full digital inputs are fixed points of native roundf. In a command
+    // where actions prevent reorienting the movement basis, choose the nearest
+    // realizable non-braking wish instead of letting rounding choose a brake.
+    for (int forward = -1; forward <= 1; ++forward) {
+        for (int left = -1; left <= 1; ++left) {
+            if (!forward && !left) continue;
+            const double yaw = Wrap(camera + std::atan2(static_cast<double>(left), forward) / radians);
+            const double dx = std::cos(yaw * radians), dy = std::sin(yaw * radians);
+            const double projection = x * dx + y * dy;
+            if (projection < -0.000001) continue;
+            const double impulse = std::min(budget, std::max(0.0, cap - projection));
+            const double finalX = x + impulse * dx, finalY = y + impulse * dy;
+            const double error = std::abs(Wrap(yaw - ideal.wishYaw));
+            if (error >= closest) continue;
+            closest = error;
+            best.valid = true;
+            best.forward = static_cast<float>(forward); best.left = static_cast<float>(left);
+            best.wishYaw = static_cast<float>(yaw); best.accelerationStep = static_cast<float>(impulse);
+            best.predictedVelocityX = static_cast<float>(finalX); best.predictedVelocityY = static_cast<float>(finalY);
+            const double heading = std::atan2(finalY, finalX) / radians;
+            best.headingError = static_cast<float>(Wrap(desired - heading));
+            best.headingChange = initialSpeed > 0.000001 ? static_cast<float>(Wrap(heading - initialYaw)) : 0;
+            best.mode = ideal.mode;
+        }
+    }
+    return best;
+}
 }
 #ifdef CS2_STEERING_BENCHMARK
 unsigned int SteeringCandidateEvaluationsForBenchmark() noexcept { return candidateEvaluations; }
@@ -93,14 +128,15 @@ SteeringOutput PlanAirSteering(SteeringState& state, const StrafeInput& in,
     return out;
 }
 SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& in,
-                                      const AirPhysics& p, std::size_t sliceCount) noexcept {
+                                      const AirPhysics& p, std::size_t requestedSlices) noexcept {
 #ifdef CS2_STEERING_BENCHMARK
     commandEvaluations = 0;
 #endif
-    if (!Valid(in, p) || sliceCount == 0 || sliceCount > AirSteeringSliceCount) {
+    if (!Valid(in, p) || requestedSlices == 0 || requestedSlices > AirSteeringSliceCount) {
         ResetAirSteering(state); return {};
     }
     SteeringCommand command{};
+    const std::size_t sliceCount = p.quantized ? 1 : requestedSlices;
     const double camera = Wrap(in.viewYaw);
     const double desired = Wrap(camera + std::atan2(static_cast<double>(in.left), static_cast<double>(in.forward)) / radians);
     const double duration = static_cast<double>(p.interval) / sliceCount;
@@ -110,6 +146,12 @@ SteeringCommand PlanAirSteeringCommand(SteeringState& state, const StrafeInput& 
         auto& output = command.slices[i];
         output = Slice(state, x, y, camera, desired, p, duration, ((in.sequence + i) & 1u) == 0);
         if (!output.valid) { ResetAirSteering(state); return {}; }
+        if (p.quantized) {
+            command.commandBasis = true;
+            command.basisWishYaw = output.wishYaw;
+            output = DigitalFallback(output, x, y, camera, desired, p);
+            if (!output.valid) { ResetAirSteering(state); return {}; }
+        }
         x = output.predictedVelocityX; y = output.predictedVelocityY;
         impulse += output.accelerationStep;
     }

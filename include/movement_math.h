@@ -7,6 +7,7 @@ struct AirPhysics {
     float acceleration = 0;
     float surfaceFriction = 0;
     float interval = 0;
+    bool quantized = false; // Current replicated sv_quantize_movement_input; never overridden.
 };
 struct StrafeInput {
     float velocityX = 0, velocityY = 0;

@@ -662,8 +662,143 @@ void Rejections() {
     }
     VirtualFree(memory, 0, MEM_RELEASE);
 }
+void QuantizedMovementBasis() {
+    const auto prepare = [](Fixture& f, float forward = 1, float left = 0) {
+        MovementButtons buttons{};
+        MovementEncodeStrafe(buttons, forward, left, 0);
+        buttons.down |= mo::Jump;
+        Put(Address(f.command) + mo::command::Buttons, buttons);
+        Put(Address(f.base) + mo::base::Presence, std::uint32_t{0x8004} |
+            (forward != 0 ? mo::base::ForwardPresent : 0u) | (left != 0 ? mo::base::LeftPresent : 0u));
+        Put(Address(f.base) + mo::base::Forward, forward); Put(Address(f.base) + mo::base::Left, left);
+        for (std::size_t i = 0; i < f.steps.size(); ++i) {
+            auto& step = f.steps[i];
+            step.button = 0; step.pressed = false;
+            step.presence = 0x80000064; // time and native mouse camera payload
+            step.forwardDelta = 0; step.leftDelta = 0;
+            step.pitchDelta = 1; step.yawDelta = i ? 10.0f : 0.0f;
+        }
+        f.steps[0].when = 0; f.steps[0].pitchDelta = 0;
+        f.steps[0].forwardDelta = forward - 0.6f; f.steps[0].leftDelta = left - 0.2f;
+        f.steps[0].presence = 0x8000001C;
+        f.steps[2].button = mo::Jump; f.steps[2].pressed = true; f.steps[2].presence |= 3;
+    };
+    for (const float yaw : {37.0f, 179.9f, -180.0f, 721.25f, -1080.5f}) {
+        Fixture f; prepare(f); const Fixture before = f;
+        AntiAimCommandPatch patch{}; const char* reason = nullptr;
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), yaw, Address(f.steps[0]), patch, &reason);
+        Expect(applied && patch.valid && patch.editedView.pitch == 20 && patch.editedView.yaw == Wrap(yaw) &&
+               patch.editedForward == 1 && patch.editedLeft == 0 &&
+               Get<float>(Address(f.base) + mo::base::Forward) == 1 && Get<float>(Address(f.base) + mo::base::Left) == 0,
+               "quantized ideal world yaw wraps while outgoing axes remain exact full-forward and pitch stays physical");
+        if (!applied) continue;
+        const auto rotatedPrevious = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, 0.6f, 0.2f);
+        Expect(rotatedPrevious.valid && Near(f.steps[0].forwardDelta + rotatedPrevious.forward, 1) &&
+               Near(f.steps[0].leftDelta + rotatedPrevious.left, 0) &&
+               (patch.editedButtons.down & mo::Directions) == mo::Forward &&
+               !(patch.editedButtons.changed & mo::Directions) && !(patch.editedButtons.third & mo::Directions),
+               "owned time-zero event replaces digital fallback with ideal axes after predecessor basis handoff");
+        bool fixed = true;
+        for (const auto& step : f.steps) fixed &= step.pitchDelta == 0 && step.yawDelta == 0 && !(step.presence & 0x60);
+        Expect(fixed && f.steps[2].button == mo::Jump && f.steps[2].pressed && f.steps[2].when == before.steps[2].when,
+               "assisted command fixes every subtick view basis while jump edges metadata and timing survive");
+        const Fixture outgoing = f;
+        bool cycles = true;
+        for (int i = 0; i < 50; ++i) {
+            cycles &= AntiAimSetReplayView(patch, true) && f.angles == before.angles;
+            cycles &= AntiAimSetReplayView(patch, false) && Same(f, outgoing);
+            cycles &= AntiAimRestoreCommand(patch) && Same(f, before);
+            cycles &= AntiAimReapplyCommand(patch) && Same(f, outgoing);
+        }
+        Expect(cycles, "quantized basis replay and rebuild restores retain every physical mouse delta without accumulated rotation");
+    }
+    for (const auto axes : {std::array<float, 2>{1, 1}, {-1, 0}, {0, -1}, {-1, -1}}) {
+        Fixture f; prepare(f, axes[0], axes[1]); const Fixture before = f; AntiAimCommandPatch patch{};
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), -127.5f, Address(f.steps[0]), patch);
+        const auto prior = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, 0.6f, 0.2f);
+        Expect(applied && patch.editedForward == 1 && patch.editedLeft == 0 && prior.valid &&
+               Near(prior.forward + f.steps[0].forwardDelta, 1) && Near(prior.left + f.steps[0].leftDelta, 0) &&
+               AntiAimRestoreCommand(patch) && Same(f, before),
+               "all cardinal and diagonal digital fallbacks upgrade to the same ideal trajectory and restore exactly");
+    }
+    for (int kind = 0; kind < 11; ++kind) {
+        Fixture f; prepare(f); AntiAimCommandPatch patch{};
+        auto buttons = Get<MovementButtons>(Address(f.command) + mo::command::Buttons);
+        if (kind == 0) buttons.down |= 1; // primary attack
+        if (kind == 1) buttons.changed |= 0x800; // secondary tap
+        if (kind == 2) buttons.third |= 0x20; // use tap
+        Put(Address(f.command) + mo::command::Buttons, buttons);
+        if (kind == 3) { f.steps[1].button = 0x800; f.steps[1].presence |= 3; }
+        if (kind == 4) { Put(Address(f.command) + mo::command::Presence, std::uint32_t{0x8021}); Put(Address(f.command) + so::command::Attack1Index, 0); }
+        if (kind == 5) Put(Address(f.base) + mo::base::Forward, 0.6f);
+        if (kind == 6) f.steps[0].when = 0.1f;
+        if (kind == 7) { f.steps[1].forwardDelta = 0.25f; f.steps[1].presence |= 8; }
+        if (kind == 8) Put(Address(f.angles) + so::angle::Pitch, AimAngles{90, 35, 0});
+        if (kind == 9) Put(Address(f.command) + mo::command::Sequence, 0);
+        const Fixture before = f;
+        const auto transition = kind == 10 ? Address(f.steps[0]) + 8 : Address(f.steps[0]);
+        Expect(!AntiAimApplyMovementCommand(Address(f.command), 62, transition, patch) && !patch.valid && Same(f, before),
+               "actions non-digital fallback stale transition identity and unsupported scopes leave safe fallback untouched");
+    }
+    Fixture f; prepare(f); AntiAimCommandPatch patch{};
+    const Fixture before = f;
+    Expect(!AntiAimApplyMovementCommand(Address(f.command), std::numeric_limits<float>::quiet_NaN(), Address(f.steps[0]), patch) && Same(f, before),
+           "invalid requested heading cancels upgrade without touching digital input");
+    Expect(AntiAimApplyMovementCommand(Address(f.command), 62, Address(f.steps[0]), patch), "stale quantized ownership fixture applies");
+    Put(Address(f.command) + mo::command::Sequence, 18); const Fixture replaced = f;
+    Expect(!AntiAimRestoreCommand(patch) && Same(f, replaced), "recycled sequence refuses stale movement basis restoration");
+    for (const auto historical : {AntiAimMovementHistory{-1, 0.75f}, {1, 0}, {0, -1}, {0.5f, -0.5f}}) {
+        HandoffFixture current; prepare(current, -1, 1);
+        const Fixture physicalBefore = current; const auto repBefore = current.Rep();
+        allocatingHandoff = nullptr; // Native allocation would fail; this path must not call it.
+        AntiAimCommandPatch owned{};
+        const bool applied = AntiAimApplyMovementCommand(Address(current.command), 126.5f, Address(current.steps[0]), owned,
+                                                         nullptr, nullptr, &historical);
+        Expect(applied && Near(historical.forward + current.steps[0].forwardDelta, 1) &&
+               Near(historical.left + current.steps[0].leftDelta, 0) && current.Size() == 3 && current.Rep() == repBefore &&
+               current.allocations == 0 && current.appends == 0,
+               "native predecessor handoff coalesces into owned event with exact ideal axes under allocation exhaustion");
+        AntiAimHistoryCommand wire{}; AntiAimHistoryState history{}; AntiAimHistoryCommand matched{};
+        const bool published = AntiAimHistoryReadCommand(Address(current.command), 51, wire);
+        wire.edited = true; wire.physical = owned.originalView;
+        const auto idealPhysical = AntiAimCorrectWalkMovement(wire.outgoing, wire.physical, wire.forward, wire.left);
+        const auto expectedIdeal = AntiAimCorrectWalkMovement({20, 126.5f, 0}, owned.originalView, 1, 0);
+        Expect(published && AntiAimHistoryPublish(history, wire) && AntiAimHistoryMatch(history, wire, matched) &&
+               matched.edited && idealPhysical.valid && expectedIdeal.valid && Near(idealPhysical.forward, expectedIdeal.forward) &&
+               Near(idealPhysical.left, expectedIdeal.left) &&
+               !(Near(idealPhysical.forward, -1) && Near(idealPhysical.left, 1)),
+               "published outgoing full-forward inverts to the ideal physical predecessor rather than digital fallback");
+        const Fixture outgoing = current;
+        bool repeat = applied;
+        for (int rebuild = 0; rebuild < 20; ++rebuild) {
+            repeat &= AntiAimRestoreCommand(owned) && Same(current, physicalBefore);
+            repeat &= AntiAimReapplyCommand(owned) && Same(current, outgoing);
+        }
+        Expect(repeat && AntiAimRestoreCommand(owned), "coalesced ideal handoff restores and reapplies without a second boundary or accumulated correction");
+        auto buttons = Get<MovementButtons>(Address(current.command) + mo::command::Buttons);
+        buttons.down |= 0x800; Put(Address(current.command) + mo::command::Buttons, buttons);
+        current.steps[1].button = 0x20; current.steps[1].presence |= 3; current.steps[1].pressed = true;
+        const Fixture fallbackBefore = current;
+        const bool rejectedUpgrade = !AntiAimApplyMovementCommand(Address(current.command), 126.5f, Address(current.steps[0]), owned,
+                                                                   nullptr, nullptr, &historical);
+        const bool handoff = AntiAimApplyMovementHandoff(Address(current.command), Address(current.steps[0]), historical, owned);
+        Expect(rejectedUpgrade && handoff && Near(historical.forward + current.steps[0].forwardDelta, -1) &&
+               Near(historical.left + current.steps[0].leftDelta, 1) && current.angles == fallbackBefore.angles &&
+               current.command == fallbackBefore.command && current.base == fallbackBefore.base &&
+               std::memcmp(&current.steps[1], &fallbackBefore.steps[1], 2 * sizeof(MovementSubtick)) == 0 &&
+               current.Size() == 3 && current.Rep() == repBefore && !current.allocations && !current.appends,
+               "action-blocked upgrade retains digital fallback with native predecessor handoff and exact camera/action bytes");
+        const Fixture outgoingFallback = current;
+        repeat = handoff;
+        for (int rebuild = 0; rebuild < 20; ++rebuild) {
+            repeat &= AntiAimRestoreCommand(owned) && Same(current, fallbackBefore);
+            repeat &= AntiAimReapplyCommand(owned) && Same(current, outgoingFallback);
+        }
+        Expect(repeat, "digital fallback handoff ownership restores original planner event on every rebuild");
+    }
+}
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); QuantizedMovementBasis();
     return failures ? 1 : 0;
 }

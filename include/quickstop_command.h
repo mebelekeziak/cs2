@@ -19,6 +19,10 @@ struct QuickstopPhysics {
 QuickstopAxes QuickstopBrakeAxes(float velocityX, float velocityY, float velocityZ,
     float yaw, const QuickstopPhysics& physics) noexcept;
 
+// Read-only, engine command owner only. A final release or timed jump action
+// still excludes a ground brake. Unreadable/malformed input also returns true.
+bool QuickstopCommandHasJump(std::uintptr_t command) noexcept;
+
 struct QuickstopCommandPatch {
     AntiAimBoundaryPatch boundary{};
     std::array<MovementSubtick, 127> editedSteps{};

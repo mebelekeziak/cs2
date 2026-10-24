@@ -57,6 +57,7 @@ struct MovementReplayContext {
     std::uint32_t pawnHandle = UINT32_MAX, controllerHandle = UINT32_MAX;
     MovementReplayIntent intent{};
     bool jumpbug = false;
+    bool quantized = false;
 };
 inline bool MovementReplaySameSource(const MovementReplayContext& cached,
                                     const MovementReplayContext& current) noexcept {
@@ -88,12 +89,15 @@ struct MovementReplayPlan {
     std::array<Analog, AirSteeringSliceCount> analogs{};
     bool jumpbug = false;
     float landingFraction = 0;
+    bool commandBasis = false;
+    float basisWishYaw = 0;
 };
 inline MovementReplayPlan MovementRefreshReplaySteering(MovementReplayPlan plan,
     float forward, float left, std::uint64_t previousDirections) noexcept {
     // Zero axes are also owned: a release must replace historical assisted
     // axes before integration, rather than only changing the final base value.
     plan.strafe = true; plan.forward = forward; plan.left = left;
+    plan.commandBasis = false; plan.basisWishYaw = 0;
     plan.analogCount = 1; plan.analogs = {}; plan.analogs[0] = {forward, left, 0};
     MovementEncodeStrafe(plan.buttons, forward, left, previousDirections);
     return plan;
@@ -102,6 +106,8 @@ inline MovementReplayPlan MovementRefreshReplaySteeringCommand(MovementReplayPla
     const SteeringCommand& command, std::uint64_t previousDirections) noexcept {
     plan = MovementRefreshReplaySteering(plan, command.summary.forward, command.summary.left, previousDirections);
     plan.analogCount = command.count;
+    plan.commandBasis = command.commandBasis;
+    plan.basisWishYaw = command.basisWishYaw;
     for (std::size_t slice = 0; slice < command.count && slice < plan.analogs.size(); ++slice)
         plan.analogs[slice] = {command.slices[slice].forward, command.slices[slice].left,
             static_cast<float>(slice) / static_cast<float>(command.count)};
@@ -175,9 +181,9 @@ struct MovementReplaySteeringResult {
 };
 inline MovementReplaySteeringResult MovementPlanReplaySteering(const MovementReplaySteeringStart& start,
     const MovementReplayIntent& cachedIntent, const MovementReplayIntent& currentIntent,
-    const MovementReplayPlan& plan) noexcept {
+    const MovementReplayPlan& plan, bool force = false) noexcept {
     MovementReplaySteeringResult result{}; result.plan = plan;
-    if (!start.available || !MovementReplayIntentChanged(cachedIntent, currentIntent)) return result;
+    if (!start.available || (!force && !MovementReplayIntentChanged(cachedIntent, currentIntent))) return result;
     result.refreshed = true; result.state = start.state;
     auto input = start.input;
     input.forward = currentIntent.forward; input.left = currentIntent.left; input.viewYaw = currentIntent.viewYaw;
