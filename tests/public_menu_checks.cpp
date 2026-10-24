@@ -635,21 +635,49 @@ void CheckTabsFit(const char* message) {
     Expect(fit, message);
 }
 
+ImGuiWindow* SkinChild(const char* name) {
+    for (auto* child : Body()->DC.ChildWindows)
+        if (std::strstr(child->Name, name)) return child;
+    return nullptr;
+}
 void SelectSkinModel(const skin_catalog::Item& item) {
-    ClickControl("##SkinDefinition");
+    // Bring the browser into view before scrolling its independent item list.
+    ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
-    auto& context = *ImGui::GetCurrentContext();
-    const bool opened = !context.OpenPopupStack.empty() && context.OpenPopupStack.back().Window;
-    Expect(opened, "skin model picker opens through mouse input");
-    if (!opened) return;
-    auto* popup = context.OpenPopupStack.back().Window;
-    ClickControl(item.display_name, 0.5f, popup, ImHashStr(item.display_name, 0, popup->GetID(item.definition_index)));
+    auto* browser = SkinChild("##SkinItemList");
+    Expect(browser != nullptr, "persistent skin item browser is available");
+    if (browser) ClickControl(item.display_name, 0.5f, browser,
+        ImHashStr(item.display_name, 0, browser->GetID(item.definition_index)));
+}
+int SelectSkinFinish(const skin_catalog::Item& item) {
+    const skin_catalog::Paint* chosen = nullptr;
+    for (const int id : skin_catalog::compatible_paints(item.definition_index)) {
+        const auto* paint = skin_catalog::find_paint(id);
+        if (id && paint && std::strcmp(paint->display_name, "Doppler") && std::strcmp(paint->display_name, "Gamma Doppler")) {
+            chosen = paint;
+            break;
+        }
+    }
+    Expect(chosen != nullptr, "item has a catalog finish for selection test");
+    if (!chosen) return 0;
+    ClickControl("##SkinPaintSearch");
+    ImGui::GetIO().AddInputCharactersUTF8(std::to_string(chosen->id).c_str());
+    Frame(); Frame();
+    auto* list = SkinChild("##SkinPaintList");
+    Expect(list != nullptr, "compatible finish browser is available");
+    if (list) {
+        const std::string label = std::string(chosen->display_name) + "  (#" + std::to_string(chosen->id) + ")";
+        ClickControl(label.c_str(), 0.5f, list, ImHashStr(label.c_str(), 0, list->GetID(chosen->id)));
+    }
+    ClickControl("Clear search");
+    return chosen->id;
 }
 
 void SkinControls() {
     const skin_catalog::Item* firstKnife = nullptr;
     const skin_catalog::Item* secondKnife = nullptr;
     const skin_catalog::Item* gloves = nullptr;
+    const skin_catalog::Item* tWeapon = nullptr;
     for (const auto& entry : skin_catalog::items()) {
         if (entry.kind == skin_catalog::ItemKind::Knife && entry.team_mask &&
             skin_catalog::compatible_paints(entry.definition_index).size() > 1) {
@@ -658,49 +686,134 @@ void SkinControls() {
         }
         if (!gloves && entry.kind == skin_catalog::ItemKind::Gloves && entry.team_mask &&
             skin_catalog::compatible_paints(entry.definition_index).size() > 1) gloves = &entry;
+        if (!tWeapon && entry.kind == skin_catalog::ItemKind::Weapon && entry.team_mask == 1 &&
+            skin_catalog::compatible_paints(entry.definition_index).size() > 1) tWeapon = &entry;
     }
-    Expect(firstKnife && secondKnife && gloves, "installed catalog exposes customizable knives and gloves");
-    if (!firstKnife || !secondKnife || !gloves) return;
+    Expect(firstKnife && secondKnife && gloves && tWeapon, "installed catalog exposes skin editor fixtures");
+    if (!firstKnife || !secondKnife || !gloves || !tWeapon) return;
     SkinResetSettings();
     SkinSetRuntimeStatus("Native runtime fixture status.");
     Click(TabPosition(6));
     Frame(); Frame();
-    Expect(Body() && std::strstr(Body()->Name, "##SkinSettings"), "Skins tab opens its own editor");
-    Expect(SubmittedMenuText().find("Native runtime fixture status.") != std::string::npos,
-        "skin editor displays actual runtime diagnostics");
-    ClickControl("Enable skin changer");
-    SelectEspCombo("##SkinKind", "Knife", 1);
+    Expect(Body() && std::strstr(Body()->Name, "##SkinSettings"), "Skins tab opens its own loadout editor");
+    Expect(SkinGetSettings() == SkinSettings{}, "opening the editor never creates or enables overrides");
+    ClickControl("Knife");
+    const auto knifeLabels = SubmittedMenuText();
+    Expect(knifeLabels.find("Default knife (T)") != std::string::npos &&
+        knifeLabels.find("Default knife (CT)") != std::string::npos,
+        "the two default knife models have distinct readable labels");
     SelectSkinModel(*firstKnife);
-    ClickControl("Override this item");
+    Expect(SkinGetSettings().enabled && SkinGetSettings().teams[0].knife.enabled,
+        "selecting a knife activates it without redundant enable checkboxes");
+    int tPaint = SelectSkinFinish(*firstKnife);
+    const skin_catalog::Paint* phase = nullptr;
+    for (const int id : skin_catalog::compatible_paints(firstKnife->definition_index)) {
+        const auto* candidate = skin_catalog::find_paint(id);
+        if (candidate && !std::strcmp(candidate->display_name, "Doppler") &&
+            std::strstr(candidate->internal_name, "_phase2")) { phase = candidate; break; }
+    }
+    Expect(phase != nullptr, "installed knife catalog contains an identified Doppler phase");
+    if (phase) {
+        ClickControl("##SkinPaintSearch");
+        ImGui::GetIO().AddInputCharactersUTF8("Phase 2");
+        Frame(); Frame();
+        const std::string label = "Doppler / Phase 2  (#" + std::to_string(phase->id) + ")";
+        auto* list = SkinChild("##SkinPaintList");
+        ClickControl(label.c_str(), 0.5f, list, ImHashStr(label.c_str(), 0, list->GetID(phase->id)));
+        tPaint = phase->id;
+        Expect(SkinGetSettings().teams[0].knife.paintKit == tPaint,
+            "readable phase search and selection preserve the exact installed paint ID");
+        ClickControl("Clear search");
+    }
+    ClickControl("Wear & details");
     ClickControl("##SkinSeed", 0.2f);
+    ClickControl("##SkinWear", 0.4f);
+    ClickControl("StatTrak");
+    ClickControl("##SkinCustomName");
+    for (const char* part : { "My", " ", "Knife" }) {
+        ImGui::GetIO().AddInputCharactersUTF8(part);
+        Frame(); Frame();
+    }
     const auto terroristKnife = SkinGetSettings().teams[0].knife;
     Expect(terroristKnife.enabled && terroristKnife.definitionIndex == firstKnife->definition_index &&
-        terroristKnife.seed > 0, "T knife model and seed publish through mouse controls");
-    SelectEspCombo("##SkinTeam", "Counter-Terrorists (CT)", 1);
-    SelectSkinModel(*secondKnife);
-    ClickControl("Override this item");
-    ClickControl("##SkinSeed", 0.8f);
+        terroristKnife.paintKit == tPaint && terroristKnife.seed > 0 && terroristKnife.statTrak == 0 &&
+        std::strcmp(terroristKnife.customName.data(), "My Knife") == 0,
+        "T knife finish, wear, seed, zero StatTrak and spaced name publish through mouse/text input");
+    ImGui::GetIO().AddInputCharactersUTF8("#");
+    Frame(); Frame();
     Expect(SkinGetSettings().teams[0].knife == terroristKnife &&
-        SkinGetSettings().teams[1].knife.definitionIndex == secondKnife->definition_index &&
-        SkinGetSettings().teams[1].knife.seed > terroristKnife.seed,
-        "CT knife uses its own model and pattern without replacing T choices");
-    SelectEspCombo("##SkinKind", "Gloves", 2);
+        SubmittedMenuText().find("Name not saved:") != std::string::npos,
+        "invalid name drafts show feedback and preserve the last valid saved name");
+    ClickControl("Wear & details");
+    ClickControl("###SkinTeamCT");
+    SelectSkinModel(*secondKnife);
+    const int ctPaint = SelectSkinFinish(*secondKnife);
+    ClickControl("Wear & details");
+    ClickControl("##SkinSeed", 0.8f);
+    ClickControl("Wear & details");
+    const auto ctKnife = SkinGetSettings().teams[1].knife;
+    Expect(SkinGetSettings().teams[0].knife == terroristKnife && ctKnife.paintKit == ctPaint &&
+        ctKnife.definitionIndex == secondKnife->definition_index && ctKnife.seed > terroristKnife.seed,
+        "direct CT switch keeps independent model, finish and pattern choices");
+    ClickControl("Pause##SkinPower");
+    Expect(!SkinGetSettings().enabled && SkinGetSettings().teams[0].knife == terroristKnife &&
+        SkinGetSettings().teams[1].knife == ctKnife, "Pause retains both complete loadouts");
+    ClickControl("###SkinTeamT");
+    ClickControl("Use stock item");
+    Expect(SkinGetSettings().teams[0].knife == SkinItemSettings{} && SkinGetSettings().teams[1].knife == ctKnife,
+        "Use stock item clears only the current side's slot, even while paused");
+    SelectSkinModel(*firstKnife);
+    SelectSkinFinish(*firstKnife);
+    Expect(SkinGetSettings().enabled, "choosing again resumes customization automatically");
+    ClickControl("###SkinTeamCT");
+    ClickControl("Gloves");
     SelectSkinModel(*gloves);
-    ClickControl("Override this item");
+    SelectSkinFinish(*gloves);
     Expect(SkinGetSettings().teams[1].gloves.enabled &&
         SkinGetSettings().teams[1].gloves.definitionIndex == gloves->definition_index &&
         !SkinGetSettings().teams[0].gloves.enabled, "glove overrides are independent for each side");
     ClickControl("##SkinPaintSearch");
     ImGui::GetIO().AddInputCharactersUTF8("no-finish-can-match-this-value");
     Frame(); Frame();
-    Expect(SubmittedMenuText().find("0 matching /") != std::string::npos,
-        "finish search filters the installed compatible catalog");
+    Expect(SubmittedMenuText().find("No matching finishes.") != std::string::npos,
+        "finish search has a useful empty state");
+    ClickControl("Weapons");
+    Expect(SubmittedMenuText().find("No matching finishes.") == std::string::npos,
+        "switching item category clears stale finish searches");
+    const auto beforeBrowse = SkinGetSettings();
+    SelectSkinModel(*tWeapon);
+    Expect(SkinGetSettings() == beforeBrowse, "browsing a weapon does not create a saved record");
+    const int weaponPaint = SelectSkinFinish(*tWeapon);
+    const auto afterWeapon = SkinGetSettings();
+    const auto* savedWeapon = SkinFindWeaponSettings(afterWeapon.teams[1], tWeapon->definition_index);
+    Expect(savedWeapon && savedWeapon->enabled && savedWeapon->paintKit == weaponPaint &&
+        !SkinFindWeaponSettings(afterWeapon.teams[0], tWeapon->definition_index),
+        "CT may customize an opposing-side weapon without altering the T loadout");
+    ClickControl("Loadout options");
+    Expect(SubmittedMenuText().find("Native runtime fixture status.") != std::string::npos,
+        "loadout options expose actual runtime diagnostics");
+    const auto savedLoadouts = SkinGetSettings();
+    ClickControl("Reset both loadouts");
+    Expect(SkinGetSettings() == SkinSettings{}, "explicit reset clears both loadouts and pauses customization");
+    SkinSetSettings(savedLoadouts);
+    ClickControl("Loadout options");
     Click(TabPosition(0));
     Click(TabPosition(6));
-    Expect(SkinGetSettings().teams[0].knife == terroristKnife &&
-        SkinGetSettings().teams[1].gloves.definitionIndex == gloves->definition_index,
-        "tab switches preserve both team loadouts");
-    // Leave both teams populated for the later Save / Load button round trip.
+    Expect(SkinGetSettings() == savedLoadouts, "tab switches preserve both loadouts without publishing edits");
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImVec2 position = Menu()->Pos;
+    ImGui::GetIO().DisplaySize = { 240, 500 };
+    Frame(); Frame();
+    ClickControl("###SkinTeamT");
+    ClickControl("###SkinTeamCT");
+    const ImRect compactSide = ControlRect("###SkinTeamCT");
+    Expect(compactSide.GetWidth() >= ImGui::CalcTextSize("CT").x + ImGui::GetStyle().FramePadding.x * 2 &&
+        Body()->StateStorage.GetInt(Body()->GetID("##SkinSelectedTeam")) == 1 && SkinGetSettings() == savedLoadouts,
+        "compact T/CT buttons remain mouse reachable and preserve loadouts in a narrow viewport");
+    ImGui::GetIO().DisplaySize = display;
+    ImGui::SetWindowPos(Menu(), position);
+    Frame(); Frame();
+    // Leave populated records on both sides for the Save / Load mouse round trip.
     SkinSetRuntimeStatus(nullptr);
     Click(TabPosition(0));
 }

@@ -29,6 +29,42 @@ keys remain compatible with the existing config policy. Missing keys use
 defaults; old presets clear overrides rather than inheriting the current skin
 loadout. Saving/loading is explicit in Configs; startup does not auto-load.
 
+## Loadout editor
+
+The revised Skins tab uses direct T/CT and Weapons/Knife/Gloves switches. At
+normal menu width, the searchable item browser sits beside the selected item's
+summary and compatible finish picker. Narrow windows stack the two sections and
+use compact team labels. Blue item names mark saved overrides. Browsing a weapon
+does not allocate a config record or change a loadout. Selecting a knife/glove
+model or a finish activates the choice, including resuming paused customization.
+
+**Pause** retains both loadouts while suspending application; **Resume** restores
+their enabled overrides. **Use stock item** clears only the browsed item on the
+selected side. **Wear & details** groups wear, seed, StatTrak and custom name
+controls. Name editing retains unfinished text between keystrokes, so typing an
+internal space no longer loses it before the next letter. Valid text publishes
+through the existing settings validator; invalid drafts do not enter configs.
+
+Doppler variants receive readable phase/gem labels derived from exact catalog
+tokens. Paint IDs remain visible for precise identification and search. Default
+T and CT knives have distinct labels. Every weapon stays available on either
+side for picked-up weapons. Runtime status and the action to reset both loadouts
+are under **Loadout options**. The editor preserves the native application code
+and config field schema of the working checkpoint `d0e1746`.
+
+The UX revision passes all 66 suites in both Release builds. Mouse tests cover
+automatic activation, independent sides, pause/resume, stock reset while paused,
+resetting both loadouts, opposing-side weapons, exact Doppler phase selection,
+incremental spaced-name entry, invalid drafts, compact team controls and config
+restoration. Standalone software D3D11 previews were inspected at normal and
+narrow viewport widths, including the expanded details section:
+
+```powershell
+build/Release/public_menu_preview.exe logs/skins-loadout.bmp 20
+build/Release/public_menu_preview.exe logs/skins-details.bmp 23 220
+build/Release/public_menu_preview.exe logs/skins-narrow.bmp 20 0 240 500
+```
+
 ## Installed catalog
 
 `tools/generate_skin_catalog.py` reads the installed `pak01` VPK resources
@@ -100,9 +136,11 @@ verification covers nine named schemas, fourteen native code windows and the
 catalog's exact reproduction from installed data. Forty-five altered native
 contract headers are rejected.
 
-These checks do not establish in-game appearance. No client/server was launched
-for this change. In particular, first-person knife rendering, animations,
-glove appearance and all legacy-paint mesh variants remain visually unobserved.
+The user subsequently reports that the skin changer "works nicely" in their
+session. This is positive user observation, without a recorded per-item visual
+test matrix. No client/server was launched by the agent for this change.
+First-person knife rendering, animations, glove appearance and every
+legacy-paint mesh variant have not been independently audited in-game.
 The native material generation handles legacy materials and the installed
 legacy helper feeds animation state, but the audit does not independently
 establish every legacy mesh selection. No guessed old viewmodel or mesh-mask

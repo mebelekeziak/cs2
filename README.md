@@ -4,19 +4,24 @@ x64 client overlay with local player model selection, third person, configurable
 
 ## Skin customization — October 24, 2026
 
-Open **Skins**, enable **Enable skin changer**, and choose **Side**: **Terrorists
-(T)** or **Counter-Terrorists (CT)**. Each side stores its own weapon finishes,
-knife model/finish and glove model/finish. Choose **Weapons**, **Knife** or
-**Gloves**, select a definition, enable **Override this item**, and search its
-compatible finishes. Changing the side edits that side's loadout; it does not
+Open **Skins** and switch directly between **T** and **CT** loadouts. Choose
+**Weapons**, **Knife** or **Gloves**, browse an item and choose its compatible
+finish. Selecting a model or finish activates that choice without separate
+enable steps. Each side stores its own weapon finishes, knife model/finish and
+glove model/finish. Changing the side edits that side's loadout; it does not
 copy or overwrite the other side. Weapons retain separate choices for every
-definition. Overrides apply to available local items; selecting a weapon skin
-does not give the player that weapon.
+definition, including guns picked up from the opposing side. Overrides apply
+to available local items; selecting a weapon skin does not give that weapon.
 
-Wear and pattern seed are independent per item and side. Weapons and knives
-also support optional StatTrak (including zero) and a custom name of up to 63
-printable ASCII characters, without outer spaces or `=`, `#`, `;`. **Reset this
-item** clears one override; **Reset all skin choices** clears both sides.
+Wear and pattern seed are independent per item and side. **Wear & details**
+also offers optional StatTrak (including zero) and a custom name of up
+to 63 printable ASCII characters, without outer spaces or `=`, `#`, `;`, for
+weapons and knives. Returning an item to stock clears its override. The global
+**Pause** / **Resume** control retains both loadouts while suspending application.
+Runtime status and the reset-both action are under **Loadout options**. The
+searchable item browser and finish picker sit side by side at normal menu width;
+narrow windows stack them. Doppler phases and default T/CT knives have distinct
+labels. Names with internal spaces can be typed normally.
 
 Use **Configs → Save / overwrite** to save both complete loadouts with the
 other options. **Load config** restores them after a restart. Configs remain
@@ -52,7 +57,9 @@ project warnings; each passes **66/66 CTest suites**. All **32/32 installed-file
 checks** pass. The native cosmetic suite passes **55 synthetic checks**; the
 catalog parser passes **7/7 tests**. Both DLLs retain zero static TLS/delay
 imports. No client/server was launched. First-person knife rendering, glove
-appearance and legacy-paint mesh variants remain visually unobserved.
+appearance and legacy-paint mesh variants were not independently audited.
+The user subsequently reports that the changer works nicely. The editor redesign
+preserves the working native application and config schema from `d0e1746`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
 and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty-two

@@ -237,146 +237,297 @@ void DrawPlayerModel() {
     if (ImGui::Button("Reset player model", { -1, 0 })) ModelSwapResetSettings();
 }
 
+// These are editor controls only; the runtime and persisted loadouts remain the
+// source of truth. Merely browsing a weapon never allocates a saved record.
+bool SkinSegment(const char* label, bool selected, float width) {
+    ImGui::PushStyleColor(ImGuiCol_Button, selected ? ImVec4{ 0.14f, 0.25f, 0.34f, 1 }
+                                                   : ImVec4{ 0.11f, 0.12f, 0.13f, 1 });
+    ImGui::PushStyleColor(ImGuiCol_Border, selected ? ImVec4{ 0.27f, 0.65f, 0.95f, 1 }
+                                                   : ImGui::GetStyleColorVec4(ImGuiCol_Border));
+    const bool clicked = ImGui::Button(label, { std::max(1.0f, width), 27 });
+    ImGui::PopStyleColor(2);
+    return clicked;
+}
+
+std::string SkinFinishLabel(const skin_catalog::Paint& paint) {
+    std::string label = paint.display_name;
+    // Labels are derived from exact catalog tokens, never hard-coded paint IDs.
+    if (label == "Doppler" || label == "Gamma Doppler") {
+        constexpr const char* tokens[]{ "phase1", "phase2", "phase3", "phase4", "ruby", "sapphire", "blackpearl", "emerald" };
+        constexpr const char* names[]{ "Phase 1", "Phase 2", "Phase 3", "Phase 4", "Ruby", "Sapphire", "Black Pearl", "Emerald" };
+        const std::string internal = std::string("_") + paint.internal_name + "_";
+        for (int index = 0; index < 8; ++index) {
+            if (internal.find(std::string("_") + tokens[index] + "_") != std::string::npos) {
+                label += std::string(" / ") + names[index];
+                break;
+            }
+        }
+    }
+    return label;
+}
+
+const char* SkinModelLabel(const skin_catalog::Item& item) {
+    if (item.kind == skin_catalog::ItemKind::Knife) {
+        if (std::strcmp(item.internal_name, "weapon_knife") == 0) return "Default knife (CT)";
+        if (std::strcmp(item.internal_name, "weapon_knife_t") == 0) return "Default knife (T)";
+    }
+    return item.display_name;
+}
+
 void DrawSkins() {
     auto settings = SkinGetSettings();
-    bool changed = FeatureCheckbox("Enable skin changer", settings.enabled);
-    const auto status = SkinRuntimeStatus();
-    if (status[0]) ImGui::TextWrapped("%s", status.data());
+    bool changed = false;
+    auto* state = ImGui::GetStateStorage();
     const ImGuiID teamKey = ImGui::GetID("##SkinSelectedTeam");
-    int selectedTeam = std::clamp(ImGui::GetStateStorage()->GetInt(teamKey, 0), 0, 1);
     const ImGuiID kindKey = ImGui::GetID("##SkinSelectedKind");
-    int selectedKind = std::clamp(ImGui::GetStateStorage()->GetInt(kindKey, 0), 0, 2);
-    static std::array<int, SkinTeamCount> selectedWeapons{};
+    int selectedTeam = std::clamp(state->GetInt(teamKey, 0), 0, 1);
+    int selectedKind = std::clamp(state->GetInt(kindKey, 0), 0, 2);
     static ImGuiTextFilter itemFilter;
     static ImGuiTextFilter paintFilter;
-    ImGui::TextUnformatted("Side");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##SkinTeam", &selectedTeam, "Terrorists (T)\0Counter-Terrorists (CT)\0");
-    ImGui::TextUnformatted("Customize");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##SkinKind", &selectedKind, "Weapons\0Knife\0Gloves\0");
-    ImGui::GetStateStorage()->SetInt(teamKey, selectedTeam);
-    ImGui::GetStateStorage()->SetInt(kindKey, selectedKind);
-    ImGui::TextWrapped("Each side keeps its own weapon, knife and glove choices. Weapons also keep separate settings for every definition.");
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float width = ImGui::GetContentRegionAvail().x;
+    const bool twoColumns = width >= 430;
+
+    ImGui::TextUnformatted("Loadout");
+    if (width >= 250) ImGui::SameLine();
+    ImGui::TextDisabled(settings.enabled ? "Active" : "Paused");
+    if (width >= 250) {
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - 76));
+    }
+    if (ImGui::Button(settings.enabled ? "Pause##SkinPower" : "Resume##SkinPower", { 76, 0 })) {
+        settings.enabled = !settings.enabled;
+        changed = true;
+    }
+    ImGui::SetItemTooltip("Pause keeps both loadouts. Choosing a model or finish resumes customization.");
+    const int oldTeam = selectedTeam;
+    const int oldKind = selectedKind;
+    const float sideWidth = (width - gap) * 0.5f;
+    if (SkinSegment(width >= 350 ? "T / Terrorists###SkinTeamT" : "T###SkinTeamT", selectedTeam == 0, sideWidth)) selectedTeam = 0;
+    ImGui::SetItemTooltip("Terrorists. Switching sides never copies or replaces the other loadout.");
+    ImGui::SameLine();
+    if (SkinSegment(width >= 350 ? "CT / Counter-Terrorists###SkinTeamCT" : "CT###SkinTeamCT", selectedTeam == 1, sideWidth)) selectedTeam = 1;
+    ImGui::SetItemTooltip("Counter-Terrorists. Switching sides never copies or replaces the other loadout.");
+    constexpr const char* kinds[]{ "Weapons", "Knife", "Gloves" };
+    for (int index = 0; index < 3; ++index) {
+        if (index) ImGui::SameLine();
+        if (SkinSegment(kinds[index], selectedKind == index, (width - gap * 2) / 3)) selectedKind = index;
+    }
+    const bool contextChanged = oldTeam != selectedTeam || oldKind != selectedKind;
+    if (contextChanged) {
+        itemFilter.Clear();
+        paintFilter.Clear();
+    }
+    state->SetInt(teamKey, selectedTeam);
+    state->SetInt(kindKey, selectedKind);
+    ImGui::Separator();
+
     auto& team = settings.teams[static_cast<std::size_t>(selectedTeam)];
     const auto kind = selectedKind == 0 ? skin_catalog::ItemKind::Weapon :
         selectedKind == 1 ? skin_catalog::ItemKind::Knife : skin_catalog::ItemKind::Gloves;
-    SkinItemSettings* item = selectedKind == 1 ? &team.knife : selectedKind == 2 ? &team.gloves : nullptr;
-    int definition = item ? item->definitionIndex : selectedWeapons[static_cast<std::size_t>(selectedTeam)];
-    if (!item && !skin_catalog::find_item(definition)) {
+    auto* slot = selectedKind == 1 ? &team.knife : selectedKind == 2 ? &team.gloves : nullptr;
+    // Editor selection survives Use stock item without keeping a stale override.
+    ImGui::PushID(selectedTeam * 3 + selectedKind);
+    const ImGuiID definitionKey = ImGui::GetID("##SkinBrowsedDefinition");
+    ImGui::PopID();
+    int definition = slot && slot->definitionIndex ? slot->definitionIndex : state->GetInt(definitionKey);
+    const auto* model = skin_catalog::find_item(definition);
+    bool modelChanged = false;
+    if (!model || model->kind != kind || !model->team_mask) {
+        model = nullptr;
         for (const auto& entry : skin_catalog::items()) {
-            if (entry.kind == kind && entry.team_mask) { definition = entry.definition_index; break; }
+            if (entry.kind == kind && entry.team_mask) { model = &entry; definition = entry.definition_index; break; }
         }
-        selectedWeapons[static_cast<std::size_t>(selectedTeam)] = definition;
     }
-    const auto* selectedModel = skin_catalog::find_item(definition);
-    ImGui::BeginDisabled(!settings.enabled);
-    ImGui::TextUnformatted(selectedKind == 0 ? "Search weapons" : "Search models");
-    itemFilter.Draw("##SkinItemSearch", -1);
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##SkinDefinition", selectedModel ? selectedModel->display_name : "Choose a model")) {
-        for (const auto& entry : skin_catalog::items()) {
-            if (entry.kind != kind || !entry.team_mask) continue;
-            const std::string searchable = std::string(entry.display_name) + " " + entry.internal_name;
-            if (!itemFilter.PassFilter(searchable.c_str())) continue;
-            ImGui::PushID(entry.definition_index);
-            if (ImGui::Selectable(entry.display_name, definition == entry.definition_index)) {
-                definition = entry.definition_index;
-                if (item) {
-                    item->definitionIndex = definition;
-                    if (!skin_catalog::supports_paint(definition, item->paintKit)) item->paintKit = 0;
+    const auto savedItem = [&](int index) -> const SkinItemSettings* {
+        return slot ? (slot->definitionIndex == index ? slot : nullptr) : SkinFindWeaponSettings(team, index);
+    };
+    ImGui::BeginGroup();
+    const float browserWidth = twoColumns ? 155.0f : width;
+    ImGui::TextDisabled("%s", selectedKind == 0 ? "WEAPONS" : "MODELS");
+    ImGui::SetNextItemWidth(browserWidth);
+    if (ImGui::InputTextWithHint("##SkinItemSearch", "Find an item...", itemFilter.InputBuf, IM_ARRAYSIZE(itemFilter.InputBuf))) {
+        itemFilter.Build();
+        ImGui::SetNextWindowScroll({ 0, 0 });
+    }
+    std::vector<const skin_catalog::Item*> models;
+    for (const auto& entry : skin_catalog::items()) {
+        // Both sides may customize a picked-up opposing-side weapon.
+        if (entry.kind != kind || !entry.team_mask) continue;
+        const std::string searchable = std::string(SkinModelLabel(entry)) + " " + entry.internal_name;
+        if (itemFilter.PassFilter(searchable.c_str())) models.push_back(&entry);
+    }
+    std::sort(models.begin(), models.end(), [](const auto* a, const auto* b) {
+        return std::strcmp(SkinModelLabel(*a), SkinModelLabel(*b)) < 0;
+    });
+    const float listHeight = twoColumns ? 258.0f : 125.0f;
+    if (ImGui::BeginChild("##SkinItemList", { browserWidth, listHeight }, ImGuiChildFlags_Borders)) {
+        if (models.empty()) ImGui::TextWrapped("No items found.");
+        for (const auto* entry : models) {
+            const auto* saved = savedItem(entry->definition_index);
+            const bool equipped = saved && saved->enabled;
+            ImGui::PushID(entry->definition_index);
+            if (equipped) ImGui::PushStyleColor(ImGuiCol_Text, { 0.44f, 0.76f, 1, 1 });
+            if (ImGui::Selectable(SkinModelLabel(*entry), definition == entry->definition_index)) {
+                definition = entry->definition_index;
+                model = entry;
+                modelChanged = true;
+                paintFilter.Clear();
+                if (slot) {
+                    slot->definitionIndex = definition;
+                    if (!skin_catalog::supports_paint(definition, slot->paintKit)) slot->paintKit = 0;
+                    slot->enabled = settings.enabled = true;
                     changed = true;
-                } else selectedWeapons[static_cast<std::size_t>(selectedTeam)] = definition;
-                selectedModel = &entry;
+                }
             }
+            if (equipped) ImGui::PopStyleColor();
+            ImGui::SetItemTooltip("%s%s", SkinModelLabel(*entry), equipped ? " - customized for this side" : "");
+            if (contextChanged && definition == entry->definition_index) ImGui::SetScrollHereY();
             ImGui::PopID();
         }
-        ImGui::EndCombo();
     }
-    if (!item) item = SkinEnsureWeaponSettings(team, definition);
-    if (item && item->definitionIndex) {
-        if (!selectedModel || selectedModel->kind != kind)
-            ImGui::TextWrapped("The saved definition is unavailable in this catalog. Choose an available model.");
-        changed |= FeatureCheckbox("Override this item", item->enabled);
-        ImGui::BeginDisabled(!item->enabled);
-        ImGui::TextUnformatted("Search finishes");
-        paintFilter.Draw("##SkinPaintSearch", -1);
+    ImGui::EndChild();
+    ImGui::EndGroup();
+    state->SetInt(definitionKey, definition);
+    if (twoColumns) ImGui::SameLine(0, gap + 2);
+    ImGui::BeginGroup();
+    const float editorWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+    // Set a local wrap boundary so the two columns form independent text blocks.
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + editorWidth);
+    const auto* existing = savedItem(definition);
+    SkinItemSettings item = existing ? *existing : SkinItemSettings{};
+    item.definitionIndex = definition;
+    bool itemChanged = false;
+    bool stock = false;
+    if (model) {
+        ImGui::TextUnformatted(SkinModelLabel(*model));
+        const auto* paint = skin_catalog::find_paint(item.paintKit);
+        if (item.enabled) {
+            const auto finish = paint ? SkinFinishLabel(*paint) : std::string("Default finish");
+            ImGui::TextColored({ 0.44f, 0.76f, 1, 1 }, "%s", finish.c_str());
+            ImGui::SetItemTooltip("%s | Paint kit #%d | Seed %d | Wear %.5f", settings.enabled ? "Active" : "Paused",
+                item.paintKit, item.seed, item.wear);
+        } else ImGui::TextDisabled("Stock item");
+        ImGui::BeginDisabled(!existing);
+        stock = ImGui::SmallButton("Use stock item");
+        ImGui::SetItemTooltip("Clear this %s's override on %s only.", selectedKind == 0 ? "weapon" : kinds[selectedKind],
+            selectedTeam == 0 ? "T" : "CT");
+        ImGui::EndDisabled();
+        ImGui::SetNextItemWidth(editorWidth);
+        const bool filterChanged = ImGui::InputTextWithHint("##SkinPaintSearch", "Find a finish or paint ID...",
+            paintFilter.InputBuf, IM_ARRAYSIZE(paintFilter.InputBuf));
+        if (filterChanged) paintFilter.Build();
         std::vector<int> matches;
-        const auto compatible = skin_catalog::compatible_paints(item->definitionIndex);
+        const auto compatible = skin_catalog::compatible_paints(definition);
         for (const int id : compatible) {
-            if (!id) continue;
-            const auto* paint = skin_catalog::find_paint(id);
-            if (!paint) continue;
-            const std::string searchable = std::string(paint->display_name) + " " + paint->internal_name + " " + std::to_string(id);
-            if (paintFilter.PassFilter(searchable.c_str())) matches.push_back(id);
+            const auto* candidate = skin_catalog::find_paint(id);
+            const std::string searchable = id && candidate ? SkinFinishLabel(*candidate) + " " +
+                candidate->internal_name + " " + std::to_string(id) : "Default finish 0";
+            if (paintFilter.PassFilter(searchable.c_str()) && (!id || candidate)) matches.push_back(id);
         }
-        const std::size_t finishCount = compatible.size() - static_cast<std::size_t>(std::count(compatible.begin(), compatible.end(), 0));
-        ImGui::TextDisabled("%zu matching / %zu available finishes", matches.size(), finishCount);
-        if (ImGui::BeginListBox("##SkinPaintList", { -1, 130 })) {
-            if (ImGui::Selectable("Default finish", item->paintKit == 0)) {
-                item->paintKit = 0;
-                changed = true;
-            }
+        ImGui::TextDisabled("%zu finishes", matches.size());
+        if (paintFilter.IsActive()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear search")) paintFilter.Clear();
+        }
+        if (filterChanged || contextChanged || modelChanged) ImGui::SetNextWindowScroll({ 0, 0 });
+        if (ImGui::BeginChild("##SkinPaintList", { editorWidth, 153 }, ImGuiChildFlags_Borders)) {
+            if (matches.empty()) ImGui::TextWrapped("No matching finishes. Try a name or paint-kit ID.");
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(matches.size()));
             while (clipper.Step()) {
                 for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-                    const auto* paint = skin_catalog::find_paint(matches[static_cast<std::size_t>(row)]);
-                    ImGui::PushID(paint->id);
-                    const std::string label = std::string(paint->display_name) + "  (#" + std::to_string(paint->id) + ")";
-                    if (ImGui::Selectable(label.c_str(), item->paintKit == paint->id)) {
-                        item->paintKit = paint->id;
-                        item->wear = std::clamp(item->wear, paint->wear_min, paint->wear_max);
-                        changed = true;
+                    const int id = matches[static_cast<std::size_t>(row)];
+                    const auto* candidate = skin_catalog::find_paint(id);
+                    const std::string label = id ? SkinFinishLabel(*candidate) + "  (#" + std::to_string(id) + ")" : "Default finish";
+                    ImGui::PushID(id);
+                    if (ImGui::Selectable(label.c_str(), item.enabled && item.paintKit == id)) {
+                        item.paintKit = id;
+                        if (candidate) item.wear = std::clamp(item.wear, candidate->wear_min, candidate->wear_max);
+                        itemChanged = true;
                     }
+                    ImGui::SetItemTooltip("%s%s", id ? candidate->internal_name : "Original finish for this model",
+                        id ? "\nPaint-kit IDs distinguish variants such as Doppler phases." : "");
                     ImGui::PopID();
                 }
             }
-            ImGui::EndListBox();
         }
-        const auto* selectedPaint = skin_catalog::find_paint(item->paintKit);
-        if (item->paintKit && !skin_catalog::supports_paint(item->definitionIndex, item->paintKit))
-            ImGui::TextWrapped("The saved finish is unavailable for this model. Choose a compatible finish.");
-        else ImGui::TextWrapped("Selected: %s", selectedPaint ? selectedPaint->display_name : "Default finish");
-        ImGui::TextUnformatted("Wear");
-        ImGui::SetNextItemWidth(-1);
-        changed |= ImGui::SliderFloat("##SkinWear", &item->wear, selectedPaint ? selectedPaint->wear_min : 0.0f,
-            selectedPaint ? selectedPaint->wear_max : 1.0f, "%.5f");
-        ImGui::TextUnformatted("Pattern seed");
-        ImGui::SetNextItemWidth(-1);
-        changed |= ImGui::SliderInt("##SkinSeed", &item->seed, 0, 1000);
-        if (selectedKind != 2) {
-            bool statTrak = item->statTrak >= 0;
-            if (FeatureCheckbox("StatTrak", statTrak)) {
-                item->statTrak = statTrak ? 0 : -1;
+        ImGui::EndChild();
+        if (item.paintKit && !skin_catalog::supports_paint(definition, item.paintKit))
+            ImGui::TextWrapped("Saved finish unavailable for this model. Choose a finish above.");
+        if (ImGui::CollapsingHeader("Wear & details", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+            const auto* selectedPaint = skin_catalog::find_paint(item.paintKit);
+            ImGui::TextUnformatted("Wear");
+            ImGui::SetNextItemWidth(editorWidth);
+            itemChanged |= ImGui::SliderFloat("##SkinWear", &item.wear, selectedPaint ? selectedPaint->wear_min : 0.0f,
+                selectedPaint ? selectedPaint->wear_max : 1.0f, "%.5f");
+            ImGui::TextUnformatted("Pattern seed");
+            ImGui::SetNextItemWidth(editorWidth);
+            itemChanged |= ImGui::SliderInt("##SkinSeed", &item.seed, 0, 1000);
+            if (selectedKind != 2) {
+                bool statTrak = item.statTrak >= 0;
+                if (FeatureCheckbox("StatTrak", statTrak)) {
+                    item.statTrak = statTrak ? 0 : -1;
+                    itemChanged = true;
+                }
+                if (statTrak) {
+                    ImGui::SetNextItemWidth(editorWidth);
+                    itemChanged |= ImGui::InputInt("##SkinStatTrak", &item.statTrak);
+                    item.statTrak = std::max(0, item.statTrak);
+                }
+                ImGui::TextUnformatted("Custom name");
+                ImGui::SetNextItemWidth(editorWidth);
+                // Keep partially typed text (e.g. the space in "My Knife")
+                // instead of replacing it with the last valid saved value each
+                // frame. Valid edits publish immediately; invalid edits stay a
+                // draft with feedback. Switching item discards an invalid draft.
+                static std::array<int, 3> nameOwner{ -1, -1, -1 };
+                static std::array<char, 64> nameDraft{};
+                static std::array<char, 64> nameSaved{};
+                static bool invalidName = false;
+                const std::array<int, 3> owner{ selectedTeam, selectedKind, definition };
+                if (nameOwner != owner || nameSaved != item.customName) {
+                    nameOwner = owner;
+                    nameDraft = nameSaved = item.customName;
+                    invalidName = false;
+                }
+                if (ImGui::InputText("##SkinCustomName", nameDraft.data(), nameDraft.size())) {
+                    invalidName = !SkinSetCustomName(item, nameDraft.data());
+                    if (!invalidName) { nameSaved = item.customName; itemChanged = true; }
+                }
+                ImGui::SetItemTooltip("Up to 63 printable ASCII characters; excludes = # ; and outer spaces.");
+                if (invalidName) ImGui::TextWrapped("Name not saved: use printable ASCII without outer spaces or = # ;.");
+            }
+        }
+        if (stock || itemChanged) {
+            auto* destination = slot ? slot : SkinEnsureWeaponSettings(team, definition);
+            if (destination) {
+                if (stock) *destination = {};
+                else {
+                    item.enabled = settings.enabled = true;
+                    *destination = item;
+                }
                 changed = true;
             }
-            if (statTrak) {
-                ImGui::SetNextItemWidth(-1);
-                changed |= ImGui::InputInt("##SkinStatTrak", &item->statTrak);
-                item->statTrak = std::max(0, item->statTrak);
-            }
-            ImGui::TextUnformatted("Custom name");
-            ImGui::SetNextItemWidth(-1);
-            auto name = item->customName;
-            if (ImGui::InputText("##SkinCustomName", name.data(), name.size()))
-                changed |= SkinSetCustomName(*item, name.data());
-            ImGui::SetItemTooltip("Optional, up to 63 printable ASCII characters; excludes = # and ;.");
         }
-        ImGui::EndDisabled();
-        if (ImGui::Button("Reset this item", { -1, 0 })) {
-            *item = {};
-            item->definitionIndex = definition;
+    } else ImGui::TextWrapped("No items available in the installed catalog.");
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+    ImGui::Separator();
+    ImGui::TextDisabled("Choose to apply. Save both sides in Configs.");
+    if (ImGui::CollapsingHeader("Loadout options", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+        const auto status = SkinRuntimeStatus();
+        if (status[0]) ImGui::TextWrapped("%s", status.data());
+        ImGui::TextDisabled("Installed-game item catalog");
+        ImGui::SetItemTooltip("%s", skin_catalog::source_description());
+        ImGui::TextWrapped("Blue item names have a saved override. All weapons are available on both sides, including picked-up weapons.");
+        if (ImGui::Button("Reset both loadouts")) {
+            settings = {};
             changed = true;
         }
+        ImGui::SetItemTooltip("Clear all weapons, knives and gloves on T and CT, and pause customization.");
     }
-    ImGui::EndDisabled();
-    ImGui::Separator();
-    ImGui::TextDisabled("Installed-game item catalog");
-    ImGui::SetItemTooltip("%s", skin_catalog::source_description());
-    ImGui::TextWrapped("Use Configs > Save / overwrite to keep both loadouts between runs.");
-    if (ImGui::Button("Reset all skin choices", { -1, 0 })) SkinResetSettings();
-    else if (changed) SkinSetSettings(settings);
+    if (changed) SkinSetSettings(settings);
 }
 }
 
