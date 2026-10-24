@@ -5,6 +5,14 @@ Dependencies are fetched without modification at these immutable commits:
 
 Original licenses remain in build/_deps and are copied beside the built DLL in licenses/.
 
+The generated `src/skin_catalog_data.inc` contains cosmetic metadata derived
+from Valve's installed CS2 `scripts/items/items_game.txt`, English localization,
+and inventory resource names. It retains source attribution, extracted-resource
+hashes and the installed version in its header. No Valve models, textures, VPK
+archives or complete item/localization source files are redistributed. The
+extractor and catalog implementation are project code; no external skin catalog
+or skin-changer source was copied.
+
 The initial build-specific entity/schema constants were generated locally with
 [a2x/cs2-dumper 0.1.3](https://github.com/a2x/cs2-dumper/releases/tag/0.1.3)
 (MIT; copyright 2024 a2x). Its license is preserved in

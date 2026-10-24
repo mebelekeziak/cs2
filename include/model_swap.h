@@ -8,6 +8,10 @@ bool ModelSwapPrepare(ModelSwapLogCallback logger) noexcept;
 void ModelSwapActivate() noexcept;
 void ModelSwapStop(const char* reason) noexcept;
 void ModelSwapFlushTelemetry() noexcept;
+// Verified native resource loader shared with cosmetics. Call only on the
+// client-frame owner after ModelSwapPrepare succeeds. Accepts canonical model
+// paths, including installed weapons/models/*.vmdl; never changes a model.
+bool ModelSwapPreloadResource(const char* path) noexcept;
 
 #ifdef CS2_MODEL_SWAP_CHECKS
 #include <cstdint>

@@ -14,6 +14,8 @@
 #include "console_control.h"
 #include "world_settings.h"
 #include "local_config.h"
+#include "skin_settings.h"
+#include "skin_catalog.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cmath>
@@ -90,7 +92,7 @@ ImRect ControlRect(const char* label, ImGuiWindow* window = nullptr, ImGuiID ite
     return bounds;
 }
 ImVec2 TabPosition(int index) {
-    constexpr const char* labels[]{"Visuals", "Movement", "World", "Lighting", "Aim", "Configs"};
+    constexpr const char* labels[]{"Visuals", "Movement", "World", "Lighting", "Aim", "Configs", "Skins"};
     return ControlRect(labels[index], Menu()).GetCenter();
 }
 void ClickControl(const char* label, float fraction = 0.5f, ImGuiWindow* window = nullptr, ImGuiID itemId = 0) {
@@ -625,12 +627,82 @@ void PlayerModelControls() {
 }
 void CheckTabsFit(const char* message) {
     bool fit = true;
-    for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs" }) {
+    for (const char* label : { "Visuals", "Movement", "World", "Lighting", "Aim", "Configs", "Skins" }) {
         const ImRect rectangle = ControlRect(label, Menu());
         fit &= rectangle.Min.x >= Menu()->Pos.x && rectangle.Max.x <= Menu()->Pos.x + Menu()->Size.x;
         fit &= rectangle.GetWidth() >= ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
     }
     Expect(fit, message);
+}
+
+void SelectSkinModel(const skin_catalog::Item& item) {
+    ClickControl("##SkinDefinition");
+    Frame(); Frame();
+    auto& context = *ImGui::GetCurrentContext();
+    const bool opened = !context.OpenPopupStack.empty() && context.OpenPopupStack.back().Window;
+    Expect(opened, "skin model picker opens through mouse input");
+    if (!opened) return;
+    auto* popup = context.OpenPopupStack.back().Window;
+    ClickControl(item.display_name, 0.5f, popup, ImHashStr(item.display_name, 0, popup->GetID(item.definition_index)));
+}
+
+void SkinControls() {
+    const skin_catalog::Item* firstKnife = nullptr;
+    const skin_catalog::Item* secondKnife = nullptr;
+    const skin_catalog::Item* gloves = nullptr;
+    for (const auto& entry : skin_catalog::items()) {
+        if (entry.kind == skin_catalog::ItemKind::Knife && entry.team_mask &&
+            skin_catalog::compatible_paints(entry.definition_index).size() > 1) {
+            if (!firstKnife) firstKnife = &entry;
+            else if (!secondKnife) secondKnife = &entry;
+        }
+        if (!gloves && entry.kind == skin_catalog::ItemKind::Gloves && entry.team_mask &&
+            skin_catalog::compatible_paints(entry.definition_index).size() > 1) gloves = &entry;
+    }
+    Expect(firstKnife && secondKnife && gloves, "installed catalog exposes customizable knives and gloves");
+    if (!firstKnife || !secondKnife || !gloves) return;
+    SkinResetSettings();
+    SkinSetRuntimeStatus("Native runtime fixture status.");
+    Click(TabPosition(6));
+    Frame(); Frame();
+    Expect(Body() && std::strstr(Body()->Name, "##SkinSettings"), "Skins tab opens its own editor");
+    Expect(SubmittedMenuText().find("Native runtime fixture status.") != std::string::npos,
+        "skin editor displays actual runtime diagnostics");
+    ClickControl("Enable skin changer");
+    SelectEspCombo("##SkinKind", "Knife", 1);
+    SelectSkinModel(*firstKnife);
+    ClickControl("Override this item");
+    ClickControl("##SkinSeed", 0.2f);
+    const auto terroristKnife = SkinGetSettings().teams[0].knife;
+    Expect(terroristKnife.enabled && terroristKnife.definitionIndex == firstKnife->definition_index &&
+        terroristKnife.seed > 0, "T knife model and seed publish through mouse controls");
+    SelectEspCombo("##SkinTeam", "Counter-Terrorists (CT)", 1);
+    SelectSkinModel(*secondKnife);
+    ClickControl("Override this item");
+    ClickControl("##SkinSeed", 0.8f);
+    Expect(SkinGetSettings().teams[0].knife == terroristKnife &&
+        SkinGetSettings().teams[1].knife.definitionIndex == secondKnife->definition_index &&
+        SkinGetSettings().teams[1].knife.seed > terroristKnife.seed,
+        "CT knife uses its own model and pattern without replacing T choices");
+    SelectEspCombo("##SkinKind", "Gloves", 2);
+    SelectSkinModel(*gloves);
+    ClickControl("Override this item");
+    Expect(SkinGetSettings().teams[1].gloves.enabled &&
+        SkinGetSettings().teams[1].gloves.definitionIndex == gloves->definition_index &&
+        !SkinGetSettings().teams[0].gloves.enabled, "glove overrides are independent for each side");
+    ClickControl("##SkinPaintSearch");
+    ImGui::GetIO().AddInputCharactersUTF8("no-finish-can-match-this-value");
+    Frame(); Frame();
+    Expect(SubmittedMenuText().find("0 matching /") != std::string::npos,
+        "finish search filters the installed compatible catalog");
+    Click(TabPosition(0));
+    Click(TabPosition(6));
+    Expect(SkinGetSettings().teams[0].knife == terroristKnife &&
+        SkinGetSettings().teams[1].gloves.definitionIndex == gloves->definition_index,
+        "tab switches preserve both team loadouts");
+    // Leave both teams populated for the later Save / Load button round trip.
+    SkinSetRuntimeStatus(nullptr);
+    Click(TabPosition(0));
 }
 }
 
@@ -689,6 +761,7 @@ int main() {
     PlayerModelControls();
     PlayerChamsControls();
     GrenadeControls();
+    SkinControls();
 
     const ImVec2 beforeTabs = Menu()->Pos;
     Click(TabPosition(1));
@@ -1070,6 +1143,7 @@ int main() {
     const auto savedModel=ModelSwapGetSettings();
     const auto savedChams=PlayerChamsGetSettings();
     const auto savedGrenades=GrenadeGetSettings();
+    const auto savedSkins=SkinGetSettings();
     const auto configPath = LocalConfigDirectory() / (testName + ".cfg");
     Expect(!std::filesystem::exists(configPath), "UI test preset name is unused");
     ClickControl("Save / overwrite");
@@ -1083,11 +1157,13 @@ int main() {
     ModelSwapResetSettings();
     PlayerChamsResetSettings();
     GrenadeResetSettings();
+    SkinResetSettings();
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings() == savedAntiAim && ThirdPersonGetSettings() == savedCamera &&
            ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
-           ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams && GrenadeGetSettings() == savedGrenades,
-           "Load button restores appearance, aim, hitchance, anti aim, camera, scoped zoom, logging, player model, chams and grenades settings");
+           ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams && GrenadeGetSettings() == savedGrenades &&
+           SkinGetSettings() == savedSkins,
+           "Load button restores appearance, aim, camera, models, grenades and independent team skins");
     ClickControl("Refresh list");
     std::error_code cleanupError;
     std::filesystem::remove(configPath, cleanupError);
@@ -1175,6 +1251,7 @@ int main() {
     ShotLogSetSettings({});
     ModelSwapResetSettings();
     PlayerChamsResetSettings();
+    SkinResetSettings();
     ImGui::DestroyContext();
     return failures ? 1 : 0;
 }

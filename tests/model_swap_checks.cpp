@@ -1,4 +1,5 @@
 #include "model_swap.h"
+#include "client_frame.h"
 #include "model_swap_offsets.h"
 #include "model_swap_settings.h"
 #include "cs2_offsets.h"
@@ -15,6 +16,11 @@ namespace {
 namespace off=model_swap_offsets;
 namespace ent=cs2_offsets;
 unsigned checks=0, failures=0;
+const char* preloadRequest=nullptr;
+bool preloadResult=false;
+void PreloadOnOwner(void*, int) noexcept {
+    if (preloadRequest) preloadResult=ModelSwapPreloadResource(preloadRequest);
+}
 void Check(bool value,const char* label) { ++checks; if (!value) { ++failures; std::printf("FAIL %s\n",label); } }
 template<class T> void Put(void* p,std::size_t at,T value) { std::memcpy(static_cast<unsigned char*>(p)+at,&value,sizeof(value)); }
 std::uintptr_t Address(const void* p) { return reinterpret_cast<std::uintptr_t>(p); }
@@ -109,6 +115,19 @@ int main() {
     image=static_cast<unsigned char*>(VirtualAlloc(nullptr,ent::ClientImageSize,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
     if (!image) return 2;
     client=Address(image);
+    Reset();
+    Check(!ModelSwapPreloadResource("weapons/models/knife/knife_karam.vmdl"), "shared resource loader rejects calls outside native frame owner");
+    Check(ClientFrameSubscribe(&PreloadOnOwner), "cosmetics can share the verified model loader");
+    for (const char* resource : {"weapons/models/knife/knife_karam.vmdl", nativePath}) {
+        preloadRequest=resource; preloadResult=false; Frame();
+        Check(preloadResult, "shared loader accepts installed weapon and character resource roots on the owner");
+    }
+    const auto loaded=mock.loads;
+    for (const char* resource : {"weapons/models/../bad.vmdl", "weapons/models//bad.vmdl", "weapons/models/bad.vmdl_c", "C:/bad.vmdl"}) {
+        preloadRequest=resource; preloadResult=true; Frame();
+        Check(!preloadResult && mock.loads==loaded, "shared loader rejects noncanonical resource paths without native calls");
+    }
+    preloadRequest=nullptr;
     Reset(); Frame(); Check(mock.frames==1 && !mock.sets && Current(nativePath),"disabled callback forwards without model writes");
     Select(pathA); Frame(off::ApplyStage-1); Check(!mock.sets,"other frame stages never assign");
     Frame(); Check(mock.sets==1 && Current(pathA) && mock.correct,"native setter applies selected model after frame original");

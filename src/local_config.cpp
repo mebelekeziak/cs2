@@ -11,17 +11,20 @@
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
 #include "grenade_settings.h"
+#include "skin_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <locale>
 #include <set>
 #include <sstream>
 #include <type_traits>
+#include <unordered_map>
 
 namespace {
 struct Snapshot {
@@ -37,6 +40,7 @@ struct Snapshot {
     PlayerChamsSettings player_chams;
     GrenadeSettings grenades;
     AimVisualizationSettings aimVisualization;
+    SkinSettings skins;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -83,6 +87,24 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(grenades, removeSmoke); FIELD(grenades, removeFlash);
     FIELD(grenades, smokeAura); FIELD(grenades, molotovAura);
     COLOR(grenades, smokeColor); COLOR(grenades, molotovColor); FIELD(grenades, auraWidth);
+    FIELD(skins, enabled);
+    const auto itemFields = [&](const std::string& prefix, SkinItemSettings& item) {
+        visit(prefix + ".enabled", item.enabled);
+        visit(prefix + ".definitionIndex", item.definitionIndex);
+        visit(prefix + ".paintKit", item.paintKit);
+        visit(prefix + ".seed", item.seed);
+        visit(prefix + ".wear", item.wear);
+        visit(prefix + ".statTrak", item.statTrak);
+        visit(prefix + ".customName", item.customName);
+    };
+    for (std::size_t team = 0; team < s.skins.teams.size(); ++team) {
+        const std::string prefix = team == 0 ? "skins.t" : "skins.ct";
+        auto& loadout = s.skins.teams[team];
+        itemFields(prefix + ".knife", loadout.knife);
+        itemFields(prefix + ".gloves", loadout.gloves);
+        for (std::size_t slot = 0; slot < loadout.weapons.size(); ++slot)
+            itemFields(prefix + ".weapon." + std::to_string(slot), loadout.weapons[slot]);
+    }
 #undef COLOR
 #undef FIELD
 }
@@ -107,6 +129,11 @@ template<class T> bool Parse(std::string_view text, T& value) {
         ModelSwapSettings parsed;
         if (!ModelSwapSetModel(parsed, text)) return false;
         value = parsed.model;
+        return true;
+    } else if constexpr (std::is_same_v<T, std::array<char, 64>>) {
+        SkinItemSettings parsed;
+        if (!SkinSetCustomName(parsed, text)) return false;
+        value = parsed.customName;
         return true;
     } else if constexpr (std::is_same_v<T, bool>) {
         if (text != "0" && text != "1") return false;
@@ -179,14 +206,15 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings(), AimVisualizationGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings(), AimVisualizationGetSettings(), SkinGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
     Fields(snapshot, [&](const auto& key, const auto& value) {
         text << key << '=';
         if constexpr (std::is_enum_v<std::remove_cvref_t<decltype(value)>>) text << static_cast<int>(value);
-        else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 260>>) text << value.data();
+        else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 260>> ||
+                           std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 64>>) text << value.data();
         else text << value;
         text << '\n';
     });
@@ -221,6 +249,12 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
         error = "Cannot read config or config exceeds 1 MiB."; return false;
     }
     Snapshot snapshot{}; // Missing keys use documented defaults.
+    // Index once: independent team/item settings make rescanning the entire
+    // schema for every line needlessly quadratic. Closures live only for this load.
+    std::unordered_map<std::string, std::function<bool(std::string_view)>> parsers;
+    Fields(snapshot, [&](const auto& key, auto& field) {
+        parsers.emplace(key, [&field](std::string_view value) { return Parse(value, field); });
+    });
     std::set<std::string> seen;
     std::string line;
     bool versionFound = false;
@@ -241,9 +275,10 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
             versionFound = true;
             continue;
         }
-        bool valid = true;
-        Fields(snapshot, [&](const auto& candidate, auto& field) { if (key == candidate) valid = Parse(value, field); });
-        if (!valid) { error = "Invalid config value: " + key; return false; }
+        const auto parser = parsers.find(key);
+        if (parser != parsers.end() && !parser->second(value)) {
+            error = "Invalid config value: " + key; return false;
+        }
     }
     if (file.bad() || !versionFound) { error = file.bad() ? "Cannot read config." : "Missing config version."; return false; }
     // Older presets stored one of four landmarks. An explicit new mask wins,
@@ -263,6 +298,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     PlayerChamsSetSettings(snapshot.player_chams);
     GrenadeSetSettings(snapshot.grenades);
     AimVisualizationSetSettings(snapshot.aimVisualization);
+    SkinSetSettings(snapshot.skins);
     return true;
 }
 

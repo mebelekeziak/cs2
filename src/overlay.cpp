@@ -41,6 +41,8 @@
 #include "zoom.h"
 #include "model_swap.h"
 #include "model_swap_settings.h"
+#include "skin_changer.h"
+#include "skin_settings.h"
 #include "silent_aim_settings.h"
 #include "world_settings.h"
 #include "world_postprocess.h"
@@ -277,6 +279,7 @@ void CleanupOnRenderThread(const char* reason) {
     ThirdPersonStop(reason);
     ZoomStop(reason);
     ModelSwapStop(reason);
+    SkinChangerStop(reason);
     GrenadeEffectsStop();
     GrenadeVisualsStop();
     WorldSkyStop(reason);
@@ -512,6 +515,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     ThirdPersonFlushTelemetry();
     ZoomFlushTelemetry();
     ModelSwapFlushTelemetry();
+    SkinChangerFlushTelemetry();
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
     WorldMaterialsFlushTelemetry();
@@ -588,6 +592,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Scoped zoom: %s", ZoomStatus());
         ImGui::Text("Scope overlay: %s", ScopeOverlayStatus());
         ImGui::Text("Player model: %s", ModelSwapRuntimeStatus().data());
+        ImGui::Text("Skins: %s", SkinRuntimeStatus().data());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Remove spread: %s", aimSettings.removeSpread ? "ON" : "OFF");
         ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
@@ -704,6 +709,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ScopedCrosshairStop();
             ZoomStop("stopped before selecting render chain");
             ModelSwapStop("stopped before selecting render chain");
+            SkinChangerStop("stopped before selecting render chain");
             GrenadeEffectsStop();
             GrenadeVisualsStop();
             WorldSkyStop("stopped before selecting render chain");
@@ -806,6 +812,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         "SCOPED_CROSSHAIR_UNAVAILABLE accuracy/scope contract verification failed");
     const bool scopeOverlayPrepared = crosshairPrepared && ScopeOverlayPrepare(&EspLog);
     const bool modelSwapPrepared = ModelSwapPrepare(&EspLog);
+    const bool skinsPrepared = SkinChangerPrepare(&EspLog);
     const bool grenadeEffectsPrepared = GrenadeEffectsPrepare(&EspLog);
     const bool grenadeVisualsPrepared = GrenadeVisualsPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
@@ -831,6 +838,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ScopedCrosshairStop();
         ZoomStop("partial hook activation failure");
         ModelSwapStop("partial hook activation failure");
+        SkinChangerStop("partial hook activation failure");
         GrenadeEffectsStop();
         GrenadeVisualsStop();
         WorldSkyStop("partial hook activation failure");
@@ -854,6 +862,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (zoomPrepared) ZoomActivate();
     if (scopeOverlayPrepared) ScopeOverlayActivate();
     if (modelSwapPrepared) ModelSwapActivate();
+    if (skinsPrepared) SkinChangerActivate();
     if (grenadeEffectsPrepared) GrenadeEffectsActivate();
     if (grenadeVisualsPrepared) GrenadeVisualsActivate();
     if (skyPrepared) WorldSkyActivate();
@@ -879,6 +888,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ScopedCrosshairStop();
     ZoomStop("explicit overlay stop request");
     ModelSwapStop("explicit overlay stop request");
+    SkinChangerStop("explicit overlay stop request");
     GrenadeEffectsStop();
     GrenadeVisualsStop();
     WorldSkyStop("explicit overlay stop request");

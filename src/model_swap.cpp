@@ -106,6 +106,29 @@ bool ReadSource(Source& out, bool& alive) noexcept {
     alive = health>0 && life==0;
     return true;
 }
+bool ResourcePath(std::string_view path, Path& result) noexcept {
+    ModelSwapSettings validated;
+    if (ModelSwapSetModel(validated, path) && !path.empty()) {
+        result = validated.model;
+        return true;
+    }
+    // Installed economy models use a separate root from selectable character
+    // models. Keep the character picker validation unchanged.
+    if (!path.starts_with("weapons/models/") || !path.ends_with(".vmdl") || path.size() >= result.size()) return false;
+    for (const unsigned char c : path)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '-' || c == '.')) return false;
+    std::size_t start = 0;
+    while (start < path.size()) {
+        const auto end = path.find('/', start);
+        const auto part = path.substr(start, end == path.npos ? path.size() - start : end - start);
+        if (part.empty() || part == "." || part == ".." || part.back() == '.') return false;
+        if (end == path.npos) break;
+        start = end + 1;
+    }
+    result = {};
+    std::copy(path.begin(), path.end(), result.begin());
+    return true;
+}
 bool BindingPath(std::uintptr_t binding, Path& result) noexcept {
     std::uintptr_t model=0, name=0;
     if (!binding || !Read(binding, model) || !model || !Read(model+off::ResourceName, name) || !name) return false;
@@ -113,10 +136,7 @@ bool BindingPath(std::uintptr_t binding, Path& result) noexcept {
     for (std::size_t i=0; i<copied.size(); ++i) {
         if (!Read(name+i, copied[i])) return false;
         if (!copied[i]) {
-            ModelSwapSettings validated;
-            if (!i || !ModelSwapSetModel(validated, {copied.data(), i})) return false;
-            result=validated.model;
-            return true;
+            return i && ResourcePath({copied.data(), i}, result);
         }
     }
     return false;
@@ -304,6 +324,15 @@ void OwnerFrame(void* owner, int stage) noexcept {
     }
 }
 
+}
+
+bool ModelSwapPreloadResource(const char* path) noexcept {
+    if (!path || !prepared || !ClientFrameInCallback() || !CurrentClient()) return false;
+    Path copied{};
+    std::size_t length = 0;
+    while (length < copied.size() && path[length]) ++length;
+    if (!length || length == copied.size() || !ResourcePath({path, length}, copied)) return false;
+    return Preload(copied);
 }
 
 bool ModelSwapPrepare(ModelSwapLogCallback callback) noexcept {

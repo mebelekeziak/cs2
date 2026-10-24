@@ -26,7 +26,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all thirty frozen verifiers independently, so
+rewrite offsets. It runs all thirty-two frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -36,10 +36,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Thirty component JSON files: exact command, exit code, stdout and stderr.
+- Thirty-two component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all thirty static checks passed; **1** means one or more
+Exit code **0** means all thirty-two static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -56,6 +56,8 @@ observe gameplay. Inventory of a renderer DLL establishes its presence only.
 | Grenade areas/effects fail | Re-establish client smoke/inferno class identities, embedded simulation and buffer pairing, native rendering and flash parameter consumers; preserve read-only area capture and transient suppression. |
 | Scope overlay fails | Re-establish the sniper visual-parameter producer/consumer and the iron-sight rendering predicate's geometry/graph callers. Preserve health-boost output, FOV and other native callers; require a fresh matching local crosshair before replacement. |
 | Player model fails | Check `client.dll`, `engine2.dll`, `csgo/bin/win64/host.dll`, `resourcesystem.dll` and `tier0.dll`; preserve the frame-owner barrier, explicit JIT loading and native resource ownership contracts. |
+| Skins fail | Reverify the named economy schemas, attribute setter/remover, native material regeneration sequence and glove rebuild consumer in `client.dll`. Keep item mutations on the shared frame owner and preserve restoration and full entity-handle checks. |
+| Skin catalog fails | Compare installed item/localization resources, regenerate the catalog and review the source diff. A matching catalog does not establish matching native skin functions. |
 | Missing file, Python exception or source-header error | Resolve the path/tool/source issue before treating the report as evidence of an engine change. |
 | Hash changed | Investigate that module. Hash rejection alone does not say which address or contract moved. |
 

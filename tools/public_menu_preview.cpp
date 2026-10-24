@@ -19,6 +19,7 @@
 #include "silent_aim_settings.h"
 #include "anti_aim_settings.h"
 #include "model_swap_settings.h"
+#include "skin_settings.h"
 #include "player_chams_settings.h"
 #include "grenade_settings.h"
 #include "grenade_draw.h"
@@ -77,14 +78,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows the Fresnel player chams menu.\n");
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19/20 show T/CT skins.\n");
         std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 18 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 18 (17 = eligible aim points, 18 = Fresnel chams menu).\n");
+    if (selectedTab < 0 || selectedTab > 20 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 20 (19 = T skins, 20 = CT skins).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -145,6 +146,18 @@ int wmain(int argc, wchar_t** argv) {
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50, true});
     if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
+    if (selectedTab == 19 || selectedTab == 20) {
+        SkinSettings skins;
+        skins.enabled = true;
+        skins.teams[0].weapons[0] = {true, 7, 180, 27, .125f, 42};
+        skins.teams[1].weapons[0] = {true, 7, 302, 88, .25f, -1};
+        skins.teams[0].knife = {true, 500, 38, 17, .125f};
+        skins.teams[1].knife = {true, 507, 12, 77, .25f};
+        skins.teams[0].gloves = {true, 5030, 10018, 12, .125f};
+        skins.teams[1].gloves = {true, 5031, 10016, 21, .25f};
+        SkinSetSettings(skins);
+        SkinSetRuntimeStatus("Standalone menu preview; no game client is running.");
+    }
     if (selectedTab == 13 || selectedTab == 14 || selectedTab == 18) {
         PlayerChamsSettings chams;
         chams.enabled = true;
@@ -218,18 +231,26 @@ int wmain(int argc, wchar_t** argv) {
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu) {
-                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 13 ? 0 : selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
-                if (((selectedTab >= 6 && selectedTab <= 8) || selectedTab >= 13) && !menu->DC.ChildWindows.empty()) {
+                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 19 ? 6 : selectedTab >= 13 ? 0 : selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
+                if (((selectedTab >= 6 && selectedTab <= 8) || (selectedTab >= 13 && selectedTab <= 18)) && !menu->DC.ChildWindows.empty()) {
                     auto* child = menu->DC.ChildWindows[0];
                     child->StateStorage.SetInt(child->GetID(selectedTab == 15 ? "Grenades" : selectedTab >= 13 ? "Player chams" : selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
                     child->StateStorage.SetInt(child->GetID("Live preview"), 0);
                 }
             }
         }
-        if (frame == 1 && (scroll || selectedTab == 8 || selectedTab >= 9)) {
+        if (frame == 1 && (scroll || selectedTab == 8 || (selectedTab >= 9 && selectedTab <= 18))) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu && !menu->DC.ChildWindows.empty())
                 ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll ? scroll : selectedTab >= 13 ? 100000 : selectedTab >= 9 ? 550 : 100000));
+        }
+        if (frame == 1 && selectedTab >= 19) {
+            ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
+            if (menu && !menu->DC.ChildWindows.empty()) {
+                auto* child = menu->DC.ChildWindows[0];
+                child->StateStorage.SetInt(child->GetID("##SkinSelectedTeam"), selectedTab == 20 ? 1 : 0);
+                child->StateStorage.SetInt(child->GetID("##SkinSelectedKind"), 1);
+            }
         }
     }
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

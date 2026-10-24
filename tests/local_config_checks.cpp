@@ -11,6 +11,7 @@
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
 #include "grenade_settings.h"
+#include "skin_settings.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -226,6 +227,20 @@ int main() {
         expectedGrenades.molotovColor[channel] = (channel + 4) / 8.0f;
     }
     GrenadeSetSettings(expectedGrenades);
+    SkinSettings expectedSkins;
+    expectedSkins.enabled = true;
+    // Different sides deliberately share weapon identity but not any cosmetic
+    // choices. Sparse final-slot coverage catches incomplete config schemas.
+    expectedSkins.teams[0].weapons[0] = {true, 7, 180, 27, .125f, 0};
+    expectedSkins.teams[1].weapons[0] = {true, 7, 302, 890, .875f, -1};
+    expectedSkins.teams[1].weapons.back() = {false, 9, 344, 1000, .5f, 123};
+    expectedSkins.teams[0].knife = {true, 500, 38, 77, .25f, 42};
+    expectedSkins.teams[1].knife = {true, 507, 12, 88, .75f, -1};
+    expectedSkins.teams[0].gloves = {true, 5030, 10018, 123, .125f};
+    expectedSkins.teams[1].gloves = {true, 5031, 10016, 321, .625f};
+    Expect(SkinSetCustomName(expectedSkins.teams[0].weapons[0], "Saved T weapon") &&
+        SkinSetCustomName(expectedSkins.teams[1].knife, "Saved CT knife"), "prepare independent skin names");
+    SkinSetSettings(expectedSkins);
     const EspSettings expectedEsp = EspGetSettings();
     Expect(LocalConfigSave(second, error), "save second named preset");
     const auto custom = Read(secondPath);
@@ -244,6 +259,11 @@ int main() {
         PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
+    Expect(SkinGetSettings() == expectedSkins &&
+        custom.find("skins.t.knife.definitionIndex=500\n") != std::string::npos &&
+        custom.find("skins.ct.knife.definitionIndex=507\n") != std::string::npos &&
+        custom.size() < 1024 * 1024,
+        "both team loadouts roundtrip weapons, final sparse slot, distinct knives, gloves, wear, seeds, StatTrak and names");
     Expect(AimVisualizationGetSettings() == expectedVisualization, "visualization toggle and all RGBA channels roundtrip");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim && custom.find("aim.min_damage=67\n") != std::string::npos &&
@@ -351,6 +371,11 @@ int main() {
         "version=1\ngrenades.smokeColor.0=nan\n", "version=1\ngrenades.molotovColor.3=inf\n",
         "version=1\ngrenades.auraWidth=nan\n", "version=1\ngrenades.auraWidth=4oops\n",
         "version=1\ngrenades.removeSmoke=0\ngrenades.removeSmoke=1\n",
+        "version=1\nskins.enabled=2\n", "version=1\nskins.t.knife.wear=nan\n",
+        "version=1\nskins.ct.weapon.127.seed=1oops\n",
+        "version=1\nskins.ct.gloves.definitionIndex=1\nskins.ct.gloves.definitionIndex=2\n",
+        "version=1\naim.enabled=0\nskins.enabled=0\nskins.t.knife.customName=bad=name\n",
+        "version=1\nskins.t.knife.customName=bad;name\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -375,6 +400,7 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
     Expect(GrenadeGetSettings() == grenadeDefaults, "older presets without grenades restore disabled removals and auras");
+    Expect(SkinGetSettings() == SkinSettings{}, "older presets clear both skin loadouts and disable overrides");
     MovementSetSettings({true, true, true});
     Write(badPath, "version=1\nmovement.bunnyhop=0\nmovement.autostrafe=0\n");
     Expect(LocalConfigLoad(bad, error) && !MovementGetSettings().bunnyhop && !MovementGetSettings().autostrafe &&

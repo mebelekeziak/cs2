@@ -1,9 +1,61 @@
-# CS2 third person, anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
+# CS2 skins, third person, anti aim, silent aim, world visuals, movement assistance, player ESP and D3D11 overlay
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Skin customization — October 24, 2026
+
+Open **Skins**, enable **Enable skin changer**, and choose **Side**: **Terrorists
+(T)** or **Counter-Terrorists (CT)**. Each side stores its own weapon finishes,
+knife model/finish and glove model/finish. Choose **Weapons**, **Knife** or
+**Gloves**, select a definition, enable **Override this item**, and search its
+compatible finishes. Changing the side edits that side's loadout; it does not
+copy or overwrite the other side. Weapons retain separate choices for every
+definition. Overrides apply to available local items; selecting a weapon skin
+does not give the player that weapon.
+
+Wear and pattern seed are independent per item and side. Weapons and knives
+also support optional StatTrak (including zero) and a custom name of up to 63
+printable ASCII characters, without outer spaces or `=`, `#`, `;`. **Reset this
+item** clears one override; **Reset all skin choices** clears both sides.
+
+Use **Configs → Save / overwrite** to save both complete loadouts with the
+other options. **Load config** restores them after a restart. Configs remain
+under the workspace's `configs/`; presets do not load automatically. Older
+presets with no `skins.*` fields clear skin selections and disable the feature.
+Malformed config values reject the entire load before publishing settings.
+
+The catalog comes from the installed CS2 **1.41.9.2 / client 2000935** item
+schema, English localization and inventory resources: **1,479 non-default
+finishes**, **35 weapon definitions** (including Zeus), **23 knife definitions**
+and **10 glove definitions**. The picker offers the installed supported
+combinations and hides the unused knife definition. Paint-kit IDs distinguish
+finishes with the same display name, including Doppler phases. This covers
+installed paint finishes; it does not add stickers, charms or inventory items.
+
+Inspect or refresh the generated metadata without changing game files:
+
+```powershell
+python tests/skin_catalog_checks.py
+python tools/generate_skin_catalog.py --check
+# After an installed item-data update, regenerate and review the source diff:
+python tools/generate_skin_catalog.py --report logs/skin_catalog_provenance.json
+```
+
+Build and load with the existing **Load Overlay.cmd** workflow. Restart CS2
+normally first if an older DLL is resident. Testing stays at the disconnected
+menu or in the authorized offline/private environment. Stopped and resident is
+not physically unloaded. Implementation and validation details are in
+[the skin customization notes](docs/SKIN_CUSTOMIZATION.md).
+
+**Verification:** public and diagnostic x64 Release builds succeed without
+project warnings; each passes **66/66 CTest suites**. All **32/32 installed-file
+checks** pass. The native cosmetic suite passes **55 synthetic checks**; the
+catalog parser passes **7/7 tests**. Both DLLs retain zero static TLS/delay
+imports. No client/server was launched. First-person knife rendering, glove
+appearance and legacy-paint mesh variants remain visually unobserved.
+
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty-two
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
@@ -698,7 +750,7 @@ rejected. With the preview build enabled, reproduce the Camera image with:
 ## Local configs
 
 Open **Configs** in the public menu, enter a name, then click **Save / overwrite**
-to save all current Visuals (including Player chams, Camera, Scoped zoom and Player model), Movement, World, Lighting and Aim settings. Select
+to save all current Visuals (including Player chams, Camera, Scoped zoom and Player model), Movement, World, Lighting, Aim and both Skins loadouts. Select
 a saved preset and click **Load config** to apply it. Type a different name to
 save another preset; **Refresh list** picks up files added outside the menu.
 Loading replaces current options, including feature enable switches. Presets
@@ -2130,7 +2182,7 @@ Outputs: `build/Release/cs2_overlay.dll`, `build/Release/mapper.exe`, `build/Rel
 ## Public and diagnostic interfaces
 
 The default build uses a minimal dark public menu with **Visuals**, **Movement**,
-**World**, **Lighting**, **Aim** and **Configs** tabs. Visuals includes ESP, boxes, names, health bars and HP text,
+**World**, **Lighting**, **Aim**, **Configs** and **Skins** tabs. Visuals includes ESP, boxes, names, health bars and HP text,
 distance labels, teammates, and armor text; Movement includes the two independent
 movement toggles. Only implemented features appear. ESP has
 unlimited range; there is no range slider or +/- range hotkey. Insert shows or
