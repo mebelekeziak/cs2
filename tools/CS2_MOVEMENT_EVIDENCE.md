@@ -1,5 +1,18 @@
 # Movement evidence for the installed client
 
+## Equivalent digital facing — October 24, 2026, revision 15
+
+The verified installed AirMove combines normalized horizontal forward/left
+vectors (`0x8E6753`, `0x8E6811`, `0x8E688B`), computes wish length at
+`0x8E68CE..0x8E6903`, normalizes at `0x8E691E..0x8E6940`, and caps length by
+move-data effective speed at `0x8E6971..0x8E697D` before air acceleration.
+Full cardinal input has length M; full diagonal input has length sqrt(2)*M;
+both become the same capped full wish speed. The revision 15 encoding chooses
+the nearest of eight equivalent command yaw/digital direction pairs without
+changing that normalized wish. Raw stored/native predecessor axes are retained.
+No new native address, field, call or hook is consumed by this math change.
+The Forward-only description below records revision 14 historically.
+
 ## Quantized input — October 24, 2026, movement revision 14
 
 The same installed client hash below remains verified. Registration LEAs

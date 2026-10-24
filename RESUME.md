@@ -1,3 +1,29 @@
+# Movement facing correction, revision 15 — October 24, 2026
+
+User reports revision 14 movement and jumpbug work very well, but character
+facing twitches extremely and viewmodel subtly. Working revision 14 committed
+as 961bd64 before this change. User authorized commits.
+
+Revision 15 preserves the ideal steering solution and jumpbug timing. Instead
+of always Forward + wish yaw, the shared command owner chooses the nearest
+of eight equivalent full digital direction/yaw pairs. Facing stays within
+22.5 degrees of physical view. Common opposite side wishes keep one facing
+and switch buttons; digital-sector boundaries can still make 45-degree steps.
+Native normalization + effective wish-speed cap make full diagonals equivalent
+to full cardinal speed. Preserve raw diagonal predecessor/history magnitude.
+Both retarget branches, final axes, presence and masks use the chosen pair.
+No new native fields/calls/hooks or camera/model-angle writes.
+
+Both x64 Release builds pass 66/66 CTests warning-free, 6/6 focused AA suites.
+New coverage independently checks 20,167 view/wish combinations, capped impulse,
+facing bounds/ties and history/restore. Independent review found no blocker.
+Logs movement-r15-build/tests-public/diagnostic; final metadata in
+logs/movement-r15-artifacts.json, both zero static TLS/delay imports.
+Native compatibility dependencies unchanged from prior 33/33 bundle.
+No revision 15 gameplay observed or agent launch/injection. Restart normally,
+Load Overlay.cmd, same quantization 1/settings; stopped code stays resident.
+Full details: docs/MOVEMENT_REVISION15.md.
+
 # Quantized movement and jumpbug, revision 14 — October 24, 2026
 
 User confirms prior analog autostrafe works well with quantization off and

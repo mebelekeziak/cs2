@@ -2,6 +2,25 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Movement facing correction — October 24, revision 15
+
+The user reports much better movement and working jumpbug in revision 14;
+that working version is saved in **961bd64**. Revision 15 addresses its extreme
+character-facing twitch by expressing the same ideal strafe wish with the
+nearest equivalent digital direction. Command facing stays within 22.5 degrees
+of the physical view, instead of following every Forward-only wish rotation.
+The movement solution and jumpbug timing are preserved.
+
+Digital-sector changes can still produce smaller facing snaps; revision 15
+visual behavior has not yet been observed. Restart CS2 normally and use
+**Load Overlay.cmd**, retaining the same Movement options and quantization 1
+for the offline/private comparison. See [encoding and limits](docs/MOVEMENT_REVISION15.md).
+
+Both x64 Release variants build without project warnings and pass **66/66
+CTest suites** each, including independent direction/acceleration equivalence,
+facing bounds and native-history restoration. Both DLLs retain zero static
+TLS/delay imports. The new visual result still needs an in-game comparison.
+
 ## Vanilla movement quantization — October 24, revision 14
 
 Autostrafe now supports the enabled `sv_quantize_movement_input` rule. It

@@ -662,7 +662,53 @@ void Rejections() {
     }
     VirtualFree(memory, 0, MEM_RELEASE);
 }
+void DigitalBasisFacing() {
+    bool equivalent = true, nearCamera = true, fixedPoints = true, sameAcceleration = true;
+    constexpr double radians = 0.01745329251994329577;
+    for (float camera : {-540.0f, -179.9f, -73.0f, 0.0f, 47.0f, 179.9f, 720.0f}) {
+        for (int angle = -1440; angle <= 1440; ++angle) {
+            const float wish = angle * 0.5f;
+            const auto basis = AntiAimChooseDigitalBasis(camera, wish);
+            fixedPoints &= basis.valid && std::abs(basis.forward) <= 1 && std::abs(basis.left) <= 1 &&
+                std::round(basis.forward) == basis.forward && std::round(basis.left) == basis.left &&
+                (basis.forward != 0 || basis.left != 0);
+            nearCamera &= std::abs(Wrap(basis.yaw - Wrap(camera))) <= 22.50002f;
+            // Independently combine native horizontal basis, normalize and cap
+            // wish speed. This catches diagonal magnitude or direction changes.
+            const double y = basis.yaw * radians;
+            double x = basis.forward * std::cos(y) - basis.left * std::sin(y);
+            double z = basis.forward * std::sin(y) + basis.left * std::cos(y);
+            const double length = std::hypot(x, z);
+            x /= length; z /= length;
+            const double idealX = std::cos(Wrap(wish) * radians), idealY = std::sin(Wrap(wish) * radians);
+            equivalent &= std::abs(x - idealX) < 0.000002 && std::abs(z - idealY) < 0.000002;
+            const double speed = std::min(250.0, length * 250);
+            const double impulse = std::min(12 * speed / 64, std::max(0.0, 30 - (250 * x + 80 * z)));
+            const double idealImpulse = std::min(12 * 250.0 / 64, std::max(0.0, 30 - (250 * idealX + 80 * idealY)));
+            sameAcceleration &= std::abs(impulse * x - idealImpulse * idealX) < 0.0001 &&
+                std::abs(impulse * z - idealImpulse * idealY) < 0.0001;
+        }
+    }
+    Expect(fixedPoints && equivalent, "all world headings retain their exact normalized wish through native digital rounding");
+    Expect(nearCamera, "nearest equivalent digital basis bounds command facing within 22.5 degrees across camera seams");
+    Expect(sameAcceleration, "native normalization and wish-speed clamp give cardinal and diagonal encodings the same air impulse");
+    const auto left = AntiAimChooseDigitalBasis(0, 90), right = AntiAimChooseDigitalBasis(0, -90);
+    Expect(left.valid && right.valid && left.yaw == 0 && right.yaw == 0 &&
+        left.forward == 0 && right.forward == 0 && left.left == 1 && right.left == -1,
+        "alternating perpendicular strafe wishes switch side input without the previous 180-degree body flip");
+    bool oppositeStable = true;
+    for (float wish : {-157.5f, -112.5f, -67.5f, -22.5f, 22.5f, 67.5f, 112.5f, 157.5f})
+        oppositeStable &= Near(AntiAimChooseDigitalBasis(0, wish).yaw, AntiAimChooseDigitalBasis(0, wish + 180).yaw);
+    Expect(oppositeStable, "opposite wishes retain the same facing at exact digital-sector ties");
+    Expect(!AntiAimChooseDigitalBasis(std::numeric_limits<float>::quiet_NaN(), 0).valid &&
+        !AntiAimChooseDigitalBasis(0, std::numeric_limits<float>::infinity()).valid,
+        "nonfinite facing inputs do not publish a command basis");
+}
 void QuantizedMovementBasis() {
+    const auto sameWish = [](const AntiAimCommandPatch& patch, float wish) {
+        const double axisYaw = std::atan2(static_cast<double>(patch.editedLeft), patch.editedForward) * 57.29577951308232;
+        return std::abs(Wrap(static_cast<double>(patch.editedView.yaw) + axisYaw - wish)) < 0.0002f;
+    };
     const auto prepare = [](Fixture& f, float forward = 1, float left = 0) {
         MovementButtons buttons{};
         MovementEncodeStrafe(buttons, forward, left, 0);
@@ -687,15 +733,19 @@ void QuantizedMovementBasis() {
         Fixture f; prepare(f); const Fixture before = f;
         AntiAimCommandPatch patch{}; const char* reason = nullptr;
         const bool applied = AntiAimApplyMovementCommand(Address(f.command), yaw, Address(f.steps[0]), patch, &reason);
-        Expect(applied && patch.valid && patch.editedView.pitch == 20 && patch.editedView.yaw == Wrap(yaw) &&
-               patch.editedForward == 1 && patch.editedLeft == 0 &&
-               Get<float>(Address(f.base) + mo::base::Forward) == 1 && Get<float>(Address(f.base) + mo::base::Left) == 0,
-               "quantized ideal world yaw wraps while outgoing axes remain exact full-forward and pitch stays physical");
+        Expect(applied && patch.valid && patch.editedView.pitch == 20 && sameWish(patch, yaw) &&
+               std::abs(Wrap(patch.editedView.yaw - patch.originalView.yaw)) <= 22.50002f &&
+               std::round(patch.editedForward) == patch.editedForward && std::round(patch.editedLeft) == patch.editedLeft &&
+               Get<float>(Address(f.base) + mo::base::Forward) == patch.editedForward &&
+               Get<float>(Address(f.base) + mo::base::Left) == patch.editedLeft,
+               "equivalent digital wish stays near physical facing with exact native axes and physical pitch");
         if (!applied) continue;
         const auto rotatedPrevious = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, 0.6f, 0.2f);
-        Expect(rotatedPrevious.valid && Near(f.steps[0].forwardDelta + rotatedPrevious.forward, 1) &&
-               Near(f.steps[0].leftDelta + rotatedPrevious.left, 0) &&
-               (patch.editedButtons.down & mo::Directions) == mo::Forward &&
+        MovementButtons expectedDirections{};
+        MovementEncodeStrafe(expectedDirections, patch.editedForward, patch.editedLeft, 0);
+        Expect(rotatedPrevious.valid && Near(f.steps[0].forwardDelta + rotatedPrevious.forward, patch.editedForward) &&
+               Near(f.steps[0].leftDelta + rotatedPrevious.left, patch.editedLeft) &&
+               (patch.editedButtons.down & mo::Directions) == expectedDirections.down &&
                !(patch.editedButtons.changed & mo::Directions) && !(patch.editedButtons.third & mo::Directions),
                "owned time-zero event replaces digital fallback with ideal axes after predecessor basis handoff");
         bool fixed = true;
@@ -716,8 +766,9 @@ void QuantizedMovementBasis() {
         Fixture f; prepare(f, axes[0], axes[1]); const Fixture before = f; AntiAimCommandPatch patch{};
         const bool applied = AntiAimApplyMovementCommand(Address(f.command), -127.5f, Address(f.steps[0]), patch);
         const auto prior = AntiAimCorrectWalkMovement(patch.originalView, patch.editedView, 0.6f, 0.2f);
-        Expect(applied && patch.editedForward == 1 && patch.editedLeft == 0 && prior.valid &&
-               Near(prior.forward + f.steps[0].forwardDelta, 1) && Near(prior.left + f.steps[0].leftDelta, 0) &&
+        Expect(applied && sameWish(patch, -127.5f) && prior.valid &&
+               Near(prior.forward + f.steps[0].forwardDelta, patch.editedForward) &&
+               Near(prior.left + f.steps[0].leftDelta, patch.editedLeft) &&
                AntiAimRestoreCommand(patch) && Same(f, before),
                "all cardinal and diagonal digital fallbacks upgrade to the same ideal trajectory and restore exactly");
     }
@@ -754,20 +805,22 @@ void QuantizedMovementBasis() {
         AntiAimCommandPatch owned{};
         const bool applied = AntiAimApplyMovementCommand(Address(current.command), 126.5f, Address(current.steps[0]), owned,
                                                          nullptr, nullptr, &historical);
-        Expect(applied && Near(historical.forward + current.steps[0].forwardDelta, 1) &&
-               Near(historical.left + current.steps[0].leftDelta, 0) && current.Size() == 3 && current.Rep() == repBefore &&
+        Expect(applied && sameWish(owned, 126.5f) &&
+               Near(historical.forward + current.steps[0].forwardDelta, owned.editedForward) &&
+               Near(historical.left + current.steps[0].leftDelta, owned.editedLeft) && current.Size() == 3 && current.Rep() == repBefore &&
                current.allocations == 0 && current.appends == 0,
                "native predecessor handoff coalesces into owned event with exact ideal axes under allocation exhaustion");
         AntiAimHistoryCommand wire{}; AntiAimHistoryState history{}; AntiAimHistoryCommand matched{};
         const bool published = AntiAimHistoryReadCommand(Address(current.command), 51, wire);
         wire.edited = true; wire.physical = owned.originalView;
         const auto idealPhysical = AntiAimCorrectWalkMovement(wire.outgoing, wire.physical, wire.forward, wire.left);
-        const auto expectedIdeal = AntiAimCorrectWalkMovement({20, 126.5f, 0}, owned.originalView, 1, 0);
+        const float rawMagnitude = std::hypot(owned.editedForward, owned.editedLeft);
+        const auto expectedIdeal = AntiAimCorrectWalkMovement({20, 126.5f, 0}, owned.originalView, rawMagnitude, 0);
         Expect(published && AntiAimHistoryPublish(history, wire) && AntiAimHistoryMatch(history, wire, matched) &&
                matched.edited && idealPhysical.valid && expectedIdeal.valid && Near(idealPhysical.forward, expectedIdeal.forward) &&
                Near(idealPhysical.left, expectedIdeal.left) &&
                !(Near(idealPhysical.forward, -1) && Near(idealPhysical.left, 1)),
-               "published outgoing full-forward inverts to the ideal physical predecessor rather than digital fallback");
+               "published cardinal or diagonal wish inverts to the raw ideal predecessor without losing diagonal magnitude");
         const Fixture outgoing = current;
         bool repeat = applied;
         for (int rebuild = 0; rebuild < 20; ++rebuild) {
@@ -799,6 +852,6 @@ void QuantizedMovementBasis() {
 }
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); QuantizedMovementBasis();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); DigitalBasisFacing(); QuantizedMovementBasis();
     return failures ? 1 : 0;
 }

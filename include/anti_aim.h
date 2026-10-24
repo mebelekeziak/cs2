@@ -17,7 +17,7 @@ void AntiAimObserveIngest(void* services, void* command) noexcept;
 // of the latest prediction ingestion. Failure leaves the copied axes intact.
 bool AntiAimPhysicalHistory(std::uintptr_t services, std::uintptr_t command, float& forward, float& left) noexcept;
 // Quantized steering starts with a safe digital command. The request upgrades
-// that command to a full-forward movement basis at finalization, using the
+// that command to the nearest equivalent digital basis at finalization, using the
 // existing restore/history/camera owner. Call after successful movement Apply;
 // analogTransition is its sole time-zero analog event. A rejection leaves the
 // digital fallback intact and suppresses ordinary anti aim for this command.

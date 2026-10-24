@@ -67,6 +67,26 @@ bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept {
     return true;
 }
 
+AntiAimDigitalBasis AntiAimChooseDigitalBasis(float physicalYaw, float wishYaw) noexcept {
+    if (!std::isfinite(physicalYaw) || !std::isfinite(wishYaw)) return {};
+    const double camera = Wrap(physicalYaw), wish = Wrap(wishYaw);
+    // Cardinal choices win exact ties. Opposite wish directions then retain
+    // the same facing at sector boundaries, independently of command parity.
+    constexpr float directions[][2]{{1, 0}, {0, 1}, {-1, 0}, {0, -1},
+        {1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
+    AntiAimDigitalBasis best{};
+    double distance = 1000;
+    for (const auto& direction : directions) {
+        const double relative = std::atan2(static_cast<double>(direction[1]), direction[0]) / radians;
+        const double yaw = Wrap(wish - relative);
+        const double candidate = std::abs(Wrap(yaw - camera));
+        if (candidate >= distance - 0.0000001) continue;
+        distance = candidate;
+        best = {static_cast<float>(yaw), direction[0], direction[1], true};
+    }
+    return best;
+}
+
 bool AntiAimBuildAngles(const AimAngles& local, const AntiAimSettings& settings,
                         std::uint32_t sequence, AimAngles& command) noexcept {
     if (!Finite(local) || !sequence) return false;

@@ -263,7 +263,12 @@ bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const Anti
             if ((step.original.presence & 1) && (step.original.button & actions)) return fail("movement_action_passthrough");
         }
     }
-    const auto options = AntiAimNormalizeSettings(settings);
+    auto options = AntiAimNormalizeSettings(settings);
+    const auto digitalBasis = movement ? AntiAimChooseDigitalBasis(patch.originalView.yaw, movement->yaw) : AntiAimDigitalBasis{};
+    if (movement) {
+        if (!digitalBasis.valid) return fail("movement_view_basis");
+        options.yawOffset = digitalBasis.yaw;
+    }
     const bool legacyPayload = options.yawMode == AntiAimYawMode::Static && options.yawBase == AntiAimYawBase::View &&
         std::abs(options.yawOffset) == 180 && options.pitchMode == AntiAimPitchMode::Down;
     if (!AntiAimBuildAngles(patch.originalView, options, static_cast<std::uint32_t>(patch.sequence), patch.editedView)) return fail("view_nonfinite");
@@ -378,25 +383,29 @@ bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const Anti
             step.edited.pitchDelta = 0; step.edited.yawDelta = 0;
             step.edited.presence &= ~0x60u;
             if (step.address != movement->transition) continue;
-            // Generic rotation produced R(D - physicalPrevious). Replacing D
-            // with the ideal full-forward vector gives 1 - R(physicalPrevious).
+            // Generic rotation produced R(D - physicalPrevious). Replace D
+            // with the equivalent exact digital direction in the chosen basis.
             // When history is supplied, coalesce the native predecessor's
             // basis change directly below instead of adding a boundary event.
             if (movement->history) {
                 // The owned event can coalesce the history handoff directly.
                 // This requires no additional native allocation or event and
                 // cannot leave a partial change of basis on append failure.
-                if (!Retarget(step.edited, 1, 0, *movement->history)) return fail("movement_transition_nonfinite");
+                if (!Retarget(step.edited, digitalBasis.forward, digitalBasis.left, *movement->history)) return fail("movement_transition_nonfinite");
             } else {
-                if (!Sum(step.edited.forwardDelta, 1.0f - patch.editedForward) ||
-                    !Sum(step.edited.leftDelta, -patch.editedLeft)) return fail("movement_transition_nonfinite");
+                if (!Sum(step.edited.forwardDelta, digitalBasis.forward - patch.editedForward) ||
+                    !Sum(step.edited.leftDelta, digitalBasis.left - patch.editedLeft)) return fail("movement_transition_nonfinite");
                 step.edited.presence = (step.edited.presence & ~0x18u) |
                     (step.edited.forwardDelta != 0 ? 8u : 0u) | (step.edited.leftDelta != 0 ? 0x10u : 0u);
             }
         }
-        patch.editedForward = 1; patch.editedLeft = 0;
-        patch.editedPresence = (patch.editedPresence & ~0xC0u) | mo::base::ForwardPresent;
-        patch.editedButtons.down = (patch.originalButtons.down & ~mo::Directions) | mo::Forward;
+        patch.editedForward = digitalBasis.forward; patch.editedLeft = digitalBasis.left;
+        patch.editedPresence = (patch.editedPresence & ~0xC0u) |
+            (digitalBasis.forward != 0 ? mo::base::ForwardPresent : 0u) |
+            (digitalBasis.left != 0 ? mo::base::LeftPresent : 0u);
+        MovementButtons digitalButtons{};
+        MovementEncodeStrafe(digitalButtons, digitalBasis.forward, digitalBasis.left, 0);
+        patch.editedButtons.down = (patch.originalButtons.down & ~mo::Directions) | digitalButtons.down;
         patch.editedButtons.changed &= ~mo::Directions;
         patch.editedButtons.third &= ~mo::Directions;
     }

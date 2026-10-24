@@ -259,7 +259,7 @@ bool AntiAimPrepare(AntiAimLogCallback callback) noexcept {
         State("anti aim replay hook preparation failed"); return false;
     }
     prepared = true; State("awaiting anti aim activation");
-    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=6 sequence_previous_history; shared quantized movement basis owner; input replay slot=8; physical view/direction input retained");
+    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=7 sequence_previous_history; nearest digital quantized movement basis; input replay slot=8; physical view/direction input retained");
     return true;
 }
 void AntiAimActivate(bool commandHookReady) noexcept {

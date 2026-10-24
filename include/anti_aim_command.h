@@ -34,8 +34,9 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
                          const char** reason = nullptr, AntiAimCommandDiagnostics* diagnostics = nullptr) noexcept;
 // Atomic digital-to-command-basis upgrade. The original safe digital command
 // remains the restore payload. Exactly one time-zero analog movement event is
-// retargeted to the ideal world yaw; outgoing final axes are exactly 1,0 and
-// pitch remains physical. Outgoing subtick camera deltas are neutralized so
+// retargeted to the ideal world wish. Eight equivalent digital directions keep
+// outgoing yaw within 22.5 degrees of the physical view; pitch remains physical.
+// Outgoing subtick camera deltas are neutralized so
 // every movement segment uses that fixed basis; original bytes are restored
 // with the same transaction. Supplying history coalesces native sequence-1
 // handoff in that event without allocation. Failure makes no semantic writes.

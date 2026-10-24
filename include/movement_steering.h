@@ -27,8 +27,8 @@ struct SteeringCommand {
     std::array<SteeringOutput, AirSteeringSliceCount> slices{};
     SteeringOutput summary{};
     // Quantized commands publish a safe digital fallback first. The command
-    // orientation owner can represent the continuous wish as full Forward in
-    // this world basis, preserving the local camera through its normal replay.
+    // orientation owner represents the continuous world wish with a nearby
+    // facing and exact digital axes, preserving camera through normal replay.
     bool commandBasis = false;
     float basisWishYaw = 0;
 };
