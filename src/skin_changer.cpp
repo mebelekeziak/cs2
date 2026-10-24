@@ -2,6 +2,7 @@
 #include "skin_settings.h"
 #include "skin_catalog.h"
 #include "skin_offsets.h"
+#include "knife_animation_offsets.h"
 #include "client_frame.h"
 #include "cs2_offsets.h"
 #include "model_swap.h"
@@ -18,18 +19,23 @@ namespace {
 namespace off = skin_offsets;
 namespace ent = cs2_offsets;
 namespace model = model_swap_offsets;
+namespace anim = knife_animation_offsets;
 using AttributeFn = void (*)(void*, const char*, float);
 using RemoveFn = void (*)(void*, std::uint16_t);
 using RefreshFn = void (*)(void*);
 using CompositeResetFn = void (*)(void*, bool);
 using RegenerateFn = void (*)(void*, bool);
 using ModelFn = void (*)(void*, const char*);
+using ItemSubclassFn = void* (*)(void*);
+using SubclassChangedFn = void (*)(void*);
 AttributeFn setAttribute = nullptr;
 RemoveFn removeAttribute = nullptr;
 RefreshFn refresh = nullptr;
 CompositeResetFn resetComposite = nullptr;
 RegenerateFn regenerate = nullptr;
 ModelFn setModel = nullptr;
+ItemSubclassFn itemSubclass = nullptr;
+SubclassChangedFn subclassChanged = nullptr;
 std::uintptr_t client = 0;
 SkinChangerLogCallback logger = nullptr;
 SRWLOCK stateLock = SRWLOCK_INIT;
@@ -37,6 +43,7 @@ bool prepared = false;
 std::atomic<bool> active{false}, stopped{false};
 std::atomic<unsigned long long> frames{0}, assignments{0}, restorations{0}, invalidations{0}, failures{0};
 std::atomic<DWORD> ownerThread{0};
+std::atomic<unsigned long long> animationAssignments{0}, animationRestores{0};
 ULONGLONG lastReportTime = 0;
 unsigned long long lastReportedFrames = 0;
 #ifdef CS2_SKIN_CHANGER_CHECKS
@@ -227,14 +234,53 @@ bool LoadModel(const Path& path) noexcept {
 #endif
     return ModelSwapPreloadResource(path.data());
 }
+struct SubclassState {
+    std::uint32_t id = 0;
+    std::uintptr_t data = 0;
+    bool operator==(const SubclassState&) const = default;
+};
+bool DescriptorName(std::uintptr_t data, Path& name) noexcept {
+    std::uintptr_t pointer = 0;
+    if (!Read(data + anim::VDataSubclassName, pointer) || !pointer) return false;
+    name = {};
+    for (std::size_t index = 0; index < name.size(); ++index) {
+        if (!Read(pointer + index, name[index])) return false;
+        if (!name[index]) return index > 0;
+    }
+    return false;
+}
+bool ValidDescriptor(const SubclassState& value, const char* expected = nullptr) noexcept {
+    std::uintptr_t table = 0;
+    std::uint32_t id = 0;
+    int scope = 0;
+    Path name{};
+    return value.id && value.data && Read(value.data, table) && table == client + anim::VDataVtable &&
+        Read(value.data + anim::VDataScope, scope) && scope == anim::WeaponScope &&
+        Read(value.data + anim::VDataSubclassId, id) && id == value.id && DescriptorName(value.data, name) &&
+        (!expected || !std::strcmp(name.data(), expected));
+}
+bool ReadSubclass(std::uintptr_t entity, SubclassState& value) noexcept {
+    return Read(entity + anim::SubclassId, value.id) && Read(entity + anim::VData, value.data);
+}
+bool NativeItemSubclass(std::uintptr_t item, SubclassState& value) noexcept {
+    __try { value.data = reinterpret_cast<std::uintptr_t>(itemSubclass(reinterpret_cast<void*>(item))); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return value.data && Read(value.data + anim::VDataSubclassId, value.id);
+}
+bool NativeSubclassChanged(std::uintptr_t entity) noexcept {
+    __try { subclassChanged(reinterpret_cast<void*>(entity)); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 struct OwnedItem {
     Identity identity{};
     std::uintptr_t item = 0;
     bool glove = false, owns = false, pending = false, seen = false, failed = false;
     ItemState original{}, applied{};
-    Path originalModel{}, appliedModel{};
+    Path originalModel{}, appliedModel{}, restoreModel{};
     SkinItemSettings selection{};
     SkinItemSettings rejected{};
+    SubclassState originalSubclass{}, appliedSubclass{};
+    bool ownsSubclass = false;
 };
 Source trackedSource{};
 std::array<OwnedItem, 65> owned{};
@@ -248,6 +294,46 @@ bool ItemValid(const Source& source, const OwnedItem& value) noexcept {
     std::uint32_t owner = UINT32_MAX;
     return value.item == value.identity.entity + off::Item &&
         Read(value.identity.entity + off::OwnerHandle, owner) && owner == source.pawn.handle;
+}
+bool KnifeEntityValid(const Source& source, const OwnedItem& value) noexcept {
+    std::uintptr_t table = 0;
+    return !value.glove && ItemValid(source, value) && Read(value.identity.entity, table) && table == client + anim::KnifeVtable;
+}
+bool AssignSubclass(const Source& source, OwnedItem& value, const SubclassState& target, bool restoring) noexcept {
+    if (!KnifeEntityValid(source, value) || !ValidDescriptor(target)) return false;
+    SubclassState before{};
+    if (!ReadSubclass(value.identity.entity, before)) return false;
+    if (before == target) return true;
+    if (!Write(value.identity.entity + anim::SubclassId, target.id) || !NativeSubclassChanged(value.identity.entity)) return false;
+    SubclassState after{};
+    if (!KnifeEntityValid(source, value) || !ReadSubclass(value.identity.entity, after) || after != target) return false;
+    if (restoring) ++animationRestores; else ++animationAssignments;
+    if (logger) {
+        Path oldName{}, newName{};
+        DescriptorName(before.data, oldName); DescriptorName(after.data, newName);
+        char message[1024]{};
+        std::snprintf(message, sizeof(message), "SKIN_KNIFE_ANIMATION_%s handle=%08x definition=%u old_subclass=%08x new_subclass=%08x old_vdata=%p new_vdata=%p old_name=%s new_name=%s owner_tid=%lu",
+            restoring ? "RESTORED" : "ASSIGNED", value.identity.handle,
+            restoring ? value.original.definition : value.applied.definition, before.id, after.id,
+            reinterpret_cast<void*>(before.data), reinterpret_cast<void*>(after.data), oldName.data(), newName.data(), GetCurrentThreadId());
+        logger(message);
+    }
+    return true;
+}
+bool ResolveSubclass(const Source& source, const OwnedItem& value, const char* expectedName, SubclassState& target) noexcept {
+    return KnifeEntityValid(source, value) && NativeItemSubclass(value.item, target) &&
+        ItemValid(source, value) && ValidDescriptor(target, expectedName);
+}
+bool AssignOwnedSubclass(const Source& source, OwnedItem& value, const SubclassState& target, bool restoring) noexcept {
+    SubclassState before{};
+    const bool changed = ReadSubclass(value.identity.entity, before) && before != target;
+    const bool assigned = AssignSubclass(source, value, target, restoring);
+    // Native VData lifecycle can recreate animation/HUD resources. Retain any
+    // resulting geometry as part of this attempt, including failed attempts,
+    // so rollback cannot mistake it for an unrelated engine replacement.
+    Path after{};
+    if (changed && ItemValid(source, value) && ModelPath(value.identity.entity, after)) value.appliedModel = after;
+    return assigned;
 }
 bool WriteState(const Source& source, OwnedItem& value, const ItemState& desired) noexcept {
     if (!ItemValid(source, value)) return false;
@@ -288,21 +374,40 @@ bool Restore(const Source& source, OwnedItem& value) noexcept {
     if (!Snapshot(value.identity.entity, value.item, value.glove, current)) return false;
     if (!value.pending && current != value.applied) {
         // Native inventory/network state superseded our exact assignment.
-        value.owns = false; value.originalModel = {}; value.appliedModel = {}; return true;
+        value.owns = false; value.originalModel = {}; value.appliedModel = {};
+        value.ownsSubclass = false; value.originalSubclass = {}; value.appliedSubclass = {}; return true;
     }
+    const bool wasPending = value.pending;
     value.pending = true;
     if (!WriteState(source, value, value.original)) return false;
     if (value.originalModel[0]) {
         Path currentModel{};
         if (!ModelPath(value.identity.entity, currentModel)) return false;
-        if (currentModel == value.appliedModel && currentModel != value.originalModel) {
-            if (!ItemValid(source, value) || !NativeModel(value.identity.entity, value.originalModel) ||
-                !ItemValid(source, value) || !ModelPath(value.identity.entity, currentModel) || currentModel != value.originalModel ||
-                !NativeRefresh(value.identity.entity)) return false;
+        if (!value.restoreModel[0]) value.restoreModel = currentModel == value.appliedModel ? value.originalModel : currentModel;
+        // Set original geometry before the native subclass callback. Its HUD
+        // invalidation compares weapon/HUD model bindings at this exact point.
+        if (currentModel != value.restoreModel) {
+            if (!ItemValid(source, value) || !NativeModel(value.identity.entity, value.restoreModel) ||
+                !ItemValid(source, value) || !ModelPath(value.identity.entity, currentModel) || currentModel != value.restoreModel) return false;
         }
     }
+    if (value.ownsSubclass) {
+        SubclassState currentSubclass{};
+        if (!KnifeEntityValid(source, value) || !ReadSubclass(value.identity.entity, currentSubclass)) return false;
+        if ((wasPending || currentSubclass == value.appliedSubclass) &&
+            !AssignOwnedSubclass(source, value, value.originalSubclass, true)) return false;
+        value.ownsSubclass = false;
+    }
+    if (value.restoreModel[0]) {
+        Path after{};
+        if (!ItemValid(source, value) || !ModelPath(value.identity.entity, after)) return false;
+        if (after != value.restoreModel && (!NativeModel(value.identity.entity, value.restoreModel) ||
+            !ItemValid(source, value) || !ModelPath(value.identity.entity, after) || after != value.restoreModel)) return false;
+        if (!ItemValid(source, value) || !NativeRefresh(value.identity.entity)) return false;
+    }
     value.owns = value.pending = false;
-    value.originalModel = {}; value.appliedModel = {};
+    value.originalModel = {}; value.appliedModel = {}; value.restoreModel = {};
+    value.originalSubclass = {}; value.appliedSubclass = {};
     ++restorations;
     return true;
 }
@@ -340,6 +445,7 @@ void UpdateItem(const Source& source, OwnedItem& value, const SkinTeamLoadout& l
     if (!Snapshot(value.identity.entity, value.item, value.glove, current)) { ++failures; return; }
     if (value.owns && !value.pending && current != value.applied) {
         value.owns = false; value.originalModel = {}; value.appliedModel = {};
+        value.ownsSubclass = false; value.originalSubclass = {}; value.appliedSubclass = {};
     }
     if (!enabled) { value.failed = false; value.rejected = {}; }
     if (value.pending) { if (!Restore(source, value)) ++failures; return; }
@@ -355,11 +461,27 @@ void UpdateItem(const Source& source, OwnedItem& value, const SkinTeamLoadout& l
     if (value.failed && value.rejected == *selected) return;
     value.failed = false; value.rejected = {};
     const auto reject = [&]() noexcept { value.failed = true; value.rejected = *selected; ++failures; };
-    if (value.owns && value.selection == *selected) return;
-    if (!value.owns) { value.original = current; value.originalModel = {}; value.appliedModel = {}; }
+    if (value.owns && value.selection == *selected) {
+        if (knife) {
+            SubclassState target{};
+            if (!ResolveSubclass(source, value, selectedItem->internal_name, target)) { reject(); return; }
+            value.appliedSubclass = target; value.ownsSubclass = true; value.pending = true;
+            if (!AssignOwnedSubclass(source, value, target, false)) { reject(); return; }
+            value.pending = false;
+        }
+        return;
+    }
+    if (!value.owns) {
+        value.original = current; value.originalModel = {}; value.appliedModel = {}; value.restoreModel = {};
+        value.originalSubclass = {}; value.appliedSubclass = {}; value.ownsSubclass = false;
+        if (knife && (!KnifeEntityValid(source, value) || !ReadSubclass(value.identity.entity, value.originalSubclass) ||
+            !ValidDescriptor(value.originalSubclass))) { reject(); return; }
+    }
     auto desired = Desired(value.original, current, *selected, knife);
     if (value.glove) { desired.paint = current.paint; desired.seed = current.seed; desired.wear = current.wear; desired.stat = current.stat; }
     Path selectedModel{};
+    SubclassState beforeSubclass{};
+    if (knife && !ReadSubclass(value.identity.entity, beforeSubclass)) { reject(); return; }
     if (knife && selectedItem->model_path && selectedItem->model_path[0]) {
         std::snprintf(selectedModel.data(), selectedModel.size(), "%s", selectedItem->model_path);
         if (!value.originalModel[0] && !ModelPath(value.identity.entity, value.originalModel)) { reject(); return; }
@@ -374,12 +496,16 @@ void UpdateItem(const Source& source, OwnedItem& value, const SkinTeamLoadout& l
             !Read(source.pawn.entity + ent::C_BaseEntity::m_lifeState, currentLife) || currentLife != 0) return;
         ItemState rechecked{};
         if (!Snapshot(value.identity.entity, value.item, value.glove, rechecked) || rechecked != current) return;
+        SubclassState recheckedSubclass{};
+        if (!ReadSubclass(value.identity.entity, recheckedSubclass) || recheckedSubclass != beforeSubclass) return;
     }
     if (!active.load() || stopped.load() || SkinGetSettings() != intent) return;
     value.owns = true; value.pending = true;
     value.applied = desired;
     if (!WriteState(source, value, desired)) { reject(); return; }
     if (!active.load() || stopped.load() || SkinGetSettings() != intent) return;
+    SubclassState target{};
+    if (knife && !ResolveSubclass(source, value, selectedItem->internal_name, target)) { reject(); return; }
     if (selectedModel[0]) {
         value.appliedModel = selectedModel;
         if (!ItemValid(source, value)) { reject(); return; }
@@ -392,6 +518,13 @@ void UpdateItem(const Source& source, OwnedItem& value, const SkinTeamLoadout& l
         if (readable) value.appliedModel = after;
         if (!assigned || !readable || after != selectedModel) { reject(); return; }
         if (!ItemValid(source, value) || !NativeRefresh(value.identity.entity)) { reject(); return; }
+    }
+    if (knife) {
+        value.appliedSubclass = target; value.ownsSubclass = true;
+        if (!AssignOwnedSubclass(source, value, target, false)) { reject(); return; }
+        if (!active.load() || stopped.load() || SkinGetSettings() != intent) return;
+        Path after{};
+        if (selectedModel[0] && (!ModelPath(value.identity.entity, after) || after != selectedModel)) { reject(); return; }
     }
     ItemState after{};
     if (!ItemValid(source, value) || !Snapshot(value.identity.entity, value.item, value.glove, after) || after != desired) { reject(); return; }
@@ -457,6 +590,7 @@ bool SkinChangerPrepare(SkinChangerLogCallback callback) noexcept {
     logger = callback;
     client = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll"));
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
+    std::uintptr_t scopeGetter = 0, changedMethod = 0;
     if (!Read(client, dos) || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 || dos.e_lfanew > 0x100000 ||
         !Read(client + dos.e_lfanew, nt) || nt.Signature != IMAGE_NT_SIGNATURE || nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
         nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC || nt.FileHeader.TimeDateStamp != ent::ClientTimestamp ||
@@ -464,6 +598,12 @@ bool SkinChangerPrepare(SkinChangerLogCallback callback) noexcept {
         !Match(client + off::AttributeRemove, off::AttributeRemoveBytes) || !Match(client + off::CompositeReset, off::CompositeResetBytes) ||
         !Match(client + off::WeaponRegenerate, off::WeaponRegenerateBytes) ||
         !Match(client + off::GloveMarkChanged, off::GloveMarkChangedBytes) ||
+        !Match(client + anim::ItemSubclass, anim::ItemSubclassBytes) ||
+        !Match(client + anim::SubclassChanged, anim::SubclassChangedBytes) ||
+        !Match(client + anim::ScopeGetter, anim::ScopeGetterBytes) ||
+        !Match(client + anim::WeaponVDataChanged, anim::WeaponVDataChangedBytes) ||
+        !Read(client + anim::KnifeVtable + anim::ScopeGetterSlot, scopeGetter) || scopeGetter != client + anim::ScopeGetter ||
+        !Read(client + anim::KnifeVtable + anim::VDataChangedSlot, changedMethod) || changedMethod != client + anim::WeaponVDataChanged ||
         !Match(client + model::SetModel, model::SetModelBytes)) {
         SkinSetRuntimeStatus("Native skin/item build verification failed."); return false;
     }
@@ -472,10 +612,12 @@ bool SkinChangerPrepare(SkinChangerLogCallback callback) noexcept {
     resetComposite = reinterpret_cast<CompositeResetFn>(client + off::CompositeReset);
     regenerate = reinterpret_cast<RegenerateFn>(client + off::WeaponRegenerate);
     setModel = reinterpret_cast<ModelFn>(client + model::SetModel);
+    itemSubclass = reinterpret_cast<ItemSubclassFn>(client + anim::ItemSubclass);
+    subclassChanged = reinterpret_cast<SubclassChangedFn>(client + anim::SubclassChanged);
     if (!ClientFrameSubscribe(&OwnerFrame, logger)) { SkinSetRuntimeStatus("Skin changer frame registration failed."); return false; }
     prepared = true;
     SkinSetRuntimeStatus("Skin changer disabled.");
-    if (logger) logger("SKIN_CHANGER_BUILD_VERIFIED native attributes/set/remove/refresh/model; shared owner frame; independent T/CT loadouts");
+    if (logger) logger("SKIN_CHANGER_BUILD_VERIFIED native attributes/set/remove/refresh/model/knife-subclass; shared owner frame; independent T/CT loadouts");
     return true;
 }
 void SkinChangerActivate() noexcept {
@@ -504,18 +646,21 @@ void SkinChangerFlushTelemetry() noexcept {
     lastReportedFrames = count;
     const auto status = SkinRuntimeStatus();
     char message[768]{};
-    std::snprintf(message, sizeof(message), "SKIN_CHANGER frames=%llu assigned=%llu restored=%llu invalidated=%llu failed=%llu owner_tid=%lu status=%s",
-        count, assignments.load(), restorations.load(), invalidations.load(), failures.load(), ownerThread.load(), status.data());
+    std::snprintf(message, sizeof(message), "SKIN_CHANGER frames=%llu assigned=%llu restored=%llu invalidated=%llu failed=%llu knife_animation_assigned=%llu knife_animation_restored=%llu owner_tid=%lu status=%s",
+        count, assignments.load(), restorations.load(), invalidations.load(), failures.load(), animationAssignments.load(), animationRestores.load(), ownerThread.load(), status.data());
     logger(message);
 }
 #ifdef CS2_SKIN_CHANGER_CHECKS
 void SkinChangerTestConfigure(std::uintptr_t base, void (*frame)(void*, int),
     SkinChangerAttributeFn attribute, SkinChangerRemoveFn remove, SkinChangerRefreshFn refreshFn,
-    SkinChangerModelFn modelFn, SkinChangerLoadFn load) noexcept {
+    SkinChangerModelFn modelFn, SkinChangerLoadFn load, SkinChangerItemSubclassFn itemSubclassFn,
+    SkinChangerSubclassChangedFn subclassChangedFn) noexcept {
     ClientFrameTestConfigure(base, frame); ClientFrameSubscribe(&OwnerFrame);
     client = base; setAttribute = attribute; removeAttribute = remove; refresh = refreshFn; setModel = modelFn;
+    itemSubclass = itemSubclassFn; subclassChanged = subclassChangedFn;
     testRuntime = true; testLoad = load; prepared = true; active.store(false); stopped.store(false);
     owned = {}; trackedSource = {}; frames.store(0); assignments.store(0); restorations.store(0); invalidations.store(0); failures.store(0);
+    animationAssignments.store(0); animationRestores.store(0);
     SkinResetSettings();
 }
 void SkinChangerTestFrame(void* owner, int stage) noexcept { ClientFrameTestDispatch(owner, stage); }

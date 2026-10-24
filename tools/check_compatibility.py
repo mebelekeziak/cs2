@@ -58,6 +58,7 @@ def component_commands(game):
         ("scope_overlay", "inspect_scope_overlay.py", ["--client", client]),
         ("model_swap", "inspect_model_swap.py", ["--game", str(game)]),
         ("skins", "inspect_skins.py", ["--client", client]),
+        ("knife_animations", "inspect_knife_animations.py", ["--client", client, "--game", str(game)]),
         ("skin_catalog", "generate_skin_catalog.py", ["--game", str(game), "--check"]),
         ("player_chams", "verify_player_chams.py", ["--game", str(game)]),
         ("aim_targets", "inspect_silent_aim_targets.py", ["--client", client]),

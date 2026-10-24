@@ -2,6 +2,32 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Knife animation correction — October 24, 2026
+
+The user reports working skins with missing knife-specific animations. The
+original swap changed the economy definition and visible model while leaving
+the native weapon subclass data unchanged. Animation selection reads that
+separate data, including the knife's animation class and skeleton.
+
+Knife swaps now resolve the selected item's native subclass and refresh it
+through the verified subclass-change callback. The selected model is installed
+first so that callback can detect and retire a stale first-person HUD model.
+Disabling restores the original model and subclass through the same game owner.
+Unchanged choices avoid repeated subclass resets; native subclass drift is
+reconciled even when the selected finish has not changed. Skins UI and config
+fields are unchanged.
+
+Restart CS2 normally, use **Load Overlay.cmd**, then restore your saved config.
+Stopped code remains resident until process exit. No post-fix in-game animation
+trial has been observed. See [native animation evidence](tools/CS2_KNIFE_ANIMATIONS_EVIDENCE.md).
+
+Both x64 Release builds succeed without project warnings and each passes
+**66/66 CTest suites**. All **33/33 installed-file checks** pass; the native skin
+suite passes **127 assertions**, including callback/HUD ordering, per-side
+animation identity, unchanged-paint stability and restoration failure/retry.
+All **22** altered animation-contract headers reject. Both DLLs retain zero
+static TLS and delay-import directories. No client/server was launched.
+
 ## Skin customization — October 24, 2026
 
 Open **Skins** and switch directly between **T** and **CT** loadouts. Choose
@@ -62,7 +88,7 @@ The user subsequently reports that the changer works nicely. The editor redesign
 preserves the working native application and config schema from `d0e1746`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty-two
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty-three
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 

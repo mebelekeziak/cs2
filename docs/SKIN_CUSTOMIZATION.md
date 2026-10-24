@@ -124,6 +124,49 @@ stopping does not physically unload the DLL.
 
 ## Verification and observation limits
 
+### Knife animation correction
+
+The user's subsequent trial reports missing knife-specific animations while
+the other skin behavior works. The initial implementation changed the item
+definition and model without changing the weapon's separate subclass/VData.
+Native animation state reads that VData's animation-class/name and skeleton.
+All 22 selectable installed knife definitions have matching, distinct subclass
+entries and animation skeletons in `scripts/weapons.vdata_c`.
+
+The correction resolves the selected item's descriptor with the installed
+native item-to-subclass getter. It validates descriptor scope, class, ID and
+canonical item name. It captures original subclass ID and VData together with
+the original item/model. The selected model is installed before publishing the
+new subclass ID and invoking the named native subclass-change callback: the
+weapon lifecycle compares the current weapon and HUD-model bindings, retires a
+stale HUD model, and lets native recreation use the selected subclass data.
+It refreshes VData through engine code rather than assigning a borrowed data
+pointer directly or forcing a guessed animation sequence.
+
+Restoration runs on the owner callback with the original model/subclass. Native
+identity changes invalidate cached state. Stable settings check for native
+subclass drift and repair it; cosmetic-only edits do not reset a matching
+subclass repeatedly. Per-transition `SKIN_KNIFE_ANIMATION_ASSIGNED` and
+`SKIN_KNIFE_ANIMATION_RESTORED` log records identify the entity handle, item
+definition, old/new subclass IDs, VData names and owner thread. The UX and
+persisted field schema are unchanged.
+
+The new installed-file check is `python tools/inspect_knife_animations.py` and
+is included in the combined compatibility bundle. See
+[the native contract](../tools/CS2_KNIFE_ANIMATIONS_EVIDENCE.md). Post-fix animation
+playback remains unobserved until an authorized offline trial.
+
+Verification for the animation correction: public and diagnostic x64 Release
+builds each pass **66/66 CTest suites**, including **127** native cosmetic
+assertions. All **33/33 installed-file checks** pass; **22** altered animation
+headers reject. Builds have no project compiler warnings and both DLLs retain
+zero static TLS/delay imports. Fixtures cover model-before-subclass/HUD ordering,
+different CT/T subclasses, native ID/VData drift, cosmetic-only edits, descriptor
+validation, reentrant stop, serialized identity changes, failed restoration and
+callback-induced geometry changes. No game or server was launched.
+
+### Initial skin and editor verification
+
 Both public and diagnostic x64 Release builds compile without project warnings
 and each passes **66/66 CTest suites**. All **32/32 installed-file checks** pass.
 The native cosmetic suite passes **55 checks**, settings pass **149**, compiled

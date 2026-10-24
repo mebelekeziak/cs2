@@ -2,8 +2,8 @@
 
 Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
-Version date: October 22, 2026, 14:13:16. All **32/32** installed-file checks pass,
-including jumpbug, indexed spread, native cosmetics and the installed skin catalog.
+Version date: October 22, 2026, 14:13:16. All **33/33** installed-file checks pass,
+including jumpbug, indexed spread, native cosmetics, knife animations and the installed skin catalog.
 These are exact-build constants. Runtime rendering/gameplay remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
@@ -536,6 +536,27 @@ attribute allocation and material regeneration, and retain callbacks for
 cooperative restoration after stop. The current client does not expose the old
 separate `C_BaseViewModel` schema recipe; no historical viewmodel offsets are
 introduced. See [implementation and observation limits](SKIN_CUSTOMIZATION.md).
+
+## Knife animation subclasses
+
+Header: [knife_animation_offsets.h](../include/knife_animation_offsets.h);
+verifier: [inspect_knife_animations.py](../tools/inspect_knife_animations.py);
+[evidence](../tools/CS2_KNIFE_ANIMATIONS_EVIDENCE.md).
+
+| Symbol | Current value |
+| --- | --- |
+| Entity subclass ID / native VData | entity + `0x380 / 0x388` |
+| Native item-to-subclass getter | client + `0x7CC8B0` |
+| Named subclass-change callback | client + `0xB07310` |
+| Weapon subclass-change lifecycle | client + `0x820E40` |
+| VData animation class / skeleton | VData + `0x868 / 0x528` |
+| HUD model handle | weapon + `0x1990` |
+
+The native item getter resolves the exact installed subclass. The changer
+validates its scope, class, ID and canonical name before publishing the ID.
+The named callback refreshes VData and the native weapon/HUD lifecycle; it does
+not require guessed hashes or sequence tables. Model comparison inside that
+lifecycle requires installing the selected model before calling the callback.
 
 ## Console output and final-image overlay
 

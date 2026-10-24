@@ -2,6 +2,7 @@
 #include "skin_settings.h"
 #include "skin_catalog.h"
 #include "skin_offsets.h"
+#include "knife_animation_offsets.h"
 #include "model_swap_offsets.h"
 #include "cs2_offsets.h"
 #include <Windows.h>
@@ -17,6 +18,7 @@ bool ModelSwapPreloadResource(const char*) noexcept { return false; }
 namespace {
 namespace off = skin_offsets;
 namespace ent = cs2_offsets;
+namespace anim = knife_animation_offsets;
 unsigned checks = 0, failures = 0;
 void Check(bool value, const char* message) { ++checks; if (!value) { ++failures; std::printf("FAIL %s\n", message); } }
 std::uintptr_t Address(const void* value) { return reinterpret_cast<std::uintptr_t>(value); }
@@ -33,6 +35,10 @@ std::array<std::array<unsigned char, 0x48 * 16>, 3> attributes{};
 std::array<unsigned char, 0x300> scene{};
 std::array<unsigned char, 0x20> model{};
 std::array<char, 260> modelName{};
+std::array<char, 260> hudModelName{};
+std::array<std::array<unsigned char, 0x900>, 3> subclassData{};
+constexpr const char* subclassNames[]{"weapon_knife", "weapon_knife_butterfly", "weapon_bayonet"};
+constexpr std::array<std::uint32_t, 3> subclassIds{0x12345001, 0x12345002, 0x12345003};
 std::uintptr_t binding = 0;
 constexpr std::uint32_t pawnHandle = 0x10003, controllerHandle = 0x18002, weaponHandle = 0x10004, knifeHandle = 0x10005;
 constexpr const char* nativeKnife = "weapons/models/knife/knife_default_ct/weapon_knife_default_ct.vmdl";
@@ -41,6 +47,13 @@ struct Mock {
     DWORD thread = 0;
     int loadMutation = 0;
     bool loadReady = true, failModel = false, errorModel = false, nested = false, inNested = false;
+    unsigned subclassChanges = 0;
+    bool failSubclass = false, missingSubclass = false;
+    int subclassMutation = 0;
+    std::uint32_t lastSubclass = 0;
+    const char* expectedCallbackModel = nullptr;
+    unsigned hudRebuilds = 0;
+    int callbackModelMutation = 0;
 } mock;
 void* Item(unsigned index) {
     return index == 0 ? weapon.data() + off::Item : index == 1 ? knife.data() + off::Item : pawn.data() + off::GlovesItem;
@@ -111,16 +124,49 @@ bool Load(const char*) {
     if (mock.loadMutation == 5) Put(pawn.data(), ent::C_BaseEntity::m_iHealth, 0);
     return mock.loadReady;
 }
+void* ItemSubclass(void* item) {
+    if (mock.missingSubclass) return nullptr;
+    const int definition = Get<std::uint16_t>(item, off::DefinitionIndex);
+    const auto index = definition == 42 ? 0 : definition == 515 ? 1 : definition == 500 ? 2 : 3;
+    return index < 3 ? subclassData[index].data() : nullptr;
+}
+void SubclassChanged(void* entity) {
+    ++mock.subclassChanges; mock.thread = GetCurrentThreadId();
+    Check(entity == knife.data(), "native subclass lifecycle only receives the owned knife");
+    mock.lastSubclass = Get<std::uint32_t>(entity, anim::SubclassId);
+    if (mock.expectedCallbackModel) Check(!std::strcmp(mock.expectedCallbackModel, modelName.data()),
+        "native subclass lifecycle observes requested world geometry before HUD comparison");
+    if (std::strcmp(hudModelName.data(), modelName.data())) {
+        ++mock.hudRebuilds; std::snprintf(hudModelName.data(), hudModelName.size(), "%s", modelName.data());
+    }
+    if (!mock.failSubclass)
+        for (std::size_t index = 0; index < subclassIds.size(); ++index)
+            if (subclassIds[index] == mock.lastSubclass) Put(entity, anim::VData, Address(subclassData[index].data()));
+    if (mock.subclassMutation == 1) SkinChangerStop("stop inside native subclass callback");
+    if (mock.subclassMutation == 2) Put(bucket.data() + 5 * 0x70, 0x10, std::uint32_t{0x20005});
+    if (mock.callbackModelMutation == 1 || (mock.callbackModelMutation == 2 && mock.lastSubclass != subclassIds[0]) ||
+        (mock.callbackModelMutation == 3 && mock.lastSubclass == subclassIds[0])) Name("models/native_callback_replacement.vmdl");
+}
 void Reset() {
     pawn.fill(0); controller.fill(0); weapon.fill(0); knife.fill(0); services.fill(0); system.fill(0); owner.fill(0); bucket.fill(0);
     for (auto& value : attributes) value.fill(0);
     scene.fill(0); model.fill(0); mock = {};
+    for (std::size_t index = 0; index < subclassData.size(); ++index) {
+        subclassData[index].fill(0);
+        Put(subclassData[index].data(), 0, Address(image) + anim::VDataVtable);
+        Put(subclassData[index].data(), anim::VDataScope, static_cast<int>(anim::WeaponScope));
+        Put(subclassData[index].data(), anim::VDataSubclassId, subclassIds[index]);
+        Put(subclassData[index].data(), anim::VDataSubclassName, Address(subclassNames[index]));
+    }
     Put(image, ent::globals::dwLocalPlayerPawn, Address(pawn.data()));
     Put(image, ent::globals::dwLocalPlayerController, Address(controller.data()));
     Put(image, ent::globals::dwGameEntitySystem, Address(system.data()));
     Put(system.data(), ent::entity_layout::TableOffset, Address(bucket.data()));
     Identity(pawn.data(), 3, pawnHandle); Identity(controller.data(), 2, controllerHandle);
     Identity(weapon.data(), 4, weaponHandle); Identity(knife.data(), 5, knifeHandle);
+    Put(knife.data(), 0, Address(image) + anim::KnifeVtable);
+    Put(knife.data(), anim::SubclassId, subclassIds[0]);
+    Put(knife.data(), anim::VData, Address(subclassData[0].data()));
     Put(pawn.data(), ent::C_BasePlayerPawn::m_hController, controllerHandle);
     Put(pawn.data(), ent::C_BasePlayerPawn::m_hDefaultController, UINT32_MAX);
     Put(pawn.data(), ent::C_BaseEntity::m_iHealth, 100);
@@ -141,7 +187,8 @@ void Reset() {
     }
     AttributeBits(Item(0), off::AttributeIds[0], std::bit_cast<std::uint32_t>(12.0f));
     Name(nativeKnife);
-    SkinChangerTestConfigure(Address(image), Native, Set, Remove, Refresh, Model, Load);
+    std::snprintf(hudModelName.data(), hudModelName.size(), "%s", nativeKnife);
+    SkinChangerTestConfigure(Address(image), Native, Set, Remove, Refresh, Model, Load, ItemSubclass, SubclassChanged);
     SkinChangerActivate();
 }
 SkinItemSettings Selection(int definition, int paint) {
@@ -255,6 +302,83 @@ int main() {
     const auto beforeDisconnect = mock.sets;
     Put(image, ent::globals::dwLocalPlayerPawn, std::uintptr_t{0}); SkinChangerStop("disconnect"); Frame();
     Check(mock.sets == beforeDisconnect, "disconnect invalidates ownership without stale entity writes");
+
+    Reset(); Select(true); Frame();
+    Check(mock.subclassChanges == 1 && mock.lastSubclass == subclassIds[1] &&
+        Get<std::uintptr_t>(knife.data(), anim::VData) == Address(subclassData[1].data()),
+        "selected butterfly refreshes native knife VData and animation identity");
+    const auto knifeSets = mock.sets;
+    for (int repeat = 0; repeat < 50; ++repeat) Frame();
+    Check(mock.subclassChanges == 1, "stable knife avoids per-frame animation graph resets");
+    Put(knife.data(), anim::SubclassId, subclassIds[0]); Put(knife.data(), anim::VData, Address(subclassData[0].data())); Frame();
+    Check(mock.subclassChanges == 2 && mock.lastSubclass == subclassIds[1] && mock.sets == knifeSets,
+        "stable selection repairs native subclass reset without rewriting skins");
+    Put(knife.data(), anim::VData, Address(subclassData[0].data())); Frame();
+    Check(mock.subclassChanges == 3 && Get<std::uintptr_t>(knife.data(), anim::VData) == Address(subclassData[1].data()),
+        "stable selection repairs stale native VData even when subclass ID matches");
+    auto paintOnly = SkinGetSettings(); ++paintOnly.teams[1].knife.seed; SkinSetSettings(paintOnly); Frame();
+    Check(mock.subclassChanges == 3, "knife paint changes retain its current animation graph identity");
+    Put(pawn.data(), ent::C_BaseEntity::m_iTeamNum, std::uint8_t{2}); Frame();
+    Check(mock.subclassChanges == 4 && mock.lastSubclass == subclassIds[2], "T-side bayonet uses its own native animation subclass");
+    SkinChangerStop("restore animation");
+    Check(mock.subclassChanges == 4, "stop thread never runs animation lifecycle callbacks");
+    Frame(); Check(mock.subclassChanges == 5 && mock.lastSubclass == subclassIds[0] &&
+        Get<std::uintptr_t>(knife.data(), anim::VData) == Address(subclassData[0].data()),
+        "native owner restores exact original subclass and VData on stop");
+
+    Reset(); Select(true); mock.missingSubclass = true; Frame();
+    Check(!mock.subclassChanges && !mock.models && Get<std::uint32_t>(knife.data(), anim::SubclassId) == subclassIds[0],
+        "missing native item descriptor never reaches subclass mutation callback");
+    SkinResetSettings(); Frame(); Check(Definition(1) == 42, "missing subclass descriptor rolls back modified knife item fields");
+    Reset(); Select(true);
+    Put(subclassData[1].data(), anim::VDataScope, 2); Frame();
+    Check(!mock.subclassChanges && !mock.models, "wrong VData scope cannot enter native weapon subclass refresh");
+    Reset(); Select(true);
+    Put(subclassData[1].data(), anim::VDataSubclassName, Address(subclassNames[2])); Frame();
+    Check(!mock.subclassChanges && !mock.models, "descriptor must match exact selected knife catalog identity");
+    Reset(); Select(true);
+    Put(knife.data(), 0, Address(image) + anim::KnifeVtable + 8); Frame();
+    Check(!mock.subclassChanges && Definition(1) == 42, "foreign entity vtable is refused before knife field changes");
+
+    Reset(); Select(true); Frame(); mock.failSubclass = true; SkinChangerStop("retry animation restore"); Frame();
+    Check(std::strstr(SkinRuntimeStatus().data(), "pending") && Get<std::uintptr_t>(knife.data(), anim::VData) == Address(subclassData[1].data()),
+        "incomplete animation restoration remains pending with code resident");
+    mock.failSubclass = false; Frame();
+    Check(Get<std::uint32_t>(knife.data(), anim::SubclassId) == subclassIds[0] &&
+        Get<std::uintptr_t>(knife.data(), anim::VData) == Address(subclassData[0].data()),
+        "later native owner frame completes original animation restoration");
+    Reset(); Select(true); mock.failSubclass = true; Frame();
+    Check(mock.models == 1 && std::strstr(SkinRuntimeStatus().data(), "pending"), "failed native subclass refresh retains pending appearance rollback");
+    mock.failSubclass = false; Frame();
+    Check(Definition(1) == 42 && Get<std::uint32_t>(knife.data(), anim::SubclassId) == subclassIds[0],
+        "failed animation assignment restores original item and subclass identity");
+    Reset(); Select(true); mock.subclassMutation = 1; Frame();
+    Check(mock.models == 1 && mock.subclassChanges == 1, "reentrant stop during native subclass refresh defers remaining changes");
+    mock.subclassMutation = 0; Frame();
+    Check(Definition(1) == 42 && Get<std::uint32_t>(knife.data(), anim::SubclassId) == subclassIds[0],
+        "owner frame cooperatively restores after reentrant animation stop");
+    Reset(); Select(true); mock.subclassMutation = 2; Frame();
+    Check(mock.models == 1, "reused identity during native subclass callback prevents subsequent model writes");
+    const auto animationCallsBeforeStale = mock.subclassChanges;
+    SkinChangerStop("stale animation identity"); Frame();
+    Check(mock.subclassChanges == animationCallsBeforeStale, "stale knife identity cannot receive animation restoration");
+
+    Reset(); Select(true);
+    mock.expectedCallbackModel = skin_catalog::find_item(515)->model_path; Frame();
+    Check(mock.hudRebuilds == 1 && !std::strcmp(hudModelName.data(), modelName.data()),
+        "selected geometry exposes the old HUD binding and native lifecycle rebuilds it");
+    mock.expectedCallbackModel = nativeKnife; SkinChangerStop("restore HUD binding"); Frame();
+    Check(mock.hudRebuilds == 2 && !std::strcmp(hudModelName.data(), nativeKnife),
+        "original geometry precedes subclass restoration and native HUD rebuild");
+    Reset(); Select(true); mock.callbackModelMutation = 2; Frame();
+    Check(std::strstr(SkinRuntimeStatus().data(), "pending") && !std::strcmp(modelName.data(), "models/native_callback_replacement.vmdl"),
+        "unexpected model produced by subclass callback stays owned by failed transaction");
+    SkinResetSettings(); Frame();
+    Check(Definition(1) == 42 && Get<std::uint32_t>(knife.data(), anim::SubclassId) == subclassIds[0] && !std::strcmp(modelName.data(), nativeKnife),
+        "rollback restores original geometry after callback changed it independently of generic model setter");
+    Reset(); Select(true); Frame(); mock.callbackModelMutation = 3; SkinChangerStop("restore callback geometry"); Frame();
+    Check(!std::strcmp(modelName.data(), nativeKnife) && !std::strstr(SkinRuntimeStatus().data(), "pending"),
+        "original geometry is verified and reasserted after restoration callback side effects");
 
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("skin_changer_checks: %u checks, %u failures\n", checks, failures);

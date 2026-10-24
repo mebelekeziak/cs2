@@ -17,9 +17,12 @@ using SkinChangerRemoveFn = void (*)(void*, std::uint16_t);
 using SkinChangerRefreshFn = void (*)(void*);
 using SkinChangerModelFn = void (*)(void*, const char*);
 using SkinChangerLoadFn = bool (*)(const char*);
+using SkinChangerItemSubclassFn = void* (*)(void*);
+using SkinChangerSubclassChangedFn = void (*)(void*);
 void SkinChangerTestConfigure(std::uintptr_t client, void (*frame)(void*, int),
     SkinChangerAttributeFn attribute, SkinChangerRemoveFn remove,
     SkinChangerRefreshFn refresh, SkinChangerModelFn model,
-    SkinChangerLoadFn load) noexcept;
+    SkinChangerLoadFn load, SkinChangerItemSubclassFn itemSubclass,
+    SkinChangerSubclassChangedFn subclassChanged) noexcept;
 void SkinChangerTestFrame(void* owner, int stage) noexcept;
 #endif
