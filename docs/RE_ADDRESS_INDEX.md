@@ -2,8 +2,8 @@
 
 Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
-Version date: October 22, 2026, 14:13:16. All **29/29** installed-file checks pass,
-including the subsequently added jumpbug landing-hull contract.
+Version date: October 22, 2026, 14:13:16. All **30/30** installed-file checks pass,
+including the subsequently added jumpbug and indexed spread contracts.
 These are exact-build constants. Runtime rendering/gameplay remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
@@ -191,6 +191,28 @@ client.dll; weapon-services/pawn RTTI slots, current getter and complete native 
 | `PawnGetterSlot` | `0x568` |
 | `ViewOffsetGetter` | `0x160750` |
 | `BaseEye` | `0x15FA90` |
+
+## Indexed primary spread compensation
+
+Header: [aim_spread_offsets.h](../include/aim_spread_offsets.h); verifier:
+[inspect_aim_spread.py](../tools/inspect_aim_spread.py); [evidence](../tools/CS2_AIM_SPREAD_EVIDENCE.md).
+
+client.dll and tier0.dll; exact indexed shot time, shot-time punch, SHA-1 seed
+and isolated null-mutex random stream. Candidate angles change the seed.
+Held-fire histories without a native attack index are outside this contract.
+
+| Symbol | Module | Current value |
+| --- | --- | --- |
+| `Seed` | client | `0xD24D70` |
+| `TickConvert` | client | `0x75C350` |
+| `CurrentTick` | client | `0xAAEA70` |
+| `ShotPunch` | client | `0x853410` |
+| `RandomPattern` | client | `0x25C0C78` |
+| `HistoryTick` / `HistoryFraction` | history entry | `0x68` / `0x6C` |
+| `HistoryTimePresent` | history entry | `0x1800` |
+| `RandomCtor` | tier0 | `0x15E7A0` |
+| `RandomFloat` | tier0 | `0x15E880` |
+| `RandomGenerate` | tier0 | `0x15E1B0` |
 
 ## Native autofire request
 

@@ -9,6 +9,7 @@
 #include "aim_autofire_offsets.h"
 #include "aim_hitchance.h"
 #include "aim_weapon.h"
+#include "aim_spread.h"
 #include "aim_shoot_origin.h"
 #include "aim_occlusion.h"
 #include "aim_damage.h"
@@ -34,6 +35,10 @@ HistoryFn original = nullptr;
 std::uintptr_t client = 0;
 AimBoneContext bones{};
 AimWeaponContext weaponContext{};
+AimSpreadContext spreadContext{};
+bool spreadPrepared = false;
+const char* spreadReason = "not evaluated";
+std::uint64_t spreadCorrected = 0, spreadSkipped = 0;
 AimShootOriginContext originContext{};
 bool originPrepared = false;
 AimOcclusionContext occlusionContext{};
@@ -65,6 +70,12 @@ struct Decision {
     AimWeaponSnapshot weapon{};
     AimShootOriginSnapshot origin{};
     AimAngles view{}, commandAngles{}, effectiveAngles{};
+    AimAngles predictedSpreadRay{};
+    AimAngles alternateSpreadRay{};
+    std::uint32_t spreadSeed = 0;
+    std::uint32_t alternateSpreadSeed = 0;
+    unsigned spreadVariants = 1;
+    bool spreadCorrected = false;
     bool anglesValid = false;
     AimHitchanceResult chance{};
     AimOcclusionResult occlusion{};
@@ -190,7 +201,7 @@ Decision EstimateShot(Decision result, WeaponSample& weapon) noexcept {
     ++performance.estimates;
     result.chance = AimEstimateHitchance(cone, weapon.pattern);
     if (!result.chance.valid) result.reason = result.chance.reason;
-    else if (result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
+    else if (!settings.removeSpread && result.chance.percent < settings.hitchance) { ++chanceRejected; result.reason = "below hitchance"; }
     else if (!result.weapon.ready) result.reason = result.weapon.reason;
     else result.reason = settings.autofire ? "autofire eligible" : "manual mode";
     return result;
@@ -262,10 +273,15 @@ struct AutofireSelection {
     bool scanOnly = false;
     AimVisualizationFrame* visualization = nullptr;
 };
+float RankingChance(const Decision& decision) noexcept {
+    // Correction is resolved only for the eventual indexed history. Do not
+    // discard candidates using their uncorrected cone probability first.
+    return decision.settings.removeSpread ? 100.0f : decision.chance.percent;
+}
 float ExpectedDamage(const Decision& decision) noexcept {
     const int health = decision.target.enemy.health;
     const float damage = std::min(decision.damage.damage, static_cast<float>(health));
-    return damage * decision.chance.percent * .01f;
+    return damage * RankingChance(decision) * .01f;
 }
 bool BetterShot(const Decision& candidate, const Decision& current) noexcept {
     if (!current.selected) return true;
@@ -276,11 +292,11 @@ bool BetterShot(const Decision& candidate, const Decision& current) noexcept {
     const bool previousLethal = current.target.enemy.health > 0 &&
         current.damage.healthDamage >= current.target.enemy.health;
     if (lethal != previousLethal) return lethal;
-    if (lethal && candidate.chance.percent != current.chance.percent)
-        return candidate.chance.percent > current.chance.percent;
+    if (lethal && RankingChance(candidate) != RankingChance(current))
+        return RankingChance(candidate) > RankingChance(current);
     const float score = ExpectedDamage(candidate), previous = ExpectedDamage(current);
     if (score != previous) return score > previous;
-    if (candidate.chance.percent != current.chance.percent) return candidate.chance.percent > current.chance.percent;
+    if (RankingChance(candidate) != RankingChance(current)) return RankingChance(candidate) > RankingChance(current);
     if (candidate.target.solution.separation != current.target.solution.separation)
         return candidate.target.solution.separation < current.target.solution.separation;
     if (candidate.target.enemy.pawnHandle != current.target.enemy.pawnHandle)
@@ -307,9 +323,9 @@ bool EligibleTarget(const AimTarget& target, void* context) noexcept {
         if (!BetterShot(optimistic, selection.accepted)) { ++performance.bounded; return false; }
     }
     if (candidate.chance.valid && (!selection.automatic || candidate.weapon.ready) &&
-        (!selection.automatic || candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) &&
+        (!selection.automatic || candidate.settings.removeSpread || candidate.chance.percent >= candidate.settings.hitchance || candidate.settings.quickstop) &&
         Reachable(candidate, selection.automatic)) {
-        if (!selection.automatic || candidate.chance.percent >= candidate.settings.hitchance) {
+        if (!selection.automatic || candidate.settings.removeSpread || candidate.chance.percent >= candidate.settings.hitchance) {
             candidate.automaticEligible = selection.automatic;
             if (BetterShot(candidate, selection.accepted)) {
                 selection.accepted = candidate;
@@ -428,7 +444,7 @@ void Report(const Decision& decision, const char* action, bool event = false) no
     reportTime = now; lastDecisionReason = action; lastDecisionTarget = handle;
     char message[1536]{};
     std::snprintf(message, sizeof(message),
-        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; autowall=%u penetrations=%d native_origin=%u eye=(%.3f,%.3f,%.3f) command=(%.3f,%.3f) effective=(%.3f,%.3f,%.3f)",
+        "AIM_HITCHANCE target=0x%08x hitbox=%d estimate_valid=%u estimated=%.2f%% hits=%u samples=%u minimum=%.2f%% autofire=%u ready=%u weapon=%s handle=0x%08x spread=%.7f inaccuracy=%.7f recoil_index=%.3f punch=(%.3f,%.3f,%.3f) range=%.1f clip=%d action=\"%s\" model_reason=\"%s\" occlusion_valid=%u clear=%u fraction=%.5f occlusion_reason=\"%s\" separation=%.3f aim=(%.3f,%.3f) eligibility_rejected=%u damage_valid=%u predicted_damage=%.3f predicted_hp=%d min_damage=%d predicted_hitgroup=%d damage_reason=\"%s\"; autowall=%u penetrations=%d native_origin=%u eye=(%.3f,%.3f,%.3f) command=(%.3f,%.3f) effective=(%.3f,%.3f,%.3f) spread_corrected=%u client_spread_seed=0x%08x",
         handle, static_cast<int>(decision.target.hitbox), decision.chance.valid,
         decision.chance.percent, decision.chance.hits, decision.chance.samples, decision.settings.hitchance,
         decision.settings.autofire, decision.weapon.ready, decision.weapon.name, decision.weapon.handle,
@@ -442,7 +458,8 @@ void Report(const Decision& decision, const char* action, bool event = false) no
         decision.settings.autowall, decision.occlusion.penetrations, decision.origin.valid,
         decision.target.eye.x, decision.target.eye.y, decision.target.eye.z,
         decision.commandAngles.pitch, decision.commandAngles.yaw,
-        decision.effectiveAngles.pitch, decision.effectiveAngles.yaw, decision.effectiveAngles.roll);
+        decision.effectiveAngles.pitch, decision.effectiveAngles.yaw, decision.effectiveAngles.roll,
+        decision.spreadCorrected, decision.spreadSeed);
     MovementTelemetryPush(message);
 }
 bool Current(const Decision& decision) noexcept {
@@ -510,6 +527,12 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
         CopyNativeText(designer, metadata.weapon);
     metadata.eye = decision.target.eye;
     metadata.aim = decision.effectiveAngles;
+    metadata.spreadCorrected = decision.spreadCorrected;
+    metadata.predictedRay = decision.predictedSpreadRay;
+    metadata.clientSpreadSeed = decision.spreadSeed;
+    metadata.spreadVariants = decision.spreadVariants;
+    metadata.alternatePredictedRay = decision.alternateSpreadRay;
+    metadata.alternateClientSpreadSeed = decision.alternateSpreadSeed;
     metadata.capsule = decision.volume.capsule;
     metadata.capsuleValid = volumeCurrent;
     metadata.hitchance = decision.chance.percent;
@@ -560,8 +583,168 @@ bool RefreshShot(Decision& decision) noexcept {
     if (!decision.target.solution.valid) { decision.reason = "publication center outside FOV"; return false; }
     decision = EstimateShot(decision, weapon);
     if (!decision.chance.valid || !decision.anglesValid || !decision.weapon.ready ||
-        decision.chance.percent < decision.settings.hitchance) return false;
+        (!decision.settings.removeSpread && decision.chance.percent < decision.settings.hitchance)) return false;
     return true;
+}
+void TraceSpread(const AimSpreadSnapshot& model, const AimSpreadSearchResult& correction, bool published) noexcept {
+    char message[1400]{};
+    const int written = std::snprintf(message, sizeof(message),
+        "AIM_SPREAD corrected=%u client_seed=0x%08x shot_tick=%d shot_fraction=%.6f residual_degrees=%.6f evaluations=%u command=(%.9f,%.9f) predicted=(%.9f,%.9f) revision=4 sequence=%d history_index=%d scene=%d history_time=%d/%.6f converted_time=%d/%.6f now=%d/%.6f controller_tick=%d variants=%u alternate_tick=%d alternate_seed=0x%08x primary_residual=%.6f alternate_residual=%.6f alternate_predicted=(%.9f,%.9f) raw_clock_alternative=%u shot_punch=(%.6f,%.6f,%.6f) current_punch=(%.6f,%.6f,%.6f) alternate_punch=(%.6f,%.6f,%.6f) model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f); indexed client prediction; server seed/timing not observed",
+        published, correction.seed, model.time.tick, model.time.fraction, correction.residualDegrees, correction.evaluations,
+        correction.command.pitch, correction.command.yaw, correction.predicted.pitch, correction.predicted.yaw,
+        model.commandSequence, model.historyIndex, model.scene, model.historyTick, model.historyFraction,
+        model.converted.tick, model.converted.fraction, model.now.tick, model.now.fraction, model.controllerTick,
+        correction.variants, correction.variants == 2 ? model.alternateTime.tick : model.time.tick, correction.alternateSeed,
+        correction.primaryResidualDegrees, correction.alternateResidualDegrees,
+        correction.alternatePredicted.pitch, correction.alternatePredicted.yaw, model.rawClockAlternative,
+        model.punch.pitch, model.punch.yaw, model.punch.roll,
+        model.weapon.aimPunch.pitch, model.weapon.aimPunch.yaw, model.weapon.aimPunch.roll,
+        model.alternatePunch.pitch, model.alternatePunch.yaw, model.alternatePunch.roll,
+        model.weapon.inaccuracy, model.weapon.spread, model.pattern, model.movementStateKnown, model.movementFlags,
+        model.velocity.x, model.velocity.y, model.velocity.z);
+    if (written < 0 || static_cast<std::size_t>(written) >= sizeof(message))
+        std::snprintf(message, sizeof(message),
+            "AIM_SPREAD corrected=%u client_seed=0x%08x revision=4 sequence=%d shot_tick=%d variants=%u diagnostic_compact=1 model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f); indexed client prediction; server seed/timing not observed",
+            published, correction.seed, model.commandSequence, model.time.tick, correction.variants,
+            model.weapon.inaccuracy, model.weapon.spread, model.pattern, model.movementStateKnown, model.movementFlags,
+            model.velocity.x, model.velocity.y, model.velocity.z);
+    MovementTelemetryPush(message);
+}
+void ReportSpread(const AimSpreadSnapshot& model, const AimSpreadSearchResult& correction) noexcept {
+    ++spreadCorrected; spreadReason = correction.reason;
+    TraceSpread(model, correction, true);
+}
+bool SpreadMovementStable(Decision& decision, std::uintptr_t command) noexcept {
+    namespace movement = movement_offsets;
+    std::uint32_t flags = 0;
+    MovementButtons buttons{};
+    std::uintptr_t base = 0, rep = 0;
+    int size = 0, capacity = 0, allocated = 0;
+    bool jump = false;
+    bool readable = Read(decision.source.pawn + movement::pawn::Flags, flags) &&
+        Read(command + movement::command::Buttons, buttons) &&
+        Read(command + movement::command::Base, base) && base &&
+        Read(base + movement::base::SubtickSize, size) && size >= 0 && size <= 128 &&
+        Read(base + movement::base::SubtickCapacity, capacity) && capacity >= size && capacity <= 4096 &&
+        Read(base + movement::base::SubtickRep, rep);
+    if (readable) {
+        jump = (buttons.down & movement::Jump) != 0;
+        readable = rep ? Read(rep, allocated) && allocated >= size && allocated <= capacity : !size && !capacity;
+    }
+    for (int i = 0; readable && i < size; ++i) {
+        std::uintptr_t step = 0;
+        MovementSubtick value{};
+        readable = Read(rep + 8 + static_cast<std::uintptr_t>(i) * 8, step) && step && Read(step, value) &&
+            !(value.presence & ~0x7fu) && std::isfinite(value.when) && value.when >= 0 && value.when <= 1;
+        // A press followed by release can take off even with final Jump clear.
+        if (readable && (value.presence & 3) == 3 && (value.button & movement::Jump) && value.pressed) jump = true;
+    }
+    if (readable && (!(flags & movement::OnGround) || !jump)) return true;
+    decision.reason = readable ? "grounded jump transition: awaiting stable shot accuracy" :
+        "jump intent unavailable: automatic spread model unavailable";
+    int sequence = 0;
+    Read(command + movement::command::Sequence, sequence);
+    char message[640]{};
+    std::snprintf(message, sizeof(message),
+        "AIM_SPREAD_TRANSITION revision=4 sequence=%d automatic_defer=1 readable=%u flags=0x%x jump_intent=%u buttons=0x%llx/0x%llx/0x%llx subticks=%d/%d allocated=%d inaccuracy=%.7f spread=%.7f reason=\"%s\"; copied accuracy precedes native movement",
+        sequence, readable, flags, jump, buttons.down, buttons.changed, buttons.third, size, capacity, allocated,
+        decision.weapon.inaccuracy, decision.weapon.spread, decision.reason);
+    MovementTelemetryPush(message);
+    return false;
+}
+bool WriteDecision(Decision& decision, const AimShot& shot, bool automatic) noexcept {
+    if (!decision.settings.removeSpread) return SilentAimWriteShot(shot, decision.commandAngles);
+    // Native movement can take off after this history callback and change the
+    // cone. Defer only our automatic pulse; manual input keeps its ownership.
+    if (automatic && !SpreadMovementStable(decision, shot.command)) {
+        ++spreadSkipped; spreadReason = decision.reason; return false;
+    }
+    const auto current = [&]() noexcept {
+        if (automatic || decision.volume.valid) return Current(decision);
+        // Existing manual landmark aim remains available when capsule geometry
+        // is missing. Its prediction stays explicitly unknown in shot logs.
+        return SameSource(decision.source) &&
+            AimShootOriginStillCurrent(originContext, decision.source, decision.origin) &&
+            SilentAimTargetValid(decision.source, decision.target) &&
+            AimWeaponStillCurrent(weaponContext, decision.source, decision.weapon);
+    };
+    const auto manualFallback = [&]() noexcept {
+        ++spreadSkipped; spreadReason = decision.reason;
+        return !automatic && ModelUnchanged(decision) && current() &&
+            active.load(std::memory_order_acquire) && Foreground() && SilentAimGetSettings() == decision.settings &&
+            SilentAimWriteShot(shot, decision.commandAngles);
+    };
+    AimSpreadSnapshot model{};
+    if (!spreadPrepared || !AimSpreadRead(spreadContext, decision.source, decision.weapon, shot, model)) {
+        decision.reason = spreadPrepared ? model.reason : "spread contract unavailable"; return manualFallback();
+    }
+    const auto correction = AimSpreadSolve(spreadContext, model, decision.target.solution.angles);
+    if (!correction.valid || correction.variants != model.seedVariants) {
+        decision.reason = correction.valid ? "spread variant model changed" : correction.reason; return manualFallback();
+    }
+    // A seeded ray is a conditional prediction, rather than the old cone's
+    // geometric probability. Automatic fire must intersect the selected capsule
+    // for the actual candidate angle's own seed, even with minimum hitchance 0.
+    const auto rayHit = [&](const AimAngles& ray) noexcept {
+        constexpr double radians = 0.01745329251994329577;
+        const double cp = std::cos(ray.pitch * radians);
+        const AimVector direction{static_cast<float>(cp * std::cos(ray.yaw * radians)),
+            static_cast<float>(cp * std::sin(ray.yaw * radians)), static_cast<float>(-std::sin(ray.pitch * radians))};
+        return decision.volume.valid && AimRayIntersectsCapsule(decision.target.eye, direction,
+            decision.weapon.range, decision.volume.capsule);
+    };
+    const unsigned hits = static_cast<unsigned>(rayHit(correction.predicted)) +
+        (correction.variants == 2 ? static_cast<unsigned>(rayHit(correction.alternatePredicted)) : 0u);
+    const bool hit = hits == correction.variants;
+    if (automatic && !hit) {
+        decision.reason = correction.variants == 2 ? "Scout spread clock ambiguity: both rays must hit" :
+            "corrected spread ray misses selected capsule";
+        TraceSpread(model, correction, false);
+        return false;
+    }
+    if (!ModelUnchanged(decision) || !AimSpreadStillCurrent(spreadContext, decision.source, model) || !current() ||
+        !active.load(std::memory_order_acquire) || !Foreground() || SilentAimGetSettings() != decision.settings ||
+        !SilentAimWriteShot(shot, correction.command)) {
+        decision.reason = "spread model or history changed before publication"; return false;
+    }
+    decision.commandAngles = correction.command;
+    decision.effectiveAngles = correction.effective;
+    decision.spreadCorrected = true;
+    decision.predictedSpreadRay = correction.predicted;
+    decision.spreadSeed = correction.seed;
+    decision.spreadVariants = correction.variants;
+    decision.alternateSpreadRay = correction.alternatePredicted;
+    decision.alternateSpreadSeed = correction.alternateSeed;
+    decision.chance = {hits, correction.variants, 100.0f * static_cast<float>(hits) / static_cast<float>(correction.variants), decision.volume.valid,
+        "conditional client spread rays; server timing unverified"};
+    decision.reason = hit ? "corrected client rays intersect selected capsule" : "corrected client ray; capsule intersection unavailable";
+    ReportSpread(model, correction);
+    return true;
+}
+void StandaloneSpread(void* input, std::uintptr_t command) noexcept {
+    const auto settings = SilentAimGetSettings();
+    if (!settings.removeSpread || !Usable(input)) return;
+    ++spreadSkipped;
+    if (!spreadPrepared) { spreadReason = "spread contract unavailable"; return; }
+    AimSource source{}; AimWeaponSnapshot weapon{}; AimShot shot{}; AimSpreadSnapshot model{};
+    if (!weaponPrepared || !Source(source) || !SilentAimReadShot(command, shot)) {
+        spreadReason = "awaiting indexed primary shot"; return;
+    }
+    if (!AimWeaponRead(weaponContext, source, weapon) || !weapon.ready) { spreadReason = weapon.reason; return; }
+    if (!AimSpreadRead(spreadContext, source, weapon, shot, model)) { spreadReason = model.reason; return; }
+    // Preserve current predicted manual recoil when raw input is ahead of the
+    // callback clock; historical clamped punch may already have decayed away.
+    const auto& intendedPunch = model.rawClockAlternative ? weapon.aimPunch : model.punch;
+    const AimAngles desired{shot.view.pitch + intendedPunch.pitch, shot.view.yaw + intendedPunch.yaw, 0};
+    const auto correction = AimSpreadSolve(spreadContext, model, desired);
+    Decision validation{}; validation.source = source; validation.weapon = weapon;
+    if (!correction.valid || correction.variants != model.seedVariants || !ModelUnchanged(validation) || !AimSpreadStillCurrent(spreadContext, source, model) ||
+        !SameSource(source) || !active.load(std::memory_order_acquire) || !Foreground() || SilentAimGetSettings() != settings ||
+        !SilentAimWriteShot(shot, correction.command)) { spreadReason = "spread model changed or unavailable"; return; }
+    ++edited;
+    --spreadSkipped;
+    Status("indexed primary spread corrected");
+    ReportSpread(model, correction);
 }
 bool Cancel(Pending& request, void* input, void* command) noexcept {
     const bool restored = SilentAimCancelAutofire(request.patch, &fireDiagnostics);
@@ -609,7 +792,7 @@ void Process(void* input, void* command) noexcept {
             !active.load(std::memory_order_acquire) || !Foreground() || !(SilentAimGetSettings() == settings) ?
                 "aim ownership changed during publication" :
             !SilentAimReadShot(address, shot, &commandDiagnostics) ? commandDiagnostics.reason :
-            !SilentAimWriteShot(shot, decision.commandAngles) ? "history changed before angle write" : nullptr;
+            !WriteDecision(decision, shot, true) ? (settings.removeSpread ? decision.reason : "history changed before angle write") : nullptr;
         if (rejection) {
             decision.reason = rejection;
             ++writeRejected;
@@ -641,7 +824,7 @@ void Process(void* input, void* command) noexcept {
     if (!active.load(std::memory_order_acquire) || !Foreground() || !(SilentAimGetSettings() == settings) ||
         !SameSource(decision.source) ||
         !AimShootOriginStillCurrent(originContext, decision.source, decision.origin) || !SilentAimTargetValid(decision.source, target) ||
-        !SilentAimWriteShot(shot, decision.commandAngles)) {
+        !WriteDecision(decision, shot, false)) {
         ++writeRejected;
         Status("source/history changed; shot unchanged"); return;
     }
@@ -666,7 +849,9 @@ void HookHistory(void* input, int slot, void* command) noexcept {
     if (slot != 0) return;
     AcquireSRWLockExclusive(&mutationLock);
     // Pending requests must be cancelled even after disable/focus loss/stop.
+    const auto before = edited;
     Process(input, command);
+    if (edited == before) StandaloneSpread(input, reinterpret_cast<std::uintptr_t>(command));
     ReleaseSRWLockExclusive(&mutationLock);
 }
 }
@@ -702,6 +887,8 @@ bool SilentAimPrepare(SilentAimLogCallback callback) noexcept {
     prepared = true;
     bones = {client, reinterpret_cast<AimBoneLookup>(client + bone::LookupBone)};
     weaponPrepared = AimWeaponPrepare(client, weaponContext);
+    spreadPrepared = weaponPrepared && AimSpreadPrepare(client, spreadContext);
+    spreadReason = spreadPrepared ? "awaiting indexed primary shot" : "spread contract unavailable";
     originPrepared = AimShootOriginPrepare(client, originContext);
     AimOcclusionPrepare(client, occlusionContext);
     AimDamagePrepare(client, damageContext);
@@ -876,6 +1063,13 @@ void SilentAimFlushTelemetry() noexcept {
         performance.traces, performance.boundedEstimates, performance.bounded, performance.cooldownSkips);
     ReleaseSRWLockShared(&mutationLock);
     logger(performanceMessage);
+    char spreadMessage[384]{};
+    AcquireSRWLockShared(&mutationLock);
+    std::snprintf(spreadMessage, sizeof(spreadMessage),
+        "AIM_SPREAD_DIAGNOSTICS enabled=%u available=%u corrected=%llu skipped=%llu reason=\"%s\"; indexed client prediction; server seed/timing unobserved",
+        settings.removeSpread, spreadPrepared, spreadCorrected, spreadSkipped, spreadReason);
+    ReleaseSRWLockShared(&mutationLock);
+    logger(spreadMessage);
 }
 
 #ifdef CS2_AIM_PIPELINE_CHECKS
@@ -883,6 +1077,8 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
     testRuntime = true; testForeground = true;
     client = base; original = builder; recordHistory = recorder;
     active.store(true); stopped = false; prepared = weaponPrepared = autofirePrepared = finalizerReady = true;
+    spreadPrepared = false; spreadContext = {};
+    spreadReason = "not evaluated"; spreadCorrected = spreadSkipped = 0;
     stopping = false; stopCycle = {};
     requests = {}; lastDecision = {}; lastDecisionReport = 0; lastDecisionReason = "not evaluated";
     lastEventReport = 0; lastObservedAction = "not evaluated";
@@ -900,4 +1096,5 @@ void SilentAimTestConfigure(std::uintptr_t base, AimTestHistoryFn builder, AimTe
 }
 void SilentAimTestHistory(void* input, void* command) noexcept { HookHistory(input, 0, command); }
 void SilentAimTestForeground(bool foreground) noexcept { testForeground = foreground; }
+void SilentAimTestSpread(bool ready) noexcept { spreadPrepared = ready; spreadContext.client = client; }
 #endif

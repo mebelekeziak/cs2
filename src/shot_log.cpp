@@ -193,16 +193,30 @@ void Retire(const ShotLogRecord& record) noexcept {
 }
 bool AimRay(ShotLogRecord& record, AimVector& direction) noexcept {
     const auto& metadata = record.metadata;
+    const auto& aim = metadata.spreadCorrected ? metadata.predictedRay : metadata.aim;
+    const auto validAim = [](const AimAngles& value, bool requireRoll) {
+        return std::isfinite(value.pitch) && std::isfinite(value.yaw) &&
+            (!requireRoll || std::isfinite(value.roll)) &&
+            std::abs(value.pitch) <= 360 && std::abs(value.yaw) <= 360;
+    };
     if (!record.metadataKnown || !metadata.capsuleValid || !std::isfinite(metadata.range) ||
-        metadata.range <= 0 || metadata.range > 1000000 || !std::isfinite(metadata.aim.pitch) ||
-        !std::isfinite(metadata.aim.yaw) || std::abs(metadata.aim.pitch) > 360 || std::abs(metadata.aim.yaw) > 360) return false;
+        metadata.range <= 0 || metadata.range > 1000000 || !validAim(aim, metadata.spreadCorrected)) return false;
+    if (metadata.spreadCorrected &&
+        ((metadata.spreadVariants != 1 && metadata.spreadVariants != 2) ||
+            (metadata.spreadVariants == 2 && !validAim(metadata.alternatePredictedRay, true)))) return false;
     constexpr double radians = 0.01745329251994329577;
-    const double pitch = metadata.aim.pitch * radians, yaw = metadata.aim.yaw * radians;
-    direction = {static_cast<float>(std::cos(pitch) * std::cos(yaw)),
-        static_cast<float>(std::cos(pitch) * std::sin(yaw)), static_cast<float>(-std::sin(pitch))};
+    const auto rayDirection = [radians](const AimAngles& value) {
+        const double pitch = value.pitch * radians, yaw = value.yaw * radians;
+        return AimVector{static_cast<float>(std::cos(pitch) * std::cos(yaw)),
+            static_cast<float>(std::cos(pitch) * std::sin(yaw)), static_cast<float>(-std::sin(pitch))};
+    };
+    direction = rayDirection(aim);
     record.aimRayValid = true;
     record.aimIntersectsCapsule = AimRayIntersectsCapsule(metadata.eye, direction, metadata.range, metadata.capsule);
-    if (std::isfinite(metadata.spread) && std::isfinite(metadata.inaccuracy) && metadata.spread >= 0 && metadata.inaccuracy >= 0)
+    if (metadata.spreadCorrected && metadata.spreadVariants == 2)
+        record.aimIntersectsCapsule = record.aimIntersectsCapsule && AimRayIntersectsCapsule(metadata.eye,
+            rayDirection(metadata.alternatePredictedRay), metadata.range, metadata.capsule);
+    if (!metadata.spreadCorrected && std::isfinite(metadata.spread) && std::isfinite(metadata.inaccuracy) && metadata.spread >= 0 && metadata.inaccuracy >= 0)
         record.spreadCone = static_cast<float>(std::atan(static_cast<double>(metadata.spread) + metadata.inaccuracy) / radians);
     return true;
 }
@@ -231,7 +245,7 @@ void Geometry(ShotLogRecord& record, const AimVector& impact, const AimVector& a
     constexpr double degrees = 57.29577951308232;
     const float angle = static_cast<float>(std::acos(std::clamp(cosine, -1.0, 1.0)) * degrees);
     record.impactAngle = std::max(record.impactAngle, angle);
-    if (!rayHit && !segmentHit && metadata.chanceValid && metadata.spread + metadata.inaccuracy > 0 &&
+    if (!metadata.spreadCorrected && !rayHit && !segmentHit && metadata.chanceValid && metadata.spread + metadata.inaccuracy > 0 &&
         angle <= record.spreadCone + 0.01f) ++record.spreadMissImpacts;
 }
 void Classify(ShotLogRecord& record) noexcept {
@@ -259,10 +273,10 @@ void Classify(ShotLogRecord& record) noexcept {
     if (record.geometryImpacts != record.uniqueImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
     if (record.shortImpacts == record.geometryImpacts)
         return assign(ShotLogReason::ImpactShort, ShotLogDiagnostic::ImpactBeforeCapsule);
-    if (record.spreadMissImpacts == record.geometryImpacts)
+    if (!record.metadata.spreadCorrected && record.spreadMissImpacts == record.geometryImpacts)
         return assign(ShotLogReason::Spread, ShotLogDiagnostic::ImpactMissedCapsule);
     if (record.shortImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::MixedImpacts);
-    return assign(ShotLogReason::Unknown, record.metadata.chanceValid ? ShotLogDiagnostic::OutsideSpreadCone :
+    return assign(ShotLogReason::Unknown, record.metadata.chanceValid && !record.metadata.spreadCorrected ? ShotLogDiagnostic::OutsideSpreadCone :
         ShotLogDiagnostic::ImpactMissedCapsule);
 }
 void Finish(Pending& pending, ShotLogCloseReason reason) noexcept {
@@ -689,7 +703,16 @@ bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capaci
         char target[64]{}; Name(record.metadata.targetName, target);
         text.Add(" | target %s [0x%08x]", target, record.metadata.targetPawn);
     }
-    if (record.metadataKnown && record.metadata.chanceValid && std::isfinite(record.metadata.hitchance))
+    if (record.metadataKnown && record.metadata.spreadCorrected) {
+        if (record.metadata.spreadVariants == 1)
+            text.Add(" | client ray %s (conditional prediction; client seed 0x%08x)",
+                !record.aimRayValid ? "unknown" : record.aimIntersectsCapsule ? "intersects" : "misses", record.metadata.clientSpreadSeed);
+        else
+            text.Add(" | client rays %s (conditional prediction; client seeds 0x%08x/0x%08x)",
+                !record.aimRayValid ? "unknown" : record.aimIntersectsCapsule ? "both intersect" : "not both intersect",
+                record.metadata.clientSpreadSeed, record.metadata.alternateClientSpreadSeed);
+    }
+    else if (record.metadataKnown && record.metadata.chanceValid && std::isfinite(record.metadata.hitchance))
         text.Add(" | HC %.0f%% (%u/%u)", record.metadata.hitchance, record.metadata.hits, record.metadata.samples);
     else text.Add(" | HC unknown");
     if (record.outcome == ShotLogOutcome::Hit && record.damageCount) {

@@ -153,6 +153,8 @@ int main() {
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
     Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\naim.quickstop=0\naim.min_damage=1\n") != std::string::npos,
         "default preset saves autofire and quickstop off, hitchance controls and minimum damage");
+    Expect(defaults.find("aim.remove_spread=0\n") != std::string::npos,
+        "default preset explicitly saves remove spread disabled");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
     Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\nzoom.sensitivity=100\nzoom.removeScope=0\n") != std::string::npos,
@@ -192,7 +194,7 @@ int main() {
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
     const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67,
-        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true};
+        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true, true};
     SilentAimSetSettings(expectedAim);
     const AimVisualizationSettings expectedVisualization{true, {.125f, .25f, .5f, .75f}};
     AimVisualizationSetSettings(expectedVisualization);
@@ -300,6 +302,8 @@ int main() {
         "version=1\naim.autofire=2\n", "version=1\naim.hitchance=nan\n", "version=1\naim.samples=1.2\n",
         "version=1\naim.quickstop=2\n", "version=1\naim.quickstop=true\n",
         "version=1\naim.autowall=2\n", "version=1\naim.autowall=0\naim.autowall=1\n",
+        "version=1\naim.remove_spread=2\n", "version=1\naim.remove_spread=true\n",
+        "version=1\naim.remove_spread=0\naim.remove_spread=1\n",
         "version=1\naim.quickstop=0\naim.quickstop=1\n",
         "version=1\naim.min_damage=1.5\n", "version=1\naim.min_damage=nan\n",
         "version=1\naim.min_damage=35junk\n", "version=1\naim.min_damage=99999999999999\n",
@@ -364,6 +368,7 @@ int main() {
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 &&
         SilentAimGetSettings().samples == 256 && !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
         "older presets restore autofire and quickstop off, hitchance defaults and minimum damage 1");
+    Expect(!SilentAimGetSettings().removeSpread, "older presets reset enabled remove spread to its disabled default");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");

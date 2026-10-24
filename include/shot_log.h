@@ -41,6 +41,16 @@ struct ShotLogMetadata {
     float predictedDamage = 0;
     int minDamage = 1;
     int predictedHitgroup = 0;
+    // Client-only spread prediction. aim remains the actual pre-spread basis;
+    // predictedRay is the resulting client ray, never an observed server ray.
+    bool spreadCorrected = false;
+    AimAngles predictedRay{};
+    std::uint32_t clientSpreadSeed = 0;
+    // Ambiguous native timing may require both conditional client rays.
+    // Existing single-ray metadata keeps its original meaning by default.
+    unsigned spreadVariants = 1;
+    AimAngles alternatePredictedRay{};
+    std::uint32_t alternateClientSpreadSeed = 0;
 };
 
 // deliveryId optionally identifies a copied delivery occurrence. Repeating the

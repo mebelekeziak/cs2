@@ -11,7 +11,7 @@ int main() {
         std::printf("%s %s\n", ok ? "PASS" : "FAIL", name);
         failures += !ok;
     };
-    check(SilentAimGetSettings() == SilentAimSettings{}, "default settings keep automatic attack disabled");
+    check(SilentAimGetSettings() == SilentAimSettings{}, "default settings keep automatic attack and remove spread disabled");
     SilentAimSetSettings({true, -999, static_cast<AimHitbox>(99), true, 999, 99999, true, 999});
     check(SilentAimGetSettings() == SilentAimSettings{true, 0.1f, AimHitbox::Pelvis, true, 100, 1024, true, 100}, "all fields clamp without quickstop or damage bit overlap");
     SilentAimSetSettings({false, 999, static_cast<AimHitbox>(-1), false, -999, -1, false, -999});
@@ -28,6 +28,17 @@ int main() {
     quickstopOnly.quickstop = true;
     SilentAimSetSettings(quickstopOnly);
     check(SilentAimGetSettings() == quickstopOnly, "quickstop preference survives disabled autofire without changing other fields");
+    for (bool autowall : {false, true}) {
+        auto value = maximumFov;
+        value.hitgroups = AimAllHitgroups;
+        value.autowall = autowall;
+        value.removeSpread = true;
+        SilentAimSetSettings(value);
+        check(SilentAimGetSettings() == value, "remove spread on preserves adjacent autowall and all hitgroup bits");
+        value.removeSpread = false;
+        SilentAimSetSettings(value);
+        check(SilentAimGetSettings() == value, "remove spread off preserves all neighboring settings");
+    }
     for (int damage = 1; damage <= 100; ++damage) {
         auto value = maximumFov;
         value.minDamage = damage;
@@ -54,6 +65,7 @@ int main() {
     multiFirst.hitgroups = AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Hands);
     auto multiSecond = second;
     multiSecond.autowall = true;
+    multiSecond.removeSpread = true;
     multiSecond.hitgroups = AimHitgroupBit(AimHitgroup::Legs) | AimHitgroupBit(AimHitgroup::Feet);
     SilentAimSetSettings(multiFirst);
     std::atomic<bool> torn{false};

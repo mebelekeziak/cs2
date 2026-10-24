@@ -775,6 +775,11 @@ int main() {
     ClickControl("Verbose aim diagnostics");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "verbose diagnostics can be disabled while human results remain enabled");
     ClickControl("Autofire");
+    ClickControl("Remove spread");
+    Expect(SilentAimGetSettings().removeSpread && !SilentAimGetSettings().enabled && !SilentAimGetSettings().autofire,
+        "remove spread enables independently while silent aim and autofire remain disabled");
+    ClickControl("Remove spread");
+    Expect(!SilentAimGetSettings().removeSpread, "remove spread toggles off while silent aim remains disabled");
     ClickControl("##AimHitchance", 0.9f);
     ClickControl("##AimSamples", 0.9f);
     ClickControl("##AimMinDamage", 0.9f);
@@ -782,6 +787,7 @@ int main() {
     ClickHitgroup("Head");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256 &&
            !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1 &&
+           !SilentAimGetSettings().removeSpread &&
            SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest),
            "disabled aim master blocks autofire, quickstop, damage, hitchance and hitgroup edits");
     ClickControl("##AimFov", 0.8f);
@@ -790,6 +796,11 @@ int main() {
     ClickControl("##AimFov", 0.5f);
     Expect(SilentAimGetSettings().enabled && SilentAimGetSettings().fov > 80,
            "silent aim master and FOV respond to mouse input");
+    ClickControl("Remove spread");
+    Expect(SilentAimGetSettings().removeSpread && !SilentAimGetSettings().autofire,
+        "remove spread can be enabled for manual fire without autofire");
+    ClickControl("Remove spread");
+    Expect(!SilentAimGetSettings().removeSpread, "remove spread toggles off with real mouse input");
     ClickControl("##AimFov", 0.99f);
     Expect(SilentAimGetSettings().fov == 180, "silent aim FOV slider reaches 180 degrees");
     Expect(SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest), "hitgroup selection starts with chest only");

@@ -3,13 +3,89 @@
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
 For the next CS2 update, start with the [update guide](docs/CS2_UPDATE_GUIDE.md)
-and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all twenty-nine
+and [RE address index](docs/RE_ADDRESS_INDEX.md). One command checks all thirty
 components independently and saves build identities, source hashes and detailed
 reports under `logs/compatibility/`:
 
 ```powershell
 python tools/check_compatibility.py
 ```
+
+## Remove spread — October 23, 2026
+
+**Revision 4, October 24:** a new user log demonstrates a grounded accuracy
+snapshot being used for a shot after the same command jumps. With Remove
+spread enabled, Autofire now defers its own pulse on a grounded jump command,
+including subtick press/release. A later command uses a fresh airborne model;
+manual fire remains available. New diagnostics capture movement and accuracy.
+The two revision 3 trials contain 47 hits, 26 misses and two interruptions
+among 75 matched corrected Scout fires. This fixes a demonstrated transition,
+not every remaining timing or hit-registration discrepancy. See
+[revision 4 evidence and limits](docs/REMOVE_SPREAD_REVISION4.md).
+Both public and diagnostic x64 Release builds pass **63/63 CTest suites**;
+all **30/30 installed-file checks** pass. The user reports better, decent but
+still imperfect behavior after revision 4; no measured post-revision hit rate
+has been established.
+
+**Revision 3, October 24:** the later user log exposed raw indexed history
+2–5 ticks ahead of the callback clock. Scout prediction now pairs the original
+clamped model with that raw timestamp and the already-captured current recoil
+when the lead exceeds one tick. The old local pair remains for shorter leads;
+autofire still requires both predictions to intersect. See
+[revision 3 evidence and limits](docs/REMOVE_SPREAD_REVISION3.md).
+Both public and diagnostic x64 Release builds pass **63/63 CTest suites**;
+all **30/30 installed-file checks** pass. Subsequent revision 3 gameplay is
+audited in the revision 4 notes above.
+
+This is already seed prediction. It does not determine an independently
+generated server seed. Static inspection verifies a separate server seed mode
+registered as `sv_usercmd_custom_random_seed`, default true in the inspected
+server binary; its actual value in the user's session is unknown. Run
+`python tools/inspect_server_spread_seed.py` for the read-only installed-file
+audit. No server setting has been changed.
+
+**Revision 2:** the user's Scout log exposed a conditional one-tick spread
+mismatch. The correction now balances the original and next-tick client rays
+for the SSG 08. Autofire requires both to intersect the selected capsule, even
+at minimum hitchance zero; it can wait longer for a usable shot. Manual Scout
+compensation minimizes the worse of the two predictions. Other weapons retain
+the single-tick policy. New timing diagnostics preserve raw, converted and
+clamped time, both seeds and both rays. See [log findings and revision 2](docs/REMOVE_SPREAD_REVISION2.md).
+Both x64 Release builds pass **62/62 CTest suites**; **30/30 installed-file
+checks** pass. This is build, model and replay verification; revision 2 gameplay
+has not been observed.
+
+**Aim → Remove spread** is an independent on/off toggle, disabled by default
+and saved as `aim.remove_spread`. It works with Silent aim and Autofire off,
+including manual SSG 08 airborne no-scope attempts. The feature predicts the
+indexed primary shot's client seed and searches legal shot-history angles to
+reduce its spread error. It does not change the camera or installed game files.
+
+This is experimental client compensation. The installed native seed changes
+with half-degree angle bins, so every candidate is evaluated using its own seed,
+shot-time recoil and private native RNG state. A bounded search retains the best
+predicted result; it does not guarantee an exact solution or server agreement.
+Tap individual shots when testing: held-fire histories without a native attack
+index retain ordinary behavior. Unsupported weapons or unavailable timing also
+retain ordinary manual input.
+
+With Autofire, the ordinary spread-cone estimate no longer blocks a candidate
+before correction. Publication instead requires the corrected client ray to
+intersect the selected capsule; missing timing, changed state or a predicted
+miss cancels the owned automatic attack. Shot logs identify this as a **client
+ray**, rather than statistical hitchance. Path and damage checks still describe
+the target-center path, so edge cover and hitgroup differences remain possible.
+
+Use the existing **Load Overlay.cmd** workflow after restarting CS2 normally
+if an older DLL is resident. Stopped and resident is not physically unloaded.
+Testing remains offline/private. Native seed, timing and RNG evidence is in
+[the spread contract](tools/CS2_AIM_SPREAD_EVIDENCE.md); behavior and validation
+are detailed in [Remove spread notes](docs/REMOVE_SPREAD.md).
+
+Initial public and diagnostic x64 Release builds each passed **61/61 CTest suites**. All **30/30**
+installed-file compatibility checks pass, including the new spread contract;
+23 altered spread headers reject. The subsequent user trial supplies the Scout
+evidence above; revision 2 gameplay has not yet been observed.
 
 **CS2 update, October 23, 2026:** compatibility is recertified for installed
 patch **1.41.9.2**, client/server **2000935**, Steam build **26144732**. All

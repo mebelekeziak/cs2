@@ -401,6 +401,107 @@ void ReasonChecks() {
         "capsule distance handles a spherical capsule, short endpoint, intersection, and invalid direction");
 }
 
+void CorrectedSpreadChecks() {
+    auto metadata = Metadata();
+    metadata.capsule.radius = 1;
+    metadata.aim = {15, 25, 3}; // Actual compensated basis misses this capsule.
+    metadata.spreadCorrected = true;
+    metadata.predictedRay = {};
+    metadata.clientSpreadSeed = 0x8fedcba9;
+    metadata.hitchance = 100; metadata.hits = metadata.samples = 1;
+    const auto resolve = [](const ShotLogMetadata& sample, AimVector position) {
+        ShotLogInitialize(Local, 900); ShotLogAddMetadata(sample); ShotLogOnFire(Fire());
+        ShotLogOnImpact(Impact(1005, 2, position)); ShotLogAdvance(1311);
+        auto records = Drain();
+        Expect(records.size() == 1, "corrected ray scenario settles one native fire");
+        return records.empty() ? ShotLogRecord{} : records[0];
+    };
+    auto record = resolve(metadata, {200, 0, 0});
+    Expect(record.metadata.aim.pitch == 15 && record.metadata.aim.yaw == 25 && record.metadata.aim.roll == 3 &&
+        record.metadata.predictedRay.pitch == 0 && record.metadata.clientSpreadSeed == 0x8fedcba9,
+        "corrected metadata retains actual basis separately from the client ray and copied seed");
+    Expect(record.aimRayValid && record.aimIntersectsCapsule && record.impactAngle == 0 &&
+        record.diagnostic == ShotLogDiagnostic::ImpactCrossedCapsule,
+        "corrected geometry uses the client ray crossing the capsule despite a large compensated basis offset");
+    auto line = Format(record);
+    Expect(line.find("client ray intersects (conditional prediction; client seed 0x8fedcba9)") != std::string::npos &&
+        line.find("HC ") == std::string::npos && line.find("100%") == std::string::npos && line.find("(1/1)") == std::string::npos,
+        "one predicted ray is labeled conditional client evidence instead of a statistical 100-percent hitchance");
+
+    record = resolve(metadata, {200, 4, 0});
+    Expect(record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::ImpactMissedCapsule &&
+        record.aimIntersectsCapsule && record.spreadMissImpacts == 0 && record.spreadCone == 0,
+        "impact disagreement with a corrected client ray remains unknown without an ordinary spread-cone cause");
+
+    metadata.predictedRay.yaw = 90;
+    record = resolve(metadata, {200, 4, 0});
+    Expect(record.aimRayValid && !record.aimIntersectsCapsule &&
+        record.diagnostic == ShotLogDiagnostic::AimMissedCapsule && Format(record).find("client ray misses") != std::string::npos,
+        "client ray missing copied geometry is explicitly reported without trusting the pre-spread basis");
+
+    metadata.predictedRay.yaw = std::numeric_limits<float>::quiet_NaN();
+    record = resolve(metadata, {200, 4, 0});
+    Expect(!record.aimRayValid && record.reason == ShotLogReason::Unknown &&
+        record.diagnostic == ShotLogDiagnostic::InvalidAim && Format(record).find("client ray unknown") != std::string::npos,
+        "invalid predicted ray stays unknown without falling back to an ordinary cone model");
+
+    metadata.predictedRay = {};
+    metadata.spreadVariants = 2;
+    metadata.alternatePredictedRay = {0, .1f, 0};
+    metadata.alternateClientSpreadSeed = 0x12345678;
+    record = resolve(metadata, {200, 4, 0});
+    line = Format(record);
+    Expect(record.aimRayValid && record.aimIntersectsCapsule && record.spreadMissImpacts == 0 &&
+        record.reason == ShotLogReason::Unknown && record.diagnostic == ShotLogDiagnostic::ImpactMissedCapsule &&
+        record.metadata.spreadVariants == 2 && record.metadata.alternateClientSpreadSeed == 0x12345678 &&
+        record.metadata.alternatePredictedRay.yaw == .1f,
+        "two corrected client rays must both intersect and retain their distinct copied metadata");
+    Expect(line.find("client rays both intersect (conditional prediction; client seeds 0x8fedcba9/0x12345678)") != std::string::npos &&
+        line.find("HC ") == std::string::npos && line.find("100%") == std::string::npos,
+        "dual client rays remain conditional evidence without statistical hitchance text");
+
+    metadata.alternatePredictedRay.yaw = 90;
+    record = resolve(metadata, {200, 4, 0});
+    Expect(record.aimRayValid && !record.aimIntersectsCapsule && record.reason == ShotLogReason::Unknown &&
+        record.diagnostic == ShotLogDiagnostic::AimMissedCapsule &&
+        Format(record).find("client rays not both intersect") != std::string::npos,
+        "a primary intersection cannot conceal an alternate client ray missing the capsule");
+
+    for (unsigned component = 0; component < 3; ++component) {
+        metadata.alternatePredictedRay = {};
+        if (component == 0) metadata.alternatePredictedRay.pitch = std::numeric_limits<float>::quiet_NaN();
+        else if (component == 1) metadata.alternatePredictedRay.yaw = std::numeric_limits<float>::quiet_NaN();
+        else metadata.alternatePredictedRay.roll = std::numeric_limits<float>::quiet_NaN();
+        record = resolve(metadata, {200, 4, 0});
+        Expect(!record.aimRayValid && !record.aimIntersectsCapsule && record.reason == ShotLogReason::Unknown &&
+            record.diagnostic == ShotLogDiagnostic::InvalidAim && record.spreadMissImpacts == 0 &&
+            Format(record).find("client rays unknown") != std::string::npos,
+            "every nonfinite alternate ray component prevents a dual-ray claim and ordinary spread classification");
+    }
+    metadata.alternatePredictedRay = {};
+    for (const unsigned count : {0u, 3u, UINT32_MAX}) {
+        metadata.spreadVariants = count;
+        record = resolve(metadata, {200, 4, 0});
+        Expect(!record.aimRayValid && record.reason == ShotLogReason::Unknown &&
+            record.diagnostic == ShotLogDiagnostic::InvalidAim && record.spreadMissImpacts == 0 &&
+            Format(record).find("client rays unknown") != std::string::npos,
+            "unsupported variant count stays unknown without silently selecting one corrected ray");
+    }
+
+    metadata.spreadVariants = 1;
+    metadata.alternatePredictedRay.yaw = std::numeric_limits<float>::quiet_NaN();
+    record = resolve(metadata, {200, 4, 0});
+    Expect(record.aimRayValid && record.aimIntersectsCapsule &&
+        Format(record).find("client ray intersects (conditional prediction; client seed 0x8fedcba9)") != std::string::npos,
+        "single-ray metadata ignores an unused alternate and preserves existing conditional text");
+
+    auto ordinary = Metadata(); ordinary.capsule.radius = 1;
+    record = resolve(ordinary, {200, 4, 0});
+    line = Format(record);
+    Expect(record.reason == ShotLogReason::Spread && line.find("HC 78% (200/256)") != std::string::npos &&
+        line.find("client ray") == std::string::npos, "ordinary sampled shots preserve their existing geometry and hitchance text");
+}
+
 void AttemptChecks() {
     auto published = Metadata(); published.attackPublished = true;
     ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogAdvance(2050);
@@ -592,7 +693,7 @@ void FormattingChecks() {
 }
 
 int main() {
-    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); AttemptChecks(); DamagePredictionChecks(); FormattingChecks();
+    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); CorrectedSpreadChecks(); AttemptChecks(); DamagePredictionChecks(); FormattingChecks();
     std::printf("Shot log checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;
 }

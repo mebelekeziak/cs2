@@ -7,6 +7,7 @@
 #include "silent_aim_offsets.h"
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
+#include "aim_spread.h"
 #include "aim_shoot_origin.h"
 #include <limits>
 #include "aim_occlusion.h"
@@ -64,6 +65,11 @@ AimVector nativeOrigin{};
 bool originAvailable = true;
 int builderMutation = 0, traceModelMutation = 0, modelReadMutation = 0;
 unsigned modelMutationTrace = 3;
+unsigned spreadReads = 0, spreadSolves = 0;
+bool spreadAvailable = true, spreadCurrent = true, spreadMiss = false;
+bool spreadAlternateMiss = false;
+bool spreadRawAlternative = false;
+int spreadMutation = 0;
 void MutateModel(int mode) {
     if (mode == 1) weapon.inaccuracy = .5f;
     if (mode == 2) weapon.spread = .5f;
@@ -106,6 +112,8 @@ struct Command {
     std::array<unsigned char, 0x90> command{}, base{};
     std::array<unsigned char, 0x38> baseAngles{}, entry{}, historyAngles{};
     std::array<unsigned char, 0x18> repeated{};
+    std::array<unsigned char, 0x18> subticks{};
+    std::array<MovementSubtick, 2> steps{};
     MovementButtons originalButtons{0x8, 0x200, 0x400};
     static constexpr std::uint32_t OriginalPresence = 0x8000;
     static constexpr AimAngles PhysicalView{};
@@ -135,6 +143,18 @@ struct Command {
     int Index() noexcept { return Get<int>(Address(command) + cmd::command::Attack1Index); }
     std::uint32_t Presence() noexcept { return Get<std::uint32_t>(Address(command) + cmd::command::Presence); }
     AimAngles History() noexcept { return Get<AimAngles>(Address(historyAngles) + cmd::angle::Pitch); }
+    void JumpTap() noexcept {
+        steps[0].presence = steps[1].presence = 7;
+        steps[0].button = steps[1].button = move::Jump;
+        steps[0].pressed = true; steps[0].when = .2f;
+        steps[1].pressed = false; steps[1].when = .6f;
+        Put(Address(subticks), 2);
+        Put(Address(subticks) + 8, Address(steps[0]));
+        Put(Address(subticks) + 16, Address(steps[1]));
+        Put(Address(base) + move::base::SubtickSize, 2);
+        Put(Address(base) + move::base::SubtickCapacity, 2);
+        Put(Address(base) + move::base::SubtickRep, Address(subticks));
+    }
     void AddUnrelatedChanges() noexcept {
         auto buttons = Buttons();
         buttons.down |= UnrelatedDown; buttons.changed |= UnrelatedChanged; buttons.third |= UnrelatedThird;
@@ -186,6 +206,7 @@ void NativeBuilder(void* input, int slot, void* command) {
 
 struct World {
     std::vector<unsigned char> client = std::vector<unsigned char>(cs2_offsets::ClientImageSize);
+    std::array<unsigned char, 0x500> pawn{};
     std::array<unsigned char, 0x40> weaponIdentity{};
     std::uintptr_t Base() noexcept { return reinterpret_cast<std::uintptr_t>(client.data()); }
     std::uintptr_t InputAddress() noexcept { return Base() + cmd::Input; }
@@ -197,9 +218,10 @@ struct World {
     }
     void Reset() {
         std::memset(Input(), 0, 0xC00);
+        pawn.fill(0); // Stable airborne state unless the scenario requests ground.
         Put(Base() + cs2_offsets::globals::dwEntityList, std::uintptr_t{0x111000});
         Put(Base() + cs2_offsets::globals::dwLocalPlayerController, std::uintptr_t{0x222000});
-        Put(Base() + cs2_offsets::globals::dwLocalPlayerPawn, std::uintptr_t{0x333000});
+        Put(Base() + cs2_offsets::globals::dwLocalPlayerPawn, Address(pawn));
         Put(InputAddress() + fire::InputPrimaryIndex, -1);
         Put(InputAddress() + fire::InputEventCount, 1);
         Put(InputAddress() + fire::InputEventsProcessed, 1);
@@ -229,6 +251,9 @@ struct World {
         shotMetadata.clear(); shotPumps = 0;
         ShotLogSetSettings({});
         nativeOrigin = {}; originAvailable = true; modelMutationTrace = 3; builderMutation = traceModelMutation = modelReadMutation = 0;
+        spreadReads = spreadSolves = 0; spreadAvailable = spreadCurrent = true; spreadMiss = false; spreadMutation = 0;
+        spreadAlternateMiss = false;
+        spreadRawAlternative = false;
         weapon = {};
         weapon.weapon = 0x444000; weapon.identity = 0x445000; weapon.services = 0x446000;
         weapon.identity = Address(weaponIdentity);
@@ -863,6 +888,40 @@ bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot&
     return weaponAvailable;
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
+bool AimSpreadPrepare(std::uintptr_t, AimSpreadContext&) noexcept { return false; }
+bool AimSpreadRead(const AimSpreadContext&, const AimSource& source, const AimWeaponSnapshot& value, const AimShot& shot,
+    AimSpreadSnapshot& out) noexcept {
+    ++spreadReads;
+    out = {}; out.weapon = value; out.punch = value.aimPunch; out.time = {100, .5f};
+    out.movementStateKnown = true;
+    out.movementFlags = Get<std::uint32_t>(source.pawn + move::pawn::Flags);
+    out.velocity = Get<AimVector>(source.pawn + move::pawn::Velocity);
+    out.alternateTime = {101, .5f}; out.alternatePunch = out.punch;
+    if (spreadRawAlternative) {
+        out.rawClockAlternative = true; out.converted = out.alternateTime = {104, .25f};
+        out.punch.pitch = 1.25f;
+    }
+    out.seedVariants = !std::strcmp(value.name, "C_WeaponSSG08") ? 2u : 1u;
+    out.valid = spreadAvailable && shot.index >= 0;
+    out.reason = out.valid ? "fixture indexed shot model" : "fixture timing unavailable";
+    return out.valid;
+}
+bool AimSpreadStillCurrent(const AimSpreadContext&, const AimSource&, const AimSpreadSnapshot&) noexcept { return spreadCurrent; }
+AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext&, const AimSpreadSnapshot& model, const AimAngles& desired) noexcept {
+    ++spreadSolves;
+    const auto corrected = AimSpreadCompensate(desired, model.punch, .15, -.08);
+    AimSpreadSearchResult result{};
+    result.command = corrected.command; result.effective = corrected.effective;
+    result.predicted = desired; if (spreadMiss) result.predicted.yaw += 90;
+    result.variants = model.seedVariants;
+    result.alternatePredicted = desired; if (spreadAlternateMiss) result.alternatePredicted.yaw += 90;
+    result.alternateSeed = 0x12345679;
+    result.valid = corrected.valid; result.residualDegrees = spreadMiss ? 90.0f : 0.0f;
+    result.seed = 0x12345678; result.evaluations = 10;
+    result.reason = "fixture indexed seed correction";
+    MutateModel(spreadMutation);
+    return result;
+}
 bool AimDamagePrepare(std::uintptr_t client, AimDamageContext& context) noexcept { context = {client, true}; return true; }
 bool AimAutowallPrepare(std::uintptr_t client, AimAutowallContext& context) noexcept { context = {client, true}; return true; }
 AimOcclusionResult AimAutowallCheck(const AimAutowallContext&, const AimSource&, const AimTarget&,
@@ -1482,6 +1541,203 @@ void FreshShotChecks(World& world) {
     Expect(recorderCalls == 0 && LastBrake(false), "unavailable native shooting origin cannot acquire autofire or quickstop");
 }
 
+void SpreadJumpTransitionChecks(World& world) {
+    const auto enable = [&]() {
+        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+        SilentAimSetSettings(settings); SilentAimTestSpread(true);
+    };
+    for (int intent = 0; intent < 3; ++intent) {
+        world.Reset(); enable();
+        Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+        Command jump;
+        if (intent == 1) jump.JumpTap();
+        else if (intent == 0) {
+            jump.originalButtons.down |= move::Jump;
+            Put(Address(jump.command) + move::command::Buttons, jump.originalButtons);
+        }
+        Put(Address(jump.base) + move::base::Forward, 180.0f);
+        Put(Address(jump.base) + move::base::Left, -35.0f);
+        const auto nativeSteps = jump.steps;
+        const auto nativePointers = jump.subticks;
+        const auto nativeBase = jump.base;
+        world.Prepare(jump);
+        Expect(recorderCalls == 1, "jump deferral still validates the final publication after an owned request");
+        if (intent == 2) {
+            auto late = jump.Buttons(); late.down |= move::Jump;
+            Put(Address(jump.command) + move::command::Buttons, late);
+        }
+        world.History(jump);
+        auto expectedButtons = jump.originalButtons;
+        if (intent == 2) expectedButtons.down |= move::Jump;
+        Expect(checksumCalls == 1 && Equal(jump.Buttons(), expectedButtons) && jump.Index() == -1 &&
+            Equal(jump.History(), Command::PhysicalView) && spreadSolves == 0 && spreadReads == 0 && shotMetadata.empty(),
+            "grounded held/tapped/late jump cancels only owned autofire before spread solving; case=" + std::to_string(intent));
+        Expect(jump.base == nativeBase && jump.subticks == nativePointers &&
+            !std::memcmp(jump.steps.data(), nativeSteps.data(), sizeof(nativeSteps)),
+            "jump deferral preserves native movement values and press/release history exactly");
+        bool diagnostic = false;
+        for (const auto& message : telemetry) diagnostic |=
+            message.find("AIM_SPREAD_TRANSITION revision=4 ") != std::string::npos &&
+            message.find("automatic_defer=1 readable=1 flags=0x1 jump_intent=1") != std::string::npos &&
+            message.find("inaccuracy=0.0000000") != std::string::npos &&
+            message.find("grounded jump transition: awaiting stable shot accuracy") != std::string::npos;
+        Expect(diagnostic, "transition telemetry records the exact deferral reason and copied model accuracy");
+
+        Put(Address(world.pawn) + move::pawn::Flags, std::uint32_t{0});
+        Command airborne(38);
+        airborne.originalButtons.down |= move::Jump;
+        Put(Address(airborne.command) + move::command::Buttons, airborne.originalButtons);
+        airborne.JumpTap();
+        world.Prepare(airborne); world.History(airborne);
+        Expect(spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 1 &&
+            (airborne.Buttons().down & (move::Jump | 1)) == (move::Jump | 1),
+            "following stable airborne command can publish with jump held and has no sticky deferral");
+    }
+    world.Reset(); enable();
+    Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+    Command grounded; world.Prepare(grounded); world.History(grounded);
+    Expect(spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 0,
+        "stable grounded command without jump retains automatic spread correction");
+    world.Reset(); enable();
+    Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+    Command released; released.JumpTap(); released.steps[0].pressed = false;
+    world.Prepare(released); world.History(released);
+    Expect(spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 0,
+        "a grounded release-only history cannot be mistaken for a fresh jump press");
+
+    for (bool aim : {false, true}) {
+        world.Reset(); enable();
+        auto settings = SilentAimGetSettings(); settings.enabled = aim; settings.autofire = false; SilentAimSetSettings(settings);
+        Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+        Command manual; manual.JumpTap();
+        auto physical = manual.Buttons(); physical.down |= 1 | move::Jump;
+        Put(Address(manual.command) + move::command::Buttons, physical);
+        Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+        const auto nativeSteps = manual.steps;
+        world.History(manual);
+        Expect(recorderCalls == 0 && checksumCalls == 0 && spreadSolves == 1 && Equal(manual.Buttons(), physical) &&
+            !std::memcmp(manual.steps.data(), nativeSteps.data(), sizeof(nativeSteps)),
+            "grounded jump guard leaves manual primary ownership and correction available; aim=" + std::to_string(aim));
+    }
+    world.Reset();
+    Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+    Command ordinary; ordinary.JumpTap();
+    ordinary.originalButtons.down |= move::Jump;
+    Put(Address(ordinary.command) + move::command::Buttons, ordinary.originalButtons);
+    world.Prepare(ordinary); world.History(ordinary);
+    Expect(spreadSolves == 0 && checksumCalls == 0 && shotMetadata.size() == 1 &&
+        (ordinary.Buttons().down & (move::Jump | 1)) == (move::Jump | 1),
+        "remove spread off preserves existing grounded-jump autofire behavior");
+
+    for (int invalid = 0; invalid < 6; ++invalid) {
+        world.Reset(); enable();
+        Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
+        Command malformed; malformed.JumpTap();
+        if (invalid == 0) Put(Address(malformed.base) + move::base::SubtickSize, -1);
+        if (invalid == 1) Put(Address(malformed.base) + move::base::SubtickCapacity, 1);
+        if (invalid == 2) Put(Address(malformed.subticks), 3);
+        if (invalid == 3) Put(Address(malformed.subticks) + 8, std::uintptr_t{0});
+        if (invalid == 4) malformed.steps[0].when = std::numeric_limits<float>::quiet_NaN();
+        if (invalid == 5) malformed.steps[0].presence |= 0x8000;
+        const auto nativeBase = malformed.base;
+        const auto nativeSteps = malformed.steps;
+        world.Prepare(malformed); world.History(malformed);
+        bool unavailable = false;
+        for (const auto& message : telemetry) unavailable |=
+            message.find("jump intent unavailable: automatic spread model unavailable") != std::string::npos;
+        Expect(checksumCalls == 1 && shotMetadata.empty() && spreadSolves == 0 &&
+            Equal(malformed.Buttons(), malformed.originalButtons) && malformed.base == nativeBase &&
+            !std::memcmp(malformed.steps.data(), nativeSteps.data(), sizeof(nativeSteps)) && unavailable,
+            "unreadable jump-intent layout cancels only owned autofire with an unavailable-model reason; case=" + std::to_string(invalid));
+    }
+}
+
+void SpreadPipelineChecks(World& world) {
+    const auto enable = [&](bool aim, bool automatic) {
+        auto settings = SilentAimGetSettings(); settings.enabled = aim; settings.autofire = automatic;
+        settings.removeSpread = true; SilentAimSetSettings(settings); SilentAimTestSpread(true);
+    };
+    const auto physical = [&](Command& command, bool indexed = true) {
+        auto buttons = command.originalButtons; buttons.down |= 1;
+        Put(Address(command.command) + move::command::Buttons, buttons);
+        Put(world.InputAddress() + fire::InputPrimaryIndex, indexed ? 0 : -1);
+    };
+    world.Reset(); Command off; physical(off); world.History(off);
+    Expect(spreadReads == 0 && spreadSolves == 0, "remove spread off never samples or searches the native spread model");
+
+    for (bool aim : {false, true}) {
+        world.Reset(); enable(aim, false); selectAvailable = false;
+        Command manual; physical(manual);
+        const auto buttons = manual.Buttons(); const auto base = manual.baseAngles;
+        world.History(manual);
+        const auto expected = AimSpreadCompensate(Command::PhysicalView, {}, .15, -.08);
+        Expect(spreadSolves == 1 && Equal(manual.History(), expected.command) &&
+            Equal(manual.Buttons(), buttons) && manual.baseAngles == base && recorderCalls == 0 && checksumCalls == 0,
+            "standalone indexed manual spread correction preserves camera and primary ownership; aim=" + std::to_string(aim));
+    }
+    world.Reset(); enable(true, false); Command aimed; physical(aimed); world.History(aimed);
+    Expect(spreadSolves == 1 && Equal(aimed.History(), AimSpreadCompensate(Desired(), {}, .15, -.08).command),
+        "selected manual target receives spread compensation exactly once");
+    world.Reset(); enable(false, false); weapon.name = "C_WeaponSSG08"; spreadRawAlternative = true;
+    Command rawManual; physical(rawManual); world.History(rawManual);
+    Expect(Equal(rawManual.History(), AimSpreadCompensate(Command::PhysicalView, {1.25f, 0, 0}, .15, -.08).command),
+        "raw-clock standalone Scout preserves current intended recoil rather than reintroducing decayed historical punch");
+    world.Reset(); enable(true, false); Command heldAim; physical(heldAim, false); world.History(heldAim);
+    Expect(Equal(heldAim.History(), Desired()) && spreadSolves == 0,
+        "unsupported held spread history keeps ordinary manual silent aim available");
+
+    world.Reset(); enable(true, true); weapon.inaccuracy = .8f;
+    Put(Address(world.pawn) + move::pawn::Velocity, AimVector{10, -20, 30});
+    Command automatic; world.Prepare(automatic); world.History(automatic);
+    Expect(recorderCalls == 1 && spreadSolves == 1 && checksumCalls == 0 && shotMetadata.size() == 1 &&
+        shotMetadata[0].hitchance == 100 && shotMetadata[0].samples == 1 && shotMetadata[0].spreadCorrected &&
+        shotMetadata[0].clientSpreadSeed == 0x12345678 && Equal(shotMetadata[0].predictedRay, Desired()),
+        "corrected indexed automatic ray can fire below uncorrected cone chance; metadata is one conditional ray");
+    bool copiedMovement = false;
+    for (const auto& message : telemetry) if (message.find("AIM_SPREAD corrected=1") == 0)
+        copiedMovement = message.size() < 1399 && message.find("revision=4 ") != std::string::npos &&
+            message.find("model_inaccuracy=0.800000012 model_spread=0 pattern=0 movement_known=1 flags=0x0 velocity=(10.000000,-20.000000,30.000000)") != std::string::npos &&
+            message.ends_with("server seed/timing not observed");
+    Expect(copiedMovement, "bounded revision-four spread trace retains exact model accuracy and copied movement without truncation");
+
+    for (bool alternateMiss : {false, true}) {
+        world.Reset(); enable(true, true); weapon.name = "C_WeaponSSG08"; weapon.inaccuracy = .4f;
+        auto settings = SilentAimGetSettings(); settings.hitchance = 0; SilentAimSetSettings(settings);
+        spreadAlternateMiss = alternateMiss;
+        Command scout; world.Prepare(scout); world.History(scout);
+        if (alternateMiss)
+            Expect(checksumCalls == 1 && Equal(scout.Buttons(), scout.originalButtons) && shotMetadata.empty(),
+                "Scout primary-ray hit cannot authorize autofire when the next-tick ray misses, even at minimum zero");
+        else
+            Expect(checksumCalls == 0 && shotMetadata.size() == 1 && shotMetadata[0].spreadVariants == 2 &&
+                shotMetadata[0].samples == 2 && shotMetadata[0].hits == 2 &&
+                shotMetadata[0].alternateClientSpreadSeed == 0x12345679 &&
+                Equal(shotMetadata[0].alternatePredictedRay, Desired()),
+                "Scout publishes only after both timing rays intersect and copies both conditional predictions");
+    }
+
+    for (int rejection = 0; rejection < 5; ++rejection) {
+        world.Reset(); enable(true, true); Command rejected; world.Prepare(rejected);
+        if (rejection == 0) spreadAvailable = false;
+        if (rejection == 1) spreadCurrent = false;
+        if (rejection == 2) spreadMiss = true;
+        if (rejection == 3) spreadMutation = 2;
+        if (rejection == 4) { auto settings = SilentAimGetSettings(); settings.removeSpread = false; SilentAimSetSettings(settings); }
+        world.History(rejected);
+        Expect(checksumCalls == 1 && Equal(rejected.Buttons(), rejected.originalButtons) && shotMetadata.empty(),
+            "unavailable, changed or missed spread prediction cancels only owned autofire; case=" + std::to_string(rejection));
+    }
+    for (int unavailable = 0; unavailable < 4; ++unavailable) {
+        world.Reset(); enable(false, false); Command manual; physical(manual, unavailable != 0);
+        if (unavailable == 1) spreadAvailable = false;
+        if (unavailable == 2) SilentAimTestForeground(false);
+        if (unavailable == 3) SilentAimStop("spread lifecycle test");
+        const auto buttons = manual.Buttons(); world.History(manual);
+        Expect(Equal(manual.History(), Command::PhysicalView) && Equal(manual.Buttons(), buttons),
+            "unsupported held history, missing model, focus loss or stop preserves manual input; case=" + std::to_string(unavailable));
+    }
+}
+
 int main() {
     World world;
     FreshShotChecks(world);
@@ -1498,6 +1754,8 @@ int main() {
     PerformanceChecks(world);
     MenuCaptureChecks(world);
     VisualizationChecks(world);
+    SpreadPipelineChecks(world);
+    SpreadJumpTransitionChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

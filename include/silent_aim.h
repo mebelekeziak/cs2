@@ -20,4 +20,5 @@ void SilentAimTestConfigure(std::uintptr_t client, AimTestHistoryFn builder, Aim
     SilentAimLogCallback logger = nullptr) noexcept;
 void SilentAimTestHistory(void* input, void* command) noexcept;
 void SilentAimTestForeground(bool foreground) noexcept;
+void SilentAimTestSpread(bool prepared) noexcept;
 #endif

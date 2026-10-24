@@ -589,6 +589,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Scope overlay: %s", ScopeOverlayStatus());
         ImGui::Text("Player model: %s", ModelSwapRuntimeStatus().data());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
+        ImGui::Text("Remove spread: %s", aimSettings.removeSpread ? "ON" : "OFF");
         ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
         ImGui::Text("Grenade borders: %s", GrenadeVisualsStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());

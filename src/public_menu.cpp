@@ -612,6 +612,8 @@ void DrawPublicMenu() {
             bool shotLogChanged = false;
             if (ImGui::BeginChild("##AimSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 changed |= FeatureCheckbox("Enable silent aim", settings.enabled);
+                changed |= FeatureCheckbox("Remove spread", settings.removeSpread);
+                ImGui::TextWrapped("Experimental client-seed prediction. Independent server randomness is unsupported.");
                 visualizationChanged |= FeatureCheckbox("Visualize ragebot", visualization.enabled);
                 ImGui::BeginDisabled(!visualization.enabled);
                 ImGui::TextUnformatted("Point color");
