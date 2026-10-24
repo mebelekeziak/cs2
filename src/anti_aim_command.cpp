@@ -197,6 +197,7 @@ struct MovementBasis {
     float yaw = 0;
     std::uintptr_t transition = 0;
     const AntiAimMovementHistory* history = nullptr;
+    bool antiAim = false;
 };
 bool MovementStream(const AntiAimCommandPatch& patch, std::uintptr_t transition, const char** reason) noexcept {
     const auto fail = [&](const char* why) noexcept { if (reason) *reason = why; return false; };
@@ -263,15 +264,18 @@ bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const Anti
             if ((step.original.presence & 1) && (step.original.button & actions)) return fail("movement_action_passthrough");
         }
     }
-    auto options = AntiAimNormalizeSettings(settings);
-    const auto digitalBasis = movement ? AntiAimChooseDigitalBasis(patch.originalView.yaw, movement->yaw) : AntiAimDigitalBasis{};
+    const auto options = AntiAimNormalizeSettings(settings);
+    AimAngles targetView{};
+    if (!AntiAimBuildAngles(patch.originalView, options, static_cast<std::uint32_t>(patch.sequence), targetView)) return fail("view_nonfinite");
+    const auto digitalBasis = movement ? AntiAimChooseDigitalBasis(
+        movement->antiAim ? targetView.yaw : patch.originalView.yaw, movement->yaw) : AntiAimDigitalBasis{};
+    patch.editedView = targetView;
     if (movement) {
         if (!digitalBasis.valid) return fail("movement_view_basis");
-        options.yawOffset = digitalBasis.yaw;
+        patch.editedView.yaw = digitalBasis.yaw;
     }
-    const bool legacyPayload = options.yawMode == AntiAimYawMode::Static && options.yawBase == AntiAimYawBase::View &&
+    const bool legacyPayload = !movement && options.yawMode == AntiAimYawMode::Static && options.yawBase == AntiAimYawBase::View &&
         std::abs(options.yawOffset) == 180 && options.pitchMode == AntiAimPitchMode::Down;
-    if (!AntiAimBuildAngles(patch.originalView, options, static_cast<std::uint32_t>(patch.sequence), patch.editedView)) return fail("view_nonfinite");
     // Match the native zero-component omission, preserving unrelated has-bits.
     patch.editedAnglePresence = (patch.anglePresence & ~so::angle::AllPresent) |
         (patch.editedView.pitch != 0 ? 1u : 0u) | (patch.editedView.yaw != 0 ? 2u : 0u) |
@@ -428,7 +432,7 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
 bool AntiAimApplyMovementCommand(std::uintptr_t command, float worldYaw,
                                  std::uintptr_t analogTransition, AntiAimCommandPatch& patch,
                                  const char** reason, AntiAimCommandDiagnostics* diagnostics,
-                                 const AntiAimMovementHistory* history) noexcept {
+                                 const AntiAimMovementHistory* history, const AntiAimSettings* antiAim) noexcept {
     AntiAimSettings settings{};
     settings.yawBase = AntiAimYawBase::World;
     settings.pitchMode = AntiAimPitchMode::Keep;
@@ -436,7 +440,9 @@ bool AntiAimApplyMovementCommand(std::uintptr_t command, float worldYaw,
     if (yaw >= 180) yaw -= 360;
     if (yaw < -180) yaw += 360;
     settings.yawOffset = static_cast<float>(yaw);
-    const MovementBasis movement{worldYaw, analogTransition, history};
+    const bool combined = antiAim && antiAim->enabled;
+    if (combined) settings = *antiAim;
+    const MovementBasis movement{worldYaw, analogTransition, history, combined};
     return ApplyCommand(command, patch, settings, &movement, reason, diagnostics);
 }
 bool AntiAimApplyMovementHandoff(std::uintptr_t command, std::uintptr_t analogTransition,

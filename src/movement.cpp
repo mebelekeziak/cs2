@@ -1067,7 +1067,7 @@ bool MovementPrepare(MovementLogCallback callback) noexcept {
     Log("MOVE_BUILD_VERIFIED client=%p input=%p vtable=%p finalize=%p slot=6 timestamp=0x%lx image_size=0x%lx; match values read at command time",
         reinterpret_cast<void*>(client), reinterpret_cast<void*>(client + off::Input), reinterpret_cast<void*>(vtable),
         reinterpret_cast<void*>(method), nt.FileHeader.TimeDateStamp, nt.OptionalHeader.SizeOfImage);
-    Log("MOVE_IMPLEMENTATION revision=15 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=quantization_aware_command_basis facing=nearest_digital stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh analog_ascent_subticks=%zu quantized_subticks=1 descent_subticks=1 jumpbug=posture_capture_window", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
+    Log("MOVE_IMPLEMENTATION revision=16 legacy_wrapper=0x%llx reads=guarded_copy writes=owned_guarded_probe diagnostics=queued steering=quantization_aware_command_basis facing=nearest_digital anti_aim=pattern_reference stages=enabled pending_jump=rollback_preserves_phase ground_handoff=physical_keys replay_jump=sequence_stable replay_steering=frozen_input_refresh analog_ascent_subticks=%zu quantized_subticks=1 descent_subticks=1 jumpbug=posture_capture_window", static_cast<unsigned long long>(off::LegacyJump), AirSteeringSliceCount);
     State("awaiting command hook activation"); return true;
 }
 void MovementActivate() noexcept {

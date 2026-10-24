@@ -13,9 +13,9 @@ struct AntiAimDigitalBasis {
     bool valid = false;
 };
 // Same full-speed world wish, expressed using one of eight exact digital
-// directions. Choose the equivalent command yaw nearest the physical camera
-// (at most 22.5 degrees away), avoiding 180-degree Forward-only strafe flips.
-AntiAimDigitalBasis AntiAimChooseDigitalBasis(float physicalYaw, float wishYaw) noexcept;
+// directions. Choose the equivalent command yaw nearest the reference yaw
+// (at most 22.5 degrees away). The reference can be camera or anti-aim facing.
+AntiAimDigitalBasis AntiAimChooseDigitalBasis(float referenceYaw, float wishYaw) noexcept;
 
 // Copied command value; native positive pitch points down. Kept inside the
 // installed client's ordinary pitch bounds, away from the vertical singularity.

@@ -2,6 +2,25 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Anti aim with movement — October 24, revision 16
+
+Autostrafe and Anti aim now compose their command angles when both are
+enabled. Quantized movement keeps its ideal world-space wish and chooses the
+equivalent digital representation nearest the configured anti-aim yaw target.
+Your pitch pattern is preserved; yaw can differ by up to **22.5 degrees**
+because the movement representation must survive native quantization. Small
+yaw changes can share a representation. Anti aim off retains revision 15's
+camera-based facing. Jumpbug timing and config fields are unchanged.
+
+Restart CS2 normally, use **Load Overlay.cmd** and enable both existing options
+for the offline/private comparison. Combined in-game behavior has not yet been
+observed. See [behavior and limits](docs/MOVEMENT_REVISION16.md).
+
+Both x64 Release variants build without project warnings and pass **66/66
+CTest suites** each. Added composition tests cover all yaw/pitch modes, both
+yaw bases, sequence phases, exact movement/pitch, bounded yaw and replay/history
+restoration. Both DLLs retain zero static TLS/delay imports.
+
 ## Movement facing correction — October 24, revision 15
 
 The user reports much better movement and working jumpbug in revision 14;

@@ -171,6 +171,7 @@ bool DrawAntiAimSettings(AntiAimSettings& settings) {
     }
     ImGui::EndDisabled();
     ImGui::TextWrapped("Positive pitch looks down; negative looks up. Local view stays normal.");
+    ImGui::TextWrapped("Works with autostrafe. With movement quantization, yaw can differ by up to 22.5 degrees; pitch follows your settings.");
     if (ImGui::Button("Reset anti aim", { -1, 0 })) {
         settings = {};
         changed = true;

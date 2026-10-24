@@ -704,12 +704,7 @@ void DigitalBasisFacing() {
         !AntiAimChooseDigitalBasis(0, std::numeric_limits<float>::infinity()).valid,
         "nonfinite facing inputs do not publish a command basis");
 }
-void QuantizedMovementBasis() {
-    const auto sameWish = [](const AntiAimCommandPatch& patch, float wish) {
-        const double axisYaw = std::atan2(static_cast<double>(patch.editedLeft), patch.editedForward) * 57.29577951308232;
-        return std::abs(Wrap(static_cast<double>(patch.editedView.yaw) + axisYaw - wish)) < 0.0002f;
-    };
-    const auto prepare = [](Fixture& f, float forward = 1, float left = 0) {
+void PrepareDigitalMovement(Fixture& f, float forward = 1, float left = 0) {
         MovementButtons buttons{};
         MovementEncodeStrafe(buttons, forward, left, 0);
         buttons.down |= mo::Jump;
@@ -728,7 +723,13 @@ void QuantizedMovementBasis() {
         f.steps[0].forwardDelta = forward - 0.6f; f.steps[0].leftDelta = left - 0.2f;
         f.steps[0].presence = 0x8000001C;
         f.steps[2].button = mo::Jump; f.steps[2].pressed = true; f.steps[2].presence |= 3;
+}
+void QuantizedMovementBasis() {
+    const auto sameWish = [](const AntiAimCommandPatch& patch, float wish) {
+        const double axisYaw = std::atan2(static_cast<double>(patch.editedLeft), patch.editedForward) * 57.29577951308232;
+        return std::abs(Wrap(static_cast<double>(patch.editedView.yaw) + axisYaw - wish)) < 0.0002f;
     };
+    const auto prepare = [](Fixture& f, float forward = 1, float left = 0) { PrepareDigitalMovement(f, forward, left); };
     for (const float yaw : {37.0f, 179.9f, -180.0f, 721.25f, -1080.5f}) {
         Fixture f; prepare(f); const Fixture before = f;
         AntiAimCommandPatch patch{}; const char* reason = nullptr;
@@ -790,6 +791,10 @@ void QuantizedMovementBasis() {
         const auto transition = kind == 10 ? Address(f.steps[0]) + 8 : Address(f.steps[0]);
         Expect(!AntiAimApplyMovementCommand(Address(f.command), 62, transition, patch) && !patch.valid && Same(f, before),
                "actions non-digital fallback stale transition identity and unsupported scopes leave safe fallback untouched");
+        auto antiAim = Settings();
+        Expect(!AntiAimApplyMovementCommand(Address(f.command), 62, transition, patch, nullptr, nullptr, nullptr, &antiAim) &&
+               !patch.valid && Same(f, before),
+               "anti aim composition retains strict action and ownership rejection without invoking legacy payload relaxations");
     }
     Fixture f; prepare(f); AntiAimCommandPatch patch{};
     const Fixture before = f;
@@ -850,8 +855,88 @@ void QuantizedMovementBasis() {
         Expect(repeat, "digital fallback handoff ownership restores original planner event on every rebuild");
     }
 }
+void CombinedMovementAntiAim() {
+    bool patterns = true, wishPreserved = true, nativeHistory = true, fixedBasis = true, restoration = true;
+    unsigned combinations = 0;
+    constexpr AntiAimYawMode yawModes[]{AntiAimYawMode::Static, AntiAimYawMode::Jitter, AntiAimYawMode::Spin, AntiAimYawMode::Random};
+    constexpr AntiAimPitchMode pitchModes[]{AntiAimPitchMode::Down, AntiAimPitchMode::Up, AntiAimPitchMode::Level,
+        AntiAimPitchMode::Keep, AntiAimPitchMode::Custom, AntiAimPitchMode::Jitter};
+    for (const auto yawMode : yawModes) for (const auto yawBase : {AntiAimYawBase::View, AntiAimYawBase::World})
+    for (const auto pitchMode : pitchModes) for (int sequence : {1, 2, 8, 9, 17, 65})
+    for (float camera : {-179.9f, 35.0f}) for (float wish : {90.0f, -90.0f, 126.5f}) {
+        Fixture f; PrepareDigitalMovement(f, -1, 1);
+        Put(Address(f.command) + mo::command::Sequence, sequence);
+        const AimAngles physical{20, camera, 0};
+        Put(Address(f.angles) + so::angle::Pitch, physical);
+        const Fixture before = f;
+        auto settings = Settings(127.25f);
+        settings.yawMode = yawMode; settings.yawBase = yawBase; settings.pitchMode = pitchMode;
+        settings.jitterRange = 83; settings.jitterInterval = 8; settings.spinSpeed = 17.5f;
+        settings.pitch = 66; settings.pitchAlternate = -42;
+        AimAngles requested{};
+        const bool target = AntiAimBuildAngles(physical, settings, static_cast<std::uint32_t>(sequence), requested);
+        const AntiAimMovementHistory history{-0.75f, 1};
+        AntiAimCommandPatch patch{}; const char* reason = nullptr;
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), wish, Address(f.steps[0]), patch,
+            &reason, nullptr, &history, &settings);
+        ++combinations;
+        if (!applied) {
+            if (patterns) std::printf("composition rejected mode=%d base=%d pitch=%d sequence=%d reason=%s\n",
+                static_cast<int>(yawMode), static_cast<int>(yawBase), static_cast<int>(pitchMode), sequence, reason ? reason : "unknown");
+            patterns = false; continue;
+        }
+        patterns &= target && patch.editedView.pitch == requested.pitch &&
+            std::abs(Wrap(patch.editedView.yaw - requested.yaw)) <= 22.50002f;
+        const double decoded = patch.editedView.yaw +
+            std::atan2(static_cast<double>(patch.editedLeft), patch.editedForward) * 57.29577951308232;
+        wishPreserved &= std::abs(Wrap(decoded - wish)) < 0.0002f &&
+            std::round(patch.editedForward) == patch.editedForward && std::round(patch.editedLeft) == patch.editedLeft;
+        nativeHistory &= Near(history.forward + f.steps[0].forwardDelta, patch.editedForward) &&
+            Near(history.left + f.steps[0].leftDelta, patch.editedLeft);
+        for (const auto& step : f.steps) fixedBasis &= step.pitchDelta == 0 && step.yawDelta == 0;
+        const Fixture outgoing = f;
+        restoration &= AntiAimSetReplayView(patch, true) && f.angles == before.angles &&
+            AntiAimSetReplayView(patch, false) && Same(f, outgoing) &&
+            AntiAimRestoreCommand(patch) && Same(f, before) && AntiAimReapplyCommand(patch) && Same(f, outgoing);
+    }
+    std::printf("composition combinations=%u\n", combinations);
+    Expect(patterns, "every configured yaw/pitch pattern composes with movement using exact pitch and yaw within 22.5 degrees of its sequence target");
+    Expect(wishPreserved && nativeHistory, "composed anti aim preserves the ideal world wish and raw native predecessor handoff");
+    Expect(fixedBasis && restoration, "combined patterns retain a fixed native movement basis and exact physical-camera restore/replay");
+
+    Fixture off; PrepareDigitalMovement(off); AntiAimCommandPatch patch{};
+    auto disabled = Settings(180); disabled.enabled = false; disabled.yawMode = AntiAimYawMode::Spin;
+    const AntiAimMovementHistory initialHistory{1, -1};
+    const bool withDisabled = AntiAimApplyMovementCommand(Address(off.command), 126.5f, Address(off.steps[0]), patch,
+        nullptr, nullptr, &initialHistory, &disabled);
+    const Fixture disabledOutgoing = off;
+    const bool restored = AntiAimRestoreCommand(patch);
+    const bool withoutSettings = AntiAimApplyMovementCommand(Address(off.command), 126.5f, Address(off.steps[0]), patch,
+        nullptr, nullptr, &initialHistory);
+    Expect(withDisabled && restored && withoutSettings && Same(off, disabledOutgoing),
+        "disabled anti aim retains the exact revision 15 camera-relative representation");
+
+    bool toggles = true;
+    AntiAimMovementHistory previous{-1, 1};
+    for (int sequence = 1; sequence <= 64; ++sequence) {
+        Fixture f; PrepareDigitalMovement(f);
+        Put(Address(f.command) + mo::command::Sequence, sequence);
+        const Fixture before = f;
+        auto settings = Settings(); settings.enabled = sequence % 3 != 0;
+        settings.pitchMode = AntiAimPitchMode::Jitter; settings.pitch = 75; settings.pitchAlternate = -75;
+        settings.yawMode = AntiAimYawMode::Jitter; settings.jitterRange = 110;
+        AntiAimCommandPatch current{};
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), sequence & 1 ? 90.0f : 126.5f,
+            Address(f.steps[0]), current, nullptr, nullptr, &previous, &settings);
+        toggles &= applied && Near(previous.forward + f.steps[0].forwardDelta, current.editedForward) &&
+            Near(previous.left + f.steps[0].leftDelta, current.editedLeft);
+        previous = {current.editedForward, current.editedLeft};
+        toggles &= AntiAimRestoreCommand(current) && Same(f, before);
+    }
+    Expect(toggles, "AA on/off transitions retain raw cardinal/diagonal history and restore every command's physical input");
+}
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); DigitalBasisFacing(); QuantizedMovementBasis();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); DigitalBasisFacing(); QuantizedMovementBasis(); CombinedMovementAntiAim();
     return failures ? 1 : 0;
 }

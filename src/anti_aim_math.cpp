@@ -67,9 +67,9 @@ bool AntiAimBackwards(const AimAngles& local, AimAngles& command) noexcept {
     return true;
 }
 
-AntiAimDigitalBasis AntiAimChooseDigitalBasis(float physicalYaw, float wishYaw) noexcept {
-    if (!std::isfinite(physicalYaw) || !std::isfinite(wishYaw)) return {};
-    const double camera = Wrap(physicalYaw), wish = Wrap(wishYaw);
+AntiAimDigitalBasis AntiAimChooseDigitalBasis(float referenceYaw, float wishYaw) noexcept {
+    if (!std::isfinite(referenceYaw) || !std::isfinite(wishYaw)) return {};
+    const double camera = Wrap(referenceYaw), wish = Wrap(wishYaw);
     // Cardinal choices win exact ties. Opposite wish directions then retain
     // the same facing at sector boundaries, independently of command parity.
     constexpr float directions[][2]{{1, 0}, {0, 1}, {-1, 0}, {0, -1},

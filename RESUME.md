@@ -1,3 +1,28 @@
+# Anti aim + quantized movement, revision 16 — October 24, 2026
+
+User requests both working features together instead of movement replacing AA.
+Clean starting checkpoint f8f26f8. Shared command owner now optionally passes
+enabled AA settings into the quantized movement transaction. Generate target
+once from original physical view + command sequence, retain its exact pitch,
+then select the equivalent digital wish yaw nearest that target (<=22.5 degrees).
+Small yaw changes may share a representation. Do not feed selected absolute yaw
+back through configured View/Jitter/Spin/Random offsets; that applies them twice.
+
+AA off retains r15 physical-reference representation and pitch. Strict movement
+checks remain in force with default Static/View/180/Down; legacyPayload excludes
+all composed movement. Actions retain digital physical-view fallback. Raw native
+N-1 axes, diagonal history, publication physical view, restore/replay and fixed
+subtick basis unchanged. Jumpbug source/timing and config schema unchanged.
+
+Focused 6/6 AA suites pass, including 1,728 combined yaw/base/pitch/phase/view/wish
+cases, exact pitch/wish, bounded target yaw, replay/restore, AA on/off histories
+and strict action/ownership rejection. Both x64 Release builds are warning-free
+and pass 66/66 CTests each. Final DLLs have zero static TLS/delay imports; hashes
+in logs/movement-r16-artifacts.json. Native dependencies unchanged from prior
+33/33 static bundle. Details: docs/MOVEMENT_REVISION16.md. No launch/injection or combined
+gameplay observed. Startup movement revision=16, AA revision=8; diagnostic
+movement_anti_aim_edits counts successful compositions.
+
 # Movement facing correction, revision 15 — October 24, 2026
 
 User reports revision 14 movement and jumpbug work very well, but character

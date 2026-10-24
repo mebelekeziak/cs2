@@ -61,6 +61,7 @@ struct MovementOrientation {
 MovementOrientation finalizeScope{}, movementOrientation{};
 std::uint64_t edited = 0, rejected = 0, replayRestored = 0;
 std::uint64_t movementBasisEdits = 0, movementBasisFallbacks = 0;
+std::uint64_t movementAntiAimEdits = 0;
 std::uint64_t beginCalls = 0, finishCalls = 0, replayCalls = 0;
 std::uint64_t localIngests = 0, editedIngests = 0, physicalIngests = 0, unknownIngests = 0;
 std::uint64_t publishedCommands = 0;
@@ -259,7 +260,7 @@ bool AntiAimPrepare(AntiAimLogCallback callback) noexcept {
         State("anti aim replay hook preparation failed"); return false;
     }
     prepared = true; State("awaiting anti aim activation");
-    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=7 sequence_previous_history; nearest digital quantized movement basis; input replay slot=8; physical view/direction input retained");
+    if (logger) logger("ANTI_AIM_BUILD_VERIFIED revision=8 sequence_previous_history; quantized movement composes with configured anti aim; input replay slot=8; physical view/direction input retained");
     return true;
 }
 void AntiAimActivate(bool commandHookReady) noexcept {
@@ -373,8 +374,10 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                     const bool transform = movementRequested ? movementEnabled :
                         enabled && roundReady && ReadSource(walking, true) && walking == current && !Action(address);
                     const AntiAimMovementHistory nativeHistory{historicalForward, historicalLeft};
+                    const bool combinedMovement = movementRequested && enabled && roundReady;
                     if (transform) entry.valid = movementRequested ?
-                        AntiAimApplyMovementCommand(address, requested.yaw, requested.transition, entry.patch, &reason, &commandDiagnostics, &nativeHistory) :
+                        AntiAimApplyMovementCommand(address, requested.yaw, requested.transition, entry.patch, &reason, &commandDiagnostics, &nativeHistory,
+                            combinedMovement ? &options : nullptr) :
                         AntiAimApplyCommand(address, entry.patch, options, &reason, &commandDiagnostics);
                     const bool angleApplied = entry.valid;
                     entry.angleEdit = angleApplied;
@@ -409,10 +412,12 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                         }
                         ++edited; protectReplay = true;
                         if (movementRequested) ++movementBasisEdits;
+                        if (combinedMovement) ++movementAntiAimEdits;
                         publishedEdit = true; physicalView = entry.patch.originalView;
                         lastEditedSequence = sequence; lastOutgoingView = entry.patch.editedView;
                         lastOutgoingPresence = entry.patch.editedAnglePresence;
-                        State(movementRequested ? "quantized steering basis; local view preserved" : "configured angles; local view preserved");
+                        State(combinedMovement ? "anti aim + quantized steering; local view preserved" :
+                            movementRequested ? "quantized steering basis; local view preserved" : "configured angles; local view preserved");
                     } else if (movementRequested && entry.valid) {
                         State("quantized digital fallback; physical view retained");
                     } else if (transform || movementRequested) { ++rejected; State(reason ? reason : "unsupported command; unchanged"); }
@@ -460,7 +465,7 @@ void AntiAimFlushTelemetry() noexcept {
     char message[1664]{};
     AcquireSRWLockShared(&lock);
     std::snprintf(message, sizeof(message),
-        "ANTI_AIM revision=6 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_input_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu previous_history_reads=%llu previous_history_misses=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x movement_basis_edits=%llu movement_basis_fallbacks=%llu; mutation/ingestion evidence is not observed model facing or server receipt",
+        "ANTI_AIM revision=8 begin=%llu finish=%llu replay_calls=%llu active=%u enabled=%u edited=%llu rejected=%llu replay_input_restores=%llu state=\"%s\" command_reason=%s command_presence=0x%x base_presence=0x%x angle_presence=0x%x subticks=%d/%d allocated=%d last_edit_sequence=%d outgoing=%.3f,%.3f,%.3f outgoing_presence=0x%x publications=%llu local_ingests=%llu edited_ingests=%llu physical_ingests=%llu unknown_ingests=%llu history_known=%u boundary_edits=%llu previous_history_reads=%llu previous_history_misses=%llu last_ingest_sequence=%d ingested=%.3f,%.3f,%.3f ingested_presence=0x%x movement_basis_edits=%llu movement_basis_fallbacks=%llu movement_anti_aim_edits=%llu; mutation/ingestion evidence is not observed model facing or server receipt",
         beginCalls, finishCalls, replayCalls, active.load(std::memory_order_acquire), AntiAimGetSettings().enabled,
         edited, rejected, replayRestored, AntiAimStatus(), commandDiagnostics.reason,
         commandDiagnostics.commandPresence, commandDiagnostics.basePresence, commandDiagnostics.anglePresence,
@@ -468,7 +473,7 @@ void AntiAimFlushTelemetry() noexcept {
         lastEditedSequence, lastOutgoingView.pitch, lastOutgoingView.yaw, lastOutgoingView.roll, lastOutgoingPresence,
         publishedCommands, localIngests, editedIngests, physicalIngests, unknownIngests, ingestedBasisKnown, boundaryEdits,
         previousHistoryReads, previousHistoryMisses, lastIngestSequence,
-        lastIngestView.pitch, lastIngestView.yaw, lastIngestView.roll, lastIngestPresence, movementBasisEdits, movementBasisFallbacks);
+        lastIngestView.pitch, lastIngestView.yaw, lastIngestView.roll, lastIngestPresence, movementBasisEdits, movementBasisFallbacks, movementAntiAimEdits);
     ReleaseSRWLockShared(&lock);
     logger(message);
 }

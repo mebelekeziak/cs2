@@ -35,15 +35,19 @@ bool AntiAimApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, con
 // Atomic digital-to-command-basis upgrade. The original safe digital command
 // remains the restore payload. Exactly one time-zero analog movement event is
 // retargeted to the ideal world wish. Eight equivalent digital directions keep
-// outgoing yaw within 22.5 degrees of the physical view; pitch remains physical.
+// outgoing yaw within 22.5 degrees of its reference view.
 // Outgoing subtick camera deltas are neutralized so
 // every movement segment uses that fixed basis; original bytes are restored
 // with the same transaction. Supplying history coalesces native sequence-1
 // handoff in that event without allocation. Failure makes no semantic writes.
+// Enabled antiAim chooses the nearest equivalent yaw to that sequence's
+// configured anti-aim pattern (within 22.5 degrees), keeping its exact pitch.
+// Without enabled antiAim the reference remains the physical camera.
 bool AntiAimApplyMovementCommand(std::uintptr_t command, float worldYaw,
                                  std::uintptr_t analogTransition, AntiAimCommandPatch& patch,
                                  const char** reason = nullptr, AntiAimCommandDiagnostics* diagnostics = nullptr,
-                                 const AntiAimMovementHistory* history = nullptr) noexcept;
+                                 const AntiAimMovementHistory* history = nullptr,
+                                 const AntiAimSettings* antiAim = nullptr) noexcept;
 // Retarget the existing owned transition to the safe digital final axes from
 // native sequence-1. No allocation, angle/button/action/camera payload edits.
 // The same transaction restores this handoff before the next movement rebuild.
