@@ -37,6 +37,8 @@
 #include "third_person_settings.h"
 #include "scoped_crosshair.h"
 #include "scope_overlay.h"
+#include "viewmodel.h"
+#include "cosmetic_recoil.h"
 #include "scoped_crosshair_draw.h"
 #include "zoom.h"
 #include "model_swap.h"
@@ -278,6 +280,8 @@ void CleanupOnRenderThread(const char* reason) {
     AntiAimStop(reason);
     ThirdPersonStop(reason);
     ZoomStop(reason);
+    ViewmodelStop();
+    CosmeticRecoilStop();
     ModelSwapStop(reason);
     SkinChangerStop(reason);
     GrenadeEffectsStop();
@@ -514,6 +518,8 @@ void DrawFrame(IDXGISwapChain* chain) {
     AntiAimFlushTelemetry();
     ThirdPersonFlushTelemetry();
     ZoomFlushTelemetry();
+    ViewmodelFlushTelemetry();
+    CosmeticRecoilFlushTelemetry();
     ModelSwapFlushTelemetry();
     SkinChangerFlushTelemetry();
     MovementFlushTelemetry();
@@ -590,6 +596,8 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Anti aim: %s", AntiAimStatus());
         ImGui::Text("Camera: %s", ThirdPersonStatus());
         ImGui::Text("Scoped zoom: %s", ZoomStatus());
+        ImGui::Text("Viewmodel: %s", ViewmodelStatus());
+        ImGui::Text("Cosmetic recoil: %s", CosmeticRecoilStatus());
         ImGui::Text("Scope overlay: %s", ScopeOverlayStatus());
         ImGui::Text("Player model: %s", ModelSwapRuntimeStatus().data());
         ImGui::Text("Skins: %s", SkinRuntimeStatus().data());
@@ -710,6 +718,8 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ScopeOverlayStop();
             ScopedCrosshairStop();
             ZoomStop("stopped before selecting render chain");
+            ViewmodelStop();
+            CosmeticRecoilStop();
             ModelSwapStop("stopped before selecting render chain");
             SkinChangerStop("stopped before selecting render chain");
             GrenadeEffectsStop();
@@ -809,6 +819,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool thirdPersonPrepared = ThirdPersonPrepare(&EspLog);
     const bool zoomPrepared = ZoomPrepare(&EspLog);
+    const bool viewmodelPrepared = ViewmodelPrepare(&EspLog);
+    const bool cosmeticRecoilPrepared = CosmeticRecoilPrepare(&EspLog);
     const bool crosshairPrepared = ScopedCrosshairPrepare();
     EspLog(crosshairPrepared ? "SCOPED_CROSSHAIR_READY scoped third-person or replaced first-person views; copied native accuracy cone" :
         "SCOPED_CROSSHAIR_UNAVAILABLE accuracy/scope contract verification failed");
@@ -839,6 +851,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ScopeOverlayStop();
         ScopedCrosshairStop();
         ZoomStop("partial hook activation failure");
+        ViewmodelStop();
+        CosmeticRecoilStop();
         ModelSwapStop("partial hook activation failure");
         SkinChangerStop("partial hook activation failure");
         GrenadeEffectsStop();
@@ -862,6 +876,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (thirdPersonPrepared) ThirdPersonActivate();
     if (zoomPrepared) ZoomActivate();
+    if (viewmodelPrepared) ViewmodelActivate();
+    if (cosmeticRecoilPrepared) CosmeticRecoilActivate();
     if (scopeOverlayPrepared) ScopeOverlayActivate();
     if (modelSwapPrepared) ModelSwapActivate();
     if (skinsPrepared) SkinChangerActivate();
@@ -889,6 +905,8 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ScopeOverlayStop();
     ScopedCrosshairStop();
     ZoomStop("explicit overlay stop request");
+    ViewmodelStop();
+    CosmeticRecoilStop();
     ModelSwapStop("explicit overlay stop request");
     SkinChangerStop("explicit overlay stop request");
     GrenadeEffectsStop();

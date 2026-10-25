@@ -7,6 +7,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "viewmodel_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
@@ -123,6 +124,18 @@ int main() {
     ThirdPersonResetSettings();
     Expect(ThirdPersonGetSettings() == cameraDefaults, "camera reset restores every default including master and collision");
     const ZoomSettings zoomDefaults;
+    const ViewmodelSettings viewmodelDefaults;
+    Expect(ViewmodelGetSettings() == viewmodelDefaults, "viewmodel starts disabled with zero offsets and 68 degree FOV");
+    ViewmodelSetSettings({true, -99, 99, -999, 999});
+    Expect(ViewmodelGetSettings() == ViewmodelSettings{true, -10, 10, -10, 120},
+        "viewmodel publisher clamps all offsets and upper FOV independently");
+    Expect(ViewmodelSanitizeSettings({true, 0, 0, 0, -99}).fov == 40,
+        "viewmodel lower FOV bound is 40 degrees");
+    ViewmodelSetSettings({true, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()});
+    Expect(ViewmodelGetSettings() == ViewmodelSettings{true}, "nonfinite viewmodel fields use zero offsets and default FOV");
+    ViewmodelResetSettings();
+    Expect(ViewmodelGetSettings() == viewmodelDefaults, "viewmodel reset restores every field");
     Expect(ZoomGetSettings() == zoomDefaults && zoomDefaults.sensitivity == 100 && !zoomDefaults.removeScope,
         "scoped zoom starts disabled with weapon zoom and native scoped sensitivity defaults");
     Expect(ZoomSanitizeSettings({true, -1, 999, -1}) == ZoomSettings{true, 0, 200, 0},
@@ -145,6 +158,8 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
+    Expect(defaults.find("viewmodel.enabled=0\nviewmodel.x=0\nviewmodel.y=0\nviewmodel.z=0\nviewmodel.fov=68\n") != std::string::npos,
+        "default preset saves all disabled viewmodel controls");
     Expect(defaults.find("movement.bunnyhop=1\nmovement.autostrafe=1\nmovement.jumpbug=0\n") != std::string::npos,
         "default preset saves independent movement toggles with jumpbug disabled");
     Expect(defaults.find("grenades.removeSmoke=0\ngrenades.removeFlash=0\ngrenades.smokeAura=0\ngrenades.molotovAura=0\n") != std::string::npos &&
@@ -208,6 +223,8 @@ int main() {
     ThirdPersonSetSettings(expectedCamera);
     const ZoomSettings expectedZoom{true, 0, 137.25f, 38.25f, true};
     ZoomSetSettings(expectedZoom);
+    const ViewmodelSettings expectedViewmodel{true, 1.25f, -2.5f, 3.75f, 93.5f, true};
+    ViewmodelSetSettings(expectedViewmodel);
     const ShotLogSettings expectedShotLog{false,true};
     ShotLogSetSettings(expectedShotLog);
     ModelSwapSettings expectedModel;
@@ -257,6 +274,7 @@ int main() {
     Expect(LocalConfigLoad(first, error) && EspGetSettings() == EspSettings{} &&
         MovementGetSettings().bunnyhop && !MovementGetSettings().jumpbug && !WorldGetSettings().enabled && !SilentAimGetSettings().enabled &&
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
+        ViewmodelGetSettings() == viewmodelDefaults &&
         ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{} &&
         PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
         "load defaults across all option groups");
@@ -275,6 +293,10 @@ int main() {
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\nzoom.removeScope=1\n") != std::string::npos,
         "scoped zoom master, levels, sensitivity and scope overlay removal roundtrip");
+    Expect(ViewmodelGetSettings() == expectedViewmodel &&
+        custom.find("viewmodel.enabled=1\nviewmodel.x=1.25\nviewmodel.y=-2.5\nviewmodel.z=3.75\nviewmodel.fov=93.5\nviewmodel.removeCameraRecoil=1\n") != std::string::npos &&
+        custom.find("viewmodel.removeWeaponRecoil") == std::string::npos,
+        "viewmodel master, fractional offsets, FOV and independent camera recoil choice roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
     Expect(GrenadeGetSettings() == expectedGrenades, "grenade removals, aura toggles, both RGBA colors and width roundtrip");
     Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos &&
@@ -350,6 +372,12 @@ int main() {
         "version=1\nzoom.sensitivity=25\nzoom.sensitivity=75\n",
         "version=1\nzoom.removeScope=2\n", "version=1\nzoom.removeScope=true\n",
         "version=1\nzoom.removeScope=0\nzoom.removeScope=1\n",
+        "version=1\nviewmodel.enabled=2\n", "version=1\nviewmodel.enabled=true\n",
+        "version=1\nviewmodel.x=nan\n", "version=1\nviewmodel.y=inf\n",
+        "version=1\nviewmodel.z=-inf\n", "version=1\nviewmodel.fov=nan\n",
+        "version=1\nviewmodel.fov=80oops\n", "version=1\nviewmodel.x=1\nviewmodel.x=2\n",
+        "version=1\nviewmodel.removeCameraRecoil=2\n", "version=1\nviewmodel.removeCameraRecoil=true\n",
+        "version=1\nviewmodel.removeCameraRecoil=0\nviewmodel.removeCameraRecoil=1\n",
         "version=1\nshot_log.enabled=true\n", "version=1\nshot_log.verbose=2\n",
         "version=1\nshot_log.enabled=0\nshot_log.enabled=1\n",
         "version=1\nshot_log.verbose=0\nshot_log.verbose=1\n",
@@ -401,6 +429,7 @@ int main() {
     Expect(!SilentAimGetSettings().nativeHitchance, "older presets restore the baseline hitchance sampler");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
+    Expect(ViewmodelGetSettings() == viewmodelDefaults, "older presets without viewmodel keys restore disabled defaults");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
@@ -498,6 +527,20 @@ int main() {
     Write(badPath, "version=1\ncamera.enabled=1\ncamera.distance=999\ncamera.shoulder=-999\ncamera.height=999\ncamera.collision=0\n");
     Expect(LocalConfigLoad(bad, error) && ThirdPersonGetSettings() == ThirdPersonSettings{true, 300, -60, 60, false},
         "camera config load clamps finite values through bounded settings publisher");
+    Write(badPath, "version=1\nviewmodel.enabled=1\nviewmodel.x=-999\nviewmodel.y=999\nviewmodel.z=2.25\nviewmodel.fov=999\n");
+    Expect(LocalConfigLoad(bad, error) && ViewmodelGetSettings() == ViewmodelSettings{true, -10, 10, 2.25f, 120} &&
+        ZoomGetSettings() == zoomDefaults, "viewmodel config clamps finite values without enabling scoped zoom");
+    Write(badPath, "version=1\nviewmodel.fov=40\n");
+    Expect(LocalConfigLoad(bad, error) && ViewmodelGetSettings() == ViewmodelSettings{false, 0, 0, 0, 40},
+        "partial viewmodel config preserves disabled master and default offsets");
+    Write(badPath, "version=1\nviewmodel.removeCameraRecoil=1\n");
+    Expect(LocalConfigLoad(bad, error) && ViewmodelGetSettings() == ViewmodelSettings{false, 0, 0, 0, 68, true},
+        "camera recoil choice loads independently of viewmodel override");
+    Write(badPath, "version=1\nviewmodel.removeWeaponRecoil=1\n");
+    Expect(LocalConfigLoad(bad, error) && ViewmodelGetSettings() == viewmodelDefaults,
+        "legacy weapon recoil key is ignored without enabling camera recoil or viewmodel controls");
+    Expect(LocalConfigSave(bad, error) && Read(badPath).find("viewmodel.removeWeaponRecoil") == std::string::npos,
+        "saving a legacy preset omits the removed weapon recoil key");
     Expect(LocalConfigLoad(second, error), "restore saved preset after parse checks");
     std::filesystem::remove(badPath);
     std::filesystem::create_directory(badPath);

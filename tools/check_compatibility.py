@@ -56,6 +56,8 @@ def component_commands(game):
         ("third_person", "inspect_third_person.py", ["--client", client]),
         ("scoped_zoom", "inspect_zoom.py", ["--client", client]),
         ("scope_overlay", "inspect_scope_overlay.py", ["--client", client]),
+        ("viewmodel", "inspect_viewmodel.py", ["--client", client]),
+        ("cosmetic_recoil", "inspect_cosmetic_recoil.py", ["--client", client]),
         ("model_swap", "inspect_model_swap.py", ["--game", str(game)]),
         ("skins", "inspect_skins.py", ["--client", client]),
         ("knife_animations", "inspect_knife_animations.py", ["--client", client, "--game", str(game)]),

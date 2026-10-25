@@ -2,7 +2,7 @@
 
 Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
-Version date: October 22, 2026, 14:13:16. All **33/33** installed-file checks pass,
+Version date: October 22, 2026, 14:13:16. All **35/35** installed-file checks pass,
 including jumpbug, indexed spread, native cosmetics, knife animations and the installed skin catalog.
 These are exact-build constants. Runtime rendering/gameplay remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
@@ -306,6 +306,26 @@ client.dll; named Scoped schema, normal view wrapper and mouse dispatcher input/
 | `MouseConvertAlternate` | `0xBA7B40` |
 | `MouseInput` | `0x257D780` |
 | `MouseScale` | `0xB80FC0` |
+
+## Viewmodel position, FOV and cosmetic recoil
+
+Headers: [viewmodel_offsets.h](../include/viewmodel_offsets.h) and
+[cosmetic_recoil_offsets.h](../include/cosmetic_recoil_offsets.h). Verifiers:
+[inspect_viewmodel.py](../tools/inspect_viewmodel.py) and
+[inspect_cosmetic_recoil.py](../tools/inspect_cosmetic_recoil.py). Evidence:
+[viewmodel](../tools/CS2_VIEWMODEL_EVIDENCE.md),
+[cosmetic recoil](../tools/CS2_COSMETIC_RECOIL_EVIDENCE.md).
+
+| Contract in client.dll | RVA / member |
+| --- | --- |
+| Native caller-owned XYZ/base FOV producer | `0x8CFA30` |
+| Completed normal-mode view builder (slot 15) | `0xB9D7B0` |
+| Completed current-view viewmodel FOV | `+0x49C` |
+| Visual punch getter (camera caller-specific suppression) | `0x853C10` |
+
+Use native temporary parameter outputs; do not mutate cvars, pawn recoil,
+prediction or shot state. Scope removal obtains actual base FOV because the
+native zoom subtraction clamps to 5 degrees and cannot be reversed reliably.
 
 ## Scope overlay replacement
 

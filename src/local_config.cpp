@@ -7,6 +7,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "viewmodel_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
@@ -41,6 +42,7 @@ struct Snapshot {
     GrenadeSettings grenades;
     AimVisualizationSettings aimVisualization;
     SkinSettings skins;
+    ViewmodelSettings viewmodel;
 };
 // One explicit schema drives saving and loading, including every color channel.
 template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
@@ -79,6 +81,9 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(camera, height); FIELD(camera, collision);
     FIELD(zoom, enabled); FIELD(zoom, zoom1); FIELD(zoom, zoom2); FIELD(zoom, sensitivity);
     FIELD(zoom, removeScope);
+    FIELD(viewmodel, enabled); FIELD(viewmodel, x); FIELD(viewmodel, y);
+    FIELD(viewmodel, z); FIELD(viewmodel, fov);
+    FIELD(viewmodel, removeCameraRecoil);
     FIELD(shot_log, enabled); FIELD(shot_log, verbose);
     FIELD(model_swap, enabled); FIELD(model_swap, model);
     FIELD(player_chams, enabled); FIELD(player_chams, teammates); FIELD(player_chams, localPlayer);
@@ -207,7 +212,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
     error.clear();
     std::filesystem::path path;
     if (!FilePath(name, path, error) || !PrepareDirectory(true, error)) return false;
-    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings(), AimVisualizationGetSettings(), SkinGetSettings()};
+    Snapshot snapshot{EspGetSettings(), MovementGetSettings(), WorldGetSettings(), SilentAimGetSettings(), AntiAimGetSettings(), ThirdPersonGetSettings(), ZoomGetSettings(), ShotLogGetSettings(), ModelSwapGetSettings(), PlayerChamsGetSettings(), GrenadeGetSettings(), AimVisualizationGetSettings(), SkinGetSettings(), ViewmodelGetSettings()};
     std::ostringstream text;
     text.imbue(std::locale::classic());
     text << std::setprecision(std::numeric_limits<float>::max_digits10) << "version=1\n";
@@ -294,6 +299,7 @@ static bool LocalConfigLoadImpl(std::string_view name, std::string& error) {
     AntiAimSetSettings(snapshot.anti_aim);
     ThirdPersonSetSettings(snapshot.camera);
     ZoomSetSettings(snapshot.zoom);
+    ViewmodelSetSettings(snapshot.viewmodel);
     ShotLogSetSettings(snapshot.shot_log);
     ModelSwapSetSettings(snapshot.model_swap);
     PlayerChamsSetSettings(snapshot.player_chams);

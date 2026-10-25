@@ -6,6 +6,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "viewmodel_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
@@ -477,6 +478,55 @@ void GrenadeControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void ViewmodelControls() {
+    const auto savedEsp = EspGetSettings();
+    const auto savedCamera = ThirdPersonGetSettings();
+    const auto savedZoom = ZoomGetSettings();
+    auto disabledEsp = savedEsp;
+    disabledEsp.enabled = false;
+    EspSetSettings(disabledEsp);
+    ThirdPersonSetSettings({});
+    ZoomSetSettings({});
+    ClickControl("Viewmodel");
+    ClickControl("##ViewmodelX", 0.9f);
+    ClickControl("##ViewmodelY", 0.1f);
+    ClickControl("##ViewmodelZ", 0.9f);
+    ClickControl("##ViewmodelFov", 0.8f);
+    Expect(ViewmodelGetSettings() == ViewmodelSettings{}, "disabled viewmodel master blocks position and FOV editing");
+    ClickControl("Remove camera recoil");
+    Expect(ViewmodelGetSettings() == ViewmodelSettings{false, 0, 0, 0, 68, true},
+        "camera recoil removal works independently of viewmodel master");
+    ClickControl("Override viewmodel");
+    ClickControl("##ViewmodelX", 0.75f);
+    const auto x = ViewmodelGetSettings().x;
+    ClickControl("##ViewmodelY", 0.25f);
+    const auto y = ViewmodelGetSettings().y;
+    ClickControl("##ViewmodelZ", 0.65f);
+    const auto z = ViewmodelGetSettings().z;
+    ClickControl("##ViewmodelFov", 0.75f);
+    const auto edited = ViewmodelGetSettings();
+    Expect(edited.enabled && x > 4 && x < 6 && y < -4 && y > -6 && z > 2 && z < 4 &&
+        edited.x == x && edited.y == y && edited.z == z && edited.fov > 95 && edited.fov < 105,
+        "viewmodel sliders independently publish X, Y, Z and FOV while ESP and camera are disabled");
+    const auto labels = SubmittedMenuText();
+    Expect(labels.find("X (right)") != std::string::npos && labels.find("Y (forward)") != std::string::npos &&
+        labels.find("Z (up)") != std::string::npos && labels.find("Viewmodel FOV") != std::string::npos &&
+        labels.find("Position offsets add to CS2's normal viewmodel position.") != std::string::npos &&
+        labels.find("Removes visible camera kick only.") != std::string::npos &&
+        labels.find("Remove weapon recoil") == std::string::npos,
+        "viewmodel labels explain each axis and additive position controls");
+    ClickControl("Reset viewmodel");
+    Expect(ViewmodelGetSettings() == ViewmodelSettings{} && ZoomGetSettings() == ZoomSettings{} &&
+        !EspGetSettings().enabled && !ThirdPersonGetSettings().enabled,
+        "viewmodel reset restores its defaults independently of camera, zoom and ESP");
+    ViewmodelSetSettings(edited);
+    ClickControl("Viewmodel");
+    EspSetSettings(savedEsp);
+    ThirdPersonSetSettings(savedCamera);
+    ZoomSetSettings(savedZoom);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void ZoomControls() {
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
@@ -534,7 +584,8 @@ void ZoomControls() {
            std::strstr(labels, "0%: no zoom. 100%: weapon default. 200%: stronger zoom.") &&
            std::strstr(labels, "Zoom sensitivity") && std::strstr(labels, "0% uses unscoped sensitivity") &&
            std::strstr(labels, "100% uses CS2 native scoped sensitivity") && std::strstr(labels, "Values between blend the two.") &&
-           std::strstr(labels, "Remove scope overlay") && std::strstr(labels, "Replaces the first-person scope overlay with the custom crosshair."),
+           std::strstr(labels, "Remove scope overlay") && std::strstr(labels, "Replaces the first-person scope overlay with the custom crosshair.") &&
+           std::strstr(labels, "Keeps the viewmodel unzoomed, independently of zoom override and viewmodel controls."),
            "scoped zoom labels explain both zoom levels, sensitivity endpoints and blending");
     ImGui::LogFinish();
     ImGui::Render();
@@ -841,6 +892,7 @@ int main() {
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    ViewmodelResetSettings();
     ShotLogSetSettings({});
     PlayerChamsResetSettings();
     GrenadeResetSettings();
@@ -870,6 +922,7 @@ int main() {
            "armor click preserves other visible feature settings");
     EspAppearanceControls();
     CameraControls();
+    ViewmodelControls();
     ZoomControls();
     PlayerModelControls();
     PlayerChamsControls();
@@ -1266,6 +1319,7 @@ int main() {
     const auto savedEsp = EspGetSettings();
     const auto savedCamera = ThirdPersonGetSettings();
     const auto savedZoom = ZoomGetSettings();
+    const auto savedViewmodel = ViewmodelGetSettings();
     const auto savedAim = SilentAimGetSettings();
     const auto savedAntiAim = AntiAimGetSettings();
     const auto savedShotLog=ShotLogGetSettings();
@@ -1281,6 +1335,7 @@ int main() {
     AntiAimSetSettings({false});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    ViewmodelResetSettings();
     SilentAimSetSettings({});
     ShotLogSetSettings({});
     ModelSwapResetSettings();
@@ -1289,7 +1344,7 @@ int main() {
     SkinResetSettings();
     ClickControl("Load config");
     Expect(EspGetSettings() == savedEsp && AntiAimGetSettings() == savedAntiAim && ThirdPersonGetSettings() == savedCamera &&
-           ZoomGetSettings() == savedZoom && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
+           ZoomGetSettings() == savedZoom && ViewmodelGetSettings() == savedViewmodel && SilentAimGetSettings() == savedAim && ShotLogGetSettings()==savedShotLog &&
            ModelSwapGetSettings() == savedModel && PlayerChamsGetSettings() == savedChams && GrenadeGetSettings() == savedGrenades &&
            SkinGetSettings() == savedSkins,
            "Load button restores appearance, aim, camera, models, grenades and independent team skins");
@@ -1377,6 +1432,7 @@ int main() {
     AntiAimSetSettings({});
     ThirdPersonResetSettings();
     ZoomResetSettings();
+    ViewmodelResetSettings();
     ShotLogSetSettings({});
     ModelSwapResetSettings();
     PlayerChamsResetSettings();

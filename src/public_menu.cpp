@@ -6,6 +6,7 @@
 #include "anti_aim_settings.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
+#include "viewmodel_settings.h"
 #include "shot_log_settings.h"
 #include "model_swap_settings.h"
 #include "player_chams_settings.h"
@@ -782,6 +783,21 @@ void DrawPublicMenu() {
                     if (cameraChanged) ThirdPersonSetSettings(camera);
                     if (ImGui::Button("Reset camera", { -1, 0 })) ThirdPersonResetSettings();
                 }
+                if (ImGui::CollapsingHeader("Viewmodel", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    auto viewmodel = ViewmodelGetSettings();
+                    bool viewmodelChanged = FeatureCheckbox("Override viewmodel", viewmodel.enabled);
+                    ImGui::BeginDisabled(!viewmodel.enabled);
+                    viewmodelChanged |= slider("X (right)", "##ViewmodelX", viewmodel.x, -10, 10, "%.2f");
+                    viewmodelChanged |= slider("Y (forward)", "##ViewmodelY", viewmodel.y, -10, 10, "%.2f");
+                    viewmodelChanged |= slider("Z (up)", "##ViewmodelZ", viewmodel.z, -10, 10, "%.2f");
+                    viewmodelChanged |= slider("Viewmodel FOV", "##ViewmodelFov", viewmodel.fov, 40, 120, "%.1f degrees");
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Position offsets add to CS2's normal viewmodel position. FOV changes the weapon's perspective.");
+                    viewmodelChanged |= FeatureCheckbox("Remove camera recoil", viewmodel.removeCameraRecoil);
+                    ImGui::TextWrapped("Removes visible camera kick only. Bullet recoil and firing behavior stay unchanged.");
+                    if (viewmodelChanged) ViewmodelSetSettings(viewmodel);
+                    if (ImGui::Button("Reset viewmodel", { -1, 0 })) ViewmodelResetSettings();
+                }
                 if (ImGui::CollapsingHeader("Scoped zoom", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
                     ZoomSettings zoom = ZoomGetSettings();
                     bool zoomChanged = FeatureCheckbox("Override scoped zoom", zoom.enabled);
@@ -793,7 +809,7 @@ void DrawPublicMenu() {
                     ImGui::EndDisabled();
                     ImGui::TextWrapped("Zoom sensitivity: 0%% uses unscoped sensitivity, 100%% uses CS2 native scoped sensitivity. Values between blend the two.");
                     zoomChanged |= FeatureCheckbox("Remove scope overlay", zoom.removeScope);
-                    ImGui::TextWrapped("Replaces the first-person scope overlay with the custom crosshair. Independent of zoom override.");
+                    ImGui::TextWrapped("Replaces the first-person scope overlay with the custom crosshair. Keeps the viewmodel unzoomed, independently of zoom override and viewmodel controls.");
                     if (zoomChanged) ZoomSetSettings(zoom);
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
                 }

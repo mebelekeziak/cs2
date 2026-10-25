@@ -218,7 +218,7 @@ bool ZoomPrepare(ZoomLogCallback callback) noexcept {
     }
     prepared=true;
     status.store("scoped zoom disabled",std::memory_order_release);
-    if (logger) logger("ZOOM_BUILD_VERIFIED final view FOV; normal/alternate mouse conversion scale; six scoped weapon RTTI tables; full serialized handles; no persistent settings writes");
+    if (logger) logger("ZOOM_BUILD_VERIFIED normal override world FOV; normal/alternate mouse conversion scale; six scoped weapon RTTI tables; full serialized handles; viewmodel correction uses separate completed builder hook");
     return true;
 }
 void ZoomActivate() noexcept {

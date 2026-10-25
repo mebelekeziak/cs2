@@ -1,5 +1,16 @@
 # Scoped weapon zoom and native view FOV
 
+## Viewmodel scope removal — October 25, 2026
+
+The first attempted correction inside the normal OverrideView callback was
+overwritten by the enclosing native builder. Revision 2 moves viewmodel
+correction into the separate Viewmodel module's completed slot-15 builder hook,
+after both subsequent FOV writes and aspect conversion. The existing world
+zoom/sensitivity hooks remain in this module; they do not write viewmodel FOV.
+The user confirms the corrected scoped weapon size. See the exact native order
+and base/projection conversion in [viewmodel evidence](CS2_VIEWMODEL_EVIDENCE.md).
+Older sections below describe the original world-only implementation.
+
 ## Build 2000935 update — October 23, 2026
 
 Verified the installed Windows AMD64 **client**, patch `1.41.9.2`,

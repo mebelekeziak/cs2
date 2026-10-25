@@ -1,9 +1,13 @@
 #include "zoom.h"
 #include "zoom_offsets.h"
 #include "zoom_settings.h"
+#include "viewmodel.h"
+#include "viewmodel_settings.h"
+#include "viewmodel_offsets.h"
 #include "cs2_offsets.h"
 #include <Windows.h>
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -36,8 +40,25 @@ struct Mock {
     int viewCalls=0,baselineCalls=0;
     bool forwarded=true,nested=false,inNested=false;
     int mutation=0;
+    bool viewmodel=false;
+    bool nestedBuilder=false, insideBuilder=false;
+    float viewmodelBase=68;
+    float aspect=4.0f/3.0f;
+    unsigned char viewFlags=0;
+    int parameterMutation=0;
     HANDLE entered=nullptr,resume=nullptr;
 } mock;
+float ReferenceProjection(float fov,float aspect,unsigned char flags) {
+    if (flags&2) return fov;
+    constexpr double halfRadians=3.14159265358979323846/360.0;
+    return static_cast<float>(std::atan(std::tan(fov*halfRadians)*(aspect*.75))/halfRadians);
+}
+void NativeParameters(void* input,void* xyz,float* fov) {
+    mock.forwarded &= input==pawn.data();
+    if (xyz) std::memset(xyz,0,3*sizeof(float));
+    if (fov) *fov=mock.viewmodelBase;
+    if (mock.parameterMutation) Put(services.data(),off::ActiveWeapon,std::uint32_t{0x18006});
+}
 struct MouseCall {
     int slot=0;
     float dx=0,dy=0,scale=0,deltaTime=0;
@@ -97,7 +118,13 @@ float Baseline(void* input) {
 }
 void Native(void* input,void* output) {
     ++mock.viewCalls; mock.forwarded &= input==mode.data();
-    if (output) { std::memset(output,0xA5,view.size()); Put(output,off::ViewFov,mock.native); }
+    if (output) {
+        std::memset(output,0xA5,view.size()); Put(output,off::ViewFov,mock.native);
+        if (mock.viewmodel) {
+            Put(output,viewmodel_offsets::ViewmodelFov,ReferenceProjection(std::max(5.0f,mock.viewmodelBase-(90.0f-mock.native)),mock.aspect,mock.viewFlags));
+            Put(output,viewmodel_offsets::ViewAspect,mock.aspect);Put(output,viewmodel_offsets::ViewFlags,mock.viewFlags);
+        }
+    }
     if (mock.nested && !mock.inNested) {
         mock.inNested=true; ZoomTestView(mode.data(),nestedView.data()); mock.inNested=false;
     }
@@ -107,6 +134,20 @@ void Native(void* input,void* output) {
     if (mock.mutation==4) Put(weapon.data(),off::ZoomLevel,2);
     if (mock.mutation==5) Put(mode.data(),off::ModeSlot,1);
     if (mock.entered) { SetEvent(mock.entered); WaitForSingleObject(mock.resume,INFINITE); }
+}
+void NativeBuilder(void* input,void* output) {
+    // Actual engine order: slot16 invokes Zoom's callback, THEN the enclosing
+    // slot15 builder replaces viewmodel FOV and applies final aspect conversion.
+    ZoomTestView(input,output);
+    float xyz[3]{}, base=0;
+    ViewmodelTestParameters(pawn.data(),xyz,&base);
+    if (output) {
+        Put(output,viewmodel_offsets::ViewmodelFov,ReferenceProjection(std::max(5.0f,base-(90.0f-mock.native)),mock.aspect,mock.viewFlags));
+        Put(output,viewmodel_offsets::ViewAspect,mock.aspect);Put(output,viewmodel_offsets::ViewFlags,mock.viewFlags);
+    }
+    if (mock.nestedBuilder && !mock.insideBuilder) {
+        mock.insideBuilder=true;ViewmodelTestView(input,nestedView.data());mock.insideBuilder=false;
+    }
 }
 void Reset() {
     mock=Mock{};mouseMock=MouseMock{};pawn.fill(0);weapon.fill(0);controller.fill(0);services.fill(0);system.fill(0);
@@ -128,8 +169,13 @@ void Reset() {
     Put(mode.data(),0,client+off::ModeVtable);Put(mode.data(),off::ModeSlot,0);
     ZoomSetSettings({true,0,200});ZoomTestConfigure(client,&Native,&Baseline);
     ZoomTestConfigureMouse(&NativeMouse,&NativeMouseAlternate);
+    ViewmodelResetSettings();ViewmodelTestConfigure(client,&NativeParameters);
+    ViewmodelTestConfigureView(&NativeBuilder);
 }
-void Draw() { ZoomTestView(mode.data(),view.data()); }
+void Draw() {
+    if (mock.viewmodel) ViewmodelTestView(mode.data(),view.data());
+    else ZoomTestView(mode.data(),view.data());
+}
 void ExpectFov(float expected,const char* label) {
     Check(Near(Get<float>(view.data(),off::ViewFov),expected),label);
     auto restored=view;Put(restored.data(),off::ViewFov,mock.native);
@@ -364,11 +410,85 @@ void StopBarrier() {
     CloseHandle(mock.entered);CloseHandle(mock.resume);mock.entered=mock.resume=nullptr;
     Draw();ExpectFov(40,"callbacks arriving after stop keep forwarding native");
 }
+void ScopedViewmodel() {
+    // Model the verified lossy minimum clamp; reversing its delta gives the
+    // wrong answer for a 15-degree second zoom, so assert the true base FOV.
+    for (const auto table:off::ScopedWeaponVtables) for (int level:{1,2})
+        for (bool worldOverride:{false,true}) for (bool custom:{false,true}) {
+            Reset();mock.viewmodel=true;mock.native=level==1?40.0f:15.0f;
+            Put(weapon.data(),0,client+table);Put(weapon.data(),off::ZoomLevel,level);
+            ZoomSetSettings({worldOverride,0,200,100,true});
+            if (custom) ViewmodelSetSettings({true,2,3,4,95});
+            const auto before=SnapshotSource();
+            Draw();
+            const float selected=custom?95.0f:68.0f;
+            Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),selected),
+                "scope removal keeps actual base viewmodel FOV at both levels and every supported class");
+            float world=mock.native;
+            if (worldOverride) ZoomComputeFov(90,mock.native,level==1?0.0f:200.0f,world);
+            Check(Near(Get<float>(view.data(),off::ViewFov),world),"viewmodel zoom removal preserves independent world magnification");
+            auto actual=view;Put(actual.data(),off::ViewFov,mock.native);
+            Put(actual.data(),viewmodel_offsets::ViewmodelFov,std::max(5.0f,mock.viewmodelBase-(90.0f-mock.native)));
+            View expected{};expected.fill(0xA5);Put(expected.data(),off::ViewFov,mock.native);
+            Put(expected.data(),viewmodel_offsets::ViewmodelFov,std::max(5.0f,mock.viewmodelBase-(90.0f-mock.native)));
+            Put(expected.data(),viewmodel_offsets::ViewAspect,mock.aspect);Put(expected.data(),viewmodel_offsets::ViewFlags,mock.viewFlags);
+            Check(actual==expected && SnapshotSource()==before,"only current world/viewmodel projection bytes change; source and opaque bytes preserved");
+            Check(mock.baselineCalls==(worldOverride?1:0),"scope removal alone does not invoke the world FOV baseline");
+        }
+    for (int mutation:{0,1,2,3,4,5,6,7}) {
+        Reset();mock.viewmodel=true;mock.native=15;
+        ZoomSetSettings({true,0,0,100,true});
+        if (mutation==0) ZoomSetSettings({false,100,100,100,false});
+        else if (mutation<=5) mock.mutation=mutation;
+        else if (mutation==6) mock.parameterMutation=1;
+        else ViewmodelStop();
+        Draw();
+        Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),5),
+            "disabled, stale, switched, nonprimary or stopped viewmodel source retains native scoped projection");
+    }
+    Reset();mock.viewmodel=true;mock.native=15;mock.viewmodelBase=std::numeric_limits<float>::quiet_NaN();
+    ZoomSetSettings({false,100,100,100,true});Draw();
+    Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),5),"invalid native base cannot overwrite current viewmodel projection");
+    for (float aspect:{1.0f,4.0f/3.0f,16.0f/9.0f,21.0f/9.0f}) for (unsigned char flags:std::array<unsigned char,3>{0,2,4}) {
+        Reset();mock.viewmodel=true;mock.native=15;mock.aspect=aspect;mock.viewFlags=flags;
+        ZoomSetSettings({false,100,100,100,true});Draw();
+        Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),ReferenceProjection(68,aspect,flags)),
+            "unzoomed viewmodel preserves native aspect projection and exact skip flag across display ratios");
+    }
+    for (float aspect:{0.0f,-1.0f,std::numeric_limits<float>::infinity()}) {
+        Reset();mock.viewmodel=true;mock.aspect=aspect;
+        ZoomSetSettings({false,100,100,100,true});Draw();
+        Check(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov)==ReferenceProjection(18,aspect,0),
+            "invalid resolved aspect retains native viewmodel output");
+    }
+    Reset();mock.viewmodel=true;mock.native=15;mock.nestedBuilder=true;
+    ViewmodelSetSettings({true,0,0,0,95});ZoomSetSettings({false,100,100,100,true});Draw();
+    Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),95) &&
+        Near(Get<float>(nestedView.data(),viewmodel_offsets::ViewmodelFov),5),
+        "completed outer builder keeps selected FOV; nested builder retains native parameters/projection");
+    Reset();mock.viewmodel=true;mock.native=15;
+    ViewmodelSetSettings({true,0,0,0,95});ZoomSetSettings({});Draw();
+    Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),20),
+        "scope removal off preserves native scoped reduction of custom base FOV");
+    Reset();mock.viewmodel=true;mock.native=15;
+    ZoomSetSettings({false,100,100,100,true});
+    mock.entered=CreateEventW(nullptr,TRUE,FALSE,nullptr);mock.resume=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    std::atomic<bool> stopStarted{false},stopReturned{false};
+    std::thread render([] { Draw(); });
+    Check(WaitForSingleObject(mock.entered,3000)==WAIT_OBJECT_0,"native builder entered before viewmodel stop");
+    std::thread stopper([&] { stopStarted=true;ViewmodelStop();stopReturned=true; });
+    while (!stopStarted.load()) SwitchToThread();
+    Sleep(20);Check(!stopReturned.load(),"viewmodel stop drains complete builder including nested native parameter work");
+    SetEvent(mock.resume);render.join();stopper.join();
+    CloseHandle(mock.entered);CloseHandle(mock.resume);mock.entered=mock.resume=nullptr;
+    Draw();Check(Near(Get<float>(view.data(),viewmodel_offsets::ViewmodelFov),5) && stopReturned.load(),
+        "stopped builder retains native forwarding without stale projection writes");
+}
 }
 int main() {
     clientMemory=static_cast<unsigned char*>(VirtualAlloc(nullptr,ent::ClientImageSize,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
     if (!clientMemory) return 2;
-    client=Address(clientMemory);Math();SensitivityMath();Runtime();StopBarrier();MouseRuntime();MouseStopBarrier();
+    client=Address(clientMemory);Math();SensitivityMath();Runtime();StopBarrier();MouseRuntime();MouseStopBarrier();ScopedViewmodel();
     VirtualFree(clientMemory,0,MEM_RELEASE);
     std::printf("zoom checks: %u checks, %u failures\n",checks,failures);
     return failures?1:0;

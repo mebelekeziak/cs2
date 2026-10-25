@@ -2,6 +2,62 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Viewmodel controls and cosmetic recoil — October 25, 2026
+
+**Revision 2 follow-up:** the user found the first implementation left scoped
+viewmodels enlarged. The normal OverrideView callback runs inside the view
+builder, which subsequently overwrites viewmodel FOV twice and applies aspect
+conversion. Scope correction now runs after the complete native builder returns;
+the user confirms scoped weapon size is fixed. A regression fixture reproduces
+the real slot-16/slot-15 call order, later overwrites and final projection.
+
+The getter-only recoil implementation also left visible motion. Revision 3
+handles the separate decayed camera viewpunch addition; the user confirms
+**camera recoil removal is now fixed**. The user requested removing the weapon
+recoil option, so its control, setting, config output and HUD hooks have been
+removed. Older configs containing its retired key still load and ignore that
+key. See the [follow-up and observed limits](docs/VISUAL_RECOIL_FOLLOWUP_20261025.md).
+
+Open **Visuals → Viewmodel** and enable **Override viewmodel** for additive
+**X (right), Y (forward), Z (up)** offsets from −10 to 10 and a base
+**Viewmodel FOV** from 40 to 120 degrees. Native handedness, bob and weapon
+animation still apply. **Reset viewmodel** restores the defaults.
+
+**Remove camera recoil** removes visible camera punch, even with the position/FOV override
+disabled. This cosmetic toggle leaves bullet recoil, spread, shot angles and
+firing behavior unchanged. Camera removal also hides damage/landing impulses
+stored in the same native viewpunch contribution. Weapon firing/bolt animations
+still play; their authored motion is preserved.
+
+**Visuals → Scoped zoom → Remove scope overlay** also keeps the first-person
+viewmodel at its unzoomed base FOV, including the Scout's second zoom. It uses
+your selected viewmodel FOV when enabled and CS2's native base otherwise.
+World magnification and zoom sensitivity retain their separate controls.
+All new settings save and load through **Configs**; older presets default
+them to disabled.
+
+Use the existing **Load Overlay.cmd** workflow after a normal CS2 restart if
+an older DLL is resident. Stopped code remains resident until process exit.
+Native evidence and file-only checks are documented in
+[viewmodel evidence](tools/CS2_VIEWMODEL_EVIDENCE.md) and
+[cosmetic recoil evidence](tools/CS2_COSMETIC_RECOIL_EVIDENCE.md). The agent performed
+no live client/server trial; the scoped-size confirmation above comes from
+the user's offline/private comparison.
+
+Both public and diagnostic x64 Release builds succeed without project compiler
+warnings; each passes **70/70 CTest suites**. The expanded scoped-view suite
+passes **2,015 checks**, viewmodel callbacks **105**, and camera recoil **201**,
+including source changes, nested callbacks, output preservation and cooperative
+stop. All **35/35 installed-file compatibility checks** pass. Both DLLs retain zero static
+TLS and delay imports. Normal and narrow software D3D11 menu previews were
+visually checked. These results do not establish live client appearance.
+
+Standalone menu preview (no CS2 launch):
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\viewmodel-menu.bmp 24 100000
+```
+
 ## Miss investigation and native sampling — October 25, 2026
 
 Normal indexed shots now retain their first published aim and saved firing
