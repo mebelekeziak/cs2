@@ -2,6 +2,45 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Cosmetic bullet tracers — October 25, 2026
+
+Open **Visuals → Bullet tracers → Visualize tracers**. Choose **Solid**, **Laser**
+or **Plasma**, RGBA color, glow and its strength, **0.1–10 seconds** duration,
+**0.5–8 pixels** width, fade out and optional impact markers. **Origin offset**
+(0–16 units) shifts the drawn start right/down/forward toward an approximate
+muzzle so stationary first-person shots remain visible; zero uses the saved eye.
+The appearance
+preview responds immediately; **Reset tracers** restores disabled defaults.
+All options save/load through **Configs**, and older presets keep tracers off.
+
+These are overlay material styles with a layered glow halo. Local observed
+bullet impacts define the endpoints; each fire event saves the validated local
+scene eye at delivery as its approximate origin. This is not an exact muzzle
+or server shot-origin reconstruction. Multiple impacts from penetration or
+pellets remain visible; rapid overlapping shots use the latest fire origin
+within a 500 ms association window. Paths are straight overlay segments and
+do not perform world occlusion or light the scene. Aim, ESP and Shot logging
+can all be disabled independently. No new native hooks or offsets are added.
+
+Storage is bounded to 128 segments. Disabling tracers, invalid/stale source,
+local death/respawn, pawn replacement, round/map/disconnect transitions and
+cooperative stop clear the history. Drawing uses copied values and clips at
+the camera and viewport edges. Stopped code remains resident until process exit.
+
+Use the existing normal restart and **Load Overlay.cmd** workflow for an
+offline/private comparison. No client/server trial was performed for this
+feature. Standalone software D3D11 menu preview (no CS2 launch):
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\tracers-menu.bmp 25 460
+```
+
+Both x64 Release variants build without project compiler warnings and pass
+**72/72 CTest suites each**, including **89 tracer checks** and **157 shot-feed
+checks**. All **36/36 installed-file compatibility checks** pass. Both DLLs
+retain zero static TLS and delay imports. Normal/narrow menu previews were
+visually inspected; these checks do not establish live in-game appearance.
+
 ## Native replay and ordinary takeoff guard — October 25
 
 The completed revision-8 capture reproduces all 170 comparable Scout impact

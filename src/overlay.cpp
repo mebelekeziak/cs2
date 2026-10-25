@@ -40,6 +40,7 @@
 #include "scope_overlay.h"
 #include "viewmodel.h"
 #include "cosmetic_recoil.h"
+#include "bullet_tracers.h"
 #include "scoped_crosshair_draw.h"
 #include "zoom.h"
 #include "model_swap.h"
@@ -576,6 +577,11 @@ void DrawFrame(IDXGISwapChain* chain) {
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
     GrenadeVisualsDraw(players.worldToClip, players.matrixValid, io.DisplaySize.x, io.DisplaySize.y);
+    if (foreground) {
+        const auto tracerNow = GetTickCount64();
+        BulletTracerDraw(BulletTracerCapture(tracerNow), players, io.DisplaySize.x, io.DisplaySize.y,
+            tracerNow, BulletTracerGetSettings());
+    }
     const auto aimSettings = SilentAimGetSettings();
     if (foreground && aimSettings.enabled)
         AimVisualizationDraw(AimVisualizationCapture(GetTickCount64(), &aimSettings), players,

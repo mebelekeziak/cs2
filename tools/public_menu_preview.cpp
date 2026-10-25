@@ -13,6 +13,7 @@
 #include <imgui_internal.h>
 #include <imgui_impl_dx11.h>
 #include "public_menu.h"
+#include "bullet_tracers.h"
 #include "aim_visualization.h"
 #include "third_person_settings.h"
 #include "zoom_settings.h"
@@ -80,14 +81,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls.\n");
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu, 19=T knife, 20=CT knife, 21=T weapons, 22=CT gloves] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls; 25 shows bullet tracers.\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu, 19=T knife, 20=CT knife, 21=T weapons, 22=CT gloves, 23=CT knife details, 24=Viewmodel controls, 25=Bullet tracers] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 24 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 24 (24=Viewmodel controls).\n");
+    if (selectedTab < 0 || selectedTab > 25 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 25 (24=Viewmodel controls, 25=Bullet tracers).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -148,6 +149,7 @@ int wmain(int argc, wchar_t** argv) {
     if (selectedTab == 6) ThirdPersonSetSettings({true});
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50, true});
     if (selectedTab == 24) ViewmodelSetSettings({true, 2, -1, 1, 90});
+    if (selectedTab == 25) BulletTracerSetSettings({true, BulletTracerMaterial::Plasma, {.3f, .75f, 1, 1}, true, .75f, 2.5f, 3, true, true});
     if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
     if (selectedTab >= 19 && selectedTab <= 23) {
         SkinSettings skins;
@@ -246,16 +248,16 @@ int wmain(int argc, wchar_t** argv) {
         if (frame == 0) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu) {
-                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab == 24 ? 0 : selectedTab >= 19 ? 6 : selectedTab >= 13 ? 0 : selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
-                if (((selectedTab >= 6 && selectedTab <= 8) || (selectedTab >= 13 && selectedTab <= 18) || selectedTab == 24) && !menu->DC.ChildWindows.empty()) {
+                menu->StateStorage.SetInt(menu->GetID("##SelectedCategory"), selectedTab >= 24 ? 0 : selectedTab >= 19 ? 6 : selectedTab >= 13 ? 0 : selectedTab >= 9 ? 4 : selectedTab >= 6 ? 0 : static_cast<int>(selectedTab));
+                if (((selectedTab >= 6 && selectedTab <= 8) || (selectedTab >= 13 && selectedTab <= 18) || selectedTab >= 24) && !menu->DC.ChildWindows.empty()) {
                     auto* child = menu->DC.ChildWindows[0];
-                    child->StateStorage.SetInt(child->GetID(selectedTab == 24 ? "Viewmodel" : selectedTab == 15 ? "Grenades" : selectedTab >= 13 ? "Player chams" : selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
+                    child->StateStorage.SetInt(child->GetID(selectedTab == 25 ? "Bullet tracers" : selectedTab == 24 ? "Viewmodel" : selectedTab == 15 ? "Grenades" : selectedTab >= 13 ? "Player chams" : selectedTab == 6 ? "Camera" : selectedTab == 7 ? "Scoped zoom" : "Player model"), 1);
                     child->StateStorage.SetInt(child->GetID("Live preview"), 0);
                 }
             }
         }
         if ((frame == 1 || (frame == 2 && selectedTab >= 19)) &&
-            (scroll || selectedTab == 8 || selectedTab == 24 || (selectedTab >= 9 && selectedTab <= 18))) {
+            (scroll || selectedTab == 8 || selectedTab >= 24 || (selectedTab >= 9 && selectedTab <= 18))) {
             ImGuiWindow* menu = ImGui::FindWindowByName("##PublicMenu");
             if (menu && !menu->DC.ChildWindows.empty())
                 ImGui::SetScrollY(menu->DC.ChildWindows[0], static_cast<float>(scroll ? scroll : selectedTab >= 13 ? 100000 : selectedTab >= 9 ? 550 : 100000));

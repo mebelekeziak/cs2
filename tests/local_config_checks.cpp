@@ -1,4 +1,5 @@
 #include "local_config.h"
+#include "bullet_tracers.h"
 #include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
@@ -49,6 +50,8 @@ int main() {
     std::string error;
     Expect(!MovementGetSettings().jumpbug, "jumpbug starts disabled independently of enabled bunnyhop and autostrafe");
     const GrenadeSettings grenadeDefaults;
+    const BulletTracerSettings tracerDefaults;
+    Expect(BulletTracerGetSettings() == tracerDefaults, "cosmetic tracers start disabled with documented appearance defaults");
     Expect(GrenadeGetSettings() == grenadeDefaults, "grenade removals and auras start disabled independently");
     auto invalidGrenades = grenadeDefaults;
     invalidGrenades.removeSmoke = true;
@@ -246,6 +249,8 @@ int main() {
         expectedGrenades.molotovColor[channel] = (channel + 4) / 8.0f;
     }
     GrenadeSetSettings(expectedGrenades);
+    const BulletTracerSettings expectedTracers{true, BulletTracerMaterial::Plasma, {.125f, .25f, .5f, .75f}, false, .875f, 3.25f, 4.5f, false, true, 9.25f};
+    BulletTracerSetSettings(expectedTracers);
     SkinSettings expectedSkins;
     expectedSkins.enabled = true;
     // Different sides deliberately share weapon identity but not any cosmetic
@@ -276,7 +281,8 @@ int main() {
         !AntiAimGetSettings().enabled && ThirdPersonGetSettings() == cameraDefaults && ZoomGetSettings() == zoomDefaults &&
         ViewmodelGetSettings() == viewmodelDefaults &&
         ShotLogGetSettings()==ShotLogSettings{true,false} && ModelSwapGetSettings() == ModelSwapSettings{} &&
-        PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults,
+        PlayerChamsGetSettings() == chamsDefaults && GrenadeGetSettings() == grenadeDefaults &&
+        BulletTracerGetSettings() == tracerDefaults,
         "load defaults across all option groups");
     Expect(LocalConfigLoad(second, error), "load custom preset");
     Expect(SkinGetSettings() == expectedSkins &&
@@ -299,6 +305,9 @@ int main() {
         "viewmodel master, fractional offsets, FOV and independent camera recoil choice roundtrip");
     Expect(ModelSwapGetSettings() == expectedModel, "local player model toggle and normalized resource path roundtrip");
     Expect(GrenadeGetSettings() == expectedGrenades, "grenade removals, aura toggles, both RGBA colors and width roundtrip");
+    Expect(BulletTracerGetSettings() == expectedTracers && custom.find("tracers.material=2\n") != std::string::npos &&
+        custom.find("tracers.duration=3.25\ntracers.width=4.5\ntracers.fade=0\ntracers.impactMarker=1\ntracers.originOffset=9.25\n") != std::string::npos,
+        "tracers independently roundtrip enabled, material, RGBA, glow, duration, width, fade, impact marker and origin offset");
     Expect(PlayerChamsGetSettings() == expectedChams && custom.find("player_chams.throughWalls=0\n") != std::string::npos &&
         custom.find("player_chams.style=2\n") != std::string::npos &&
         custom.find("player_chams.fresnelColor.3=0.3125\n") != std::string::npos,
@@ -403,6 +412,14 @@ int main() {
         "version=1\ngrenades.smokeColor.0=nan\n", "version=1\ngrenades.molotovColor.3=inf\n",
         "version=1\ngrenades.auraWidth=nan\n", "version=1\ngrenades.auraWidth=4oops\n",
         "version=1\ngrenades.removeSmoke=0\ngrenades.removeSmoke=1\n",
+        "version=1\ntracers.enabled=2\n", "version=1\ntracers.material=1.5\n",
+        "version=1\ntracers.color.0=nan\n", "version=1\ntracers.color.3=inf\n",
+        "version=1\ntracers.glow=true\n", "version=1\ntracers.glowStrength=nan\n",
+        "version=1\ntracers.duration=inf\n", "version=1\ntracers.width=2oops\n",
+        "version=1\ntracers.fade=2\n", "version=1\ntracers.impactMarker=true\n",
+        "version=1\ntracers.originOffset=nan\n", "version=1\ntracers.originOffset=2oops\n",
+        "version=1\ntracers.material=0\ntracers.material=2\n",
+        "version=1\naim.enabled=0\ntracers.enabled=0\ntracers.duration=nan\n",
         "version=1\nskins.enabled=2\n", "version=1\nskins.t.knife.wear=nan\n",
         "version=1\nskins.ct.weapon.127.seed=1oops\n",
         "version=1\nskins.ct.gloves.definitionIndex=1\nskins.ct.gloves.definitionIndex=2\n",
@@ -434,6 +451,7 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "older presets without player model keys clear the selection and disable override");
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
     Expect(GrenadeGetSettings() == grenadeDefaults, "older presets without grenades restore disabled removals and auras");
+    Expect(BulletTracerGetSettings() == tracerDefaults, "older presets without tracers restore all disabled appearance defaults");
     Expect(SkinGetSettings() == SkinSettings{}, "older presets clear both skin loadouts and disable overrides");
     MovementSetSettings({true, true, true});
     Write(badPath, "version=1\nmovement.bunnyhop=0\nmovement.autostrafe=0\n");
@@ -541,6 +559,16 @@ int main() {
         "legacy weapon recoil key is ignored without enabling camera recoil or viewmodel controls");
     Expect(LocalConfigSave(bad, error) && Read(badPath).find("viewmodel.removeWeaponRecoil") == std::string::npos,
         "saving a legacy preset omits the removed weapon recoil key");
+    Write(badPath, "version=1\ntracers.enabled=1\ntracers.material=99\ntracers.color.0=-2\ntracers.color.3=2\ntracers.glowStrength=99\ntracers.duration=99\ntracers.width=-2\ntracers.originOffset=99\n");
+    Expect(LocalConfigLoad(bad, error) && BulletTracerGetSettings() == BulletTracerSanitizeSettings(
+        BulletTracerSettings{true, static_cast<BulletTracerMaterial>(99), {-2, .75f, 1, 2}, true, 99, 99, -2, true, false, 99}),
+        "finite tracer config values are sanitized by their settings publisher");
+    Write(badPath, "version=1\ntracers.enabled=1\n");
+    auto enabledTracerDefaults = tracerDefaults;
+    enabledTracerDefaults.enabled = true;
+    Expect(LocalConfigLoad(bad, error) && BulletTracerGetSettings() == enabledTracerDefaults &&
+        !SilentAimGetSettings().enabled && ShotLogGetSettings() == ShotLogSettings{true, false},
+        "partial tracer preset restores appearance defaults without enabling aim or verbose logging");
     Expect(LocalConfigLoad(second, error), "restore saved preset after parse checks");
     std::filesystem::remove(badPath);
     std::filesystem::create_directory(badPath);

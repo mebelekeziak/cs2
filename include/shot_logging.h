@@ -20,4 +20,5 @@ void ShotLoggingFlushTelemetry() noexcept;
 void ShotLoggingTestReset() noexcept;
 void ShotLoggingTestClock(std::uint64_t now) noexcept;
 void ShotLoggingTestSource(std::uint32_t controller, std::uint32_t pawn) noexcept;
+void ShotLoggingTestEye(float x, float y, float z, bool valid) noexcept;
 #endif

@@ -1,4 +1,5 @@
 #include "public_menu.h"
+#include "bullet_tracers.h"
 #include "aim_visualization.h"
 #include "esp_draw.h"
 #include "movement_settings.h"
@@ -812,6 +813,34 @@ void DrawPublicMenu() {
                     ImGui::TextWrapped("Replaces the first-person scope overlay with the custom crosshair. Keeps the viewmodel unzoomed, independently of zoom override and viewmodel controls.");
                     if (zoomChanged) ZoomSetSettings(zoom);
                     if (ImGui::Button("Reset scoped zoom", { -1, 0 })) ZoomResetSettings();
+                }
+                if (ImGui::CollapsingHeader("Bullet tracers", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    auto tracers = BulletTracerGetSettings();
+                    bool tracersChanged = FeatureCheckbox("Visualize tracers", tracers.enabled);
+                    ImGui::BeginDisabled(!tracers.enabled);
+                    ImGui::TextUnformatted("Material");
+                    ImGui::SetNextItemWidth(-1);
+                    int material = static_cast<int>(tracers.material);
+                    if (ImGui::Combo("##TracerMaterial", &material, "Solid\0Laser\0Plasma\0")) {
+                        tracers.material = static_cast<BulletTracerMaterial>(material);
+                        tracersChanged = true;
+                    }
+                    tracersChanged |= color("Tracer color", "##TracerColor", tracers.color);
+                    tracersChanged |= FeatureCheckbox("Glow", tracers.glow);
+                    ImGui::BeginDisabled(!tracers.glow);
+                    tracersChanged |= slider("Glow strength", "##TracerGlow", tracers.glowStrength, 0, 1, "%.2f");
+                    ImGui::EndDisabled();
+                    tracersChanged |= slider("Duration", "##TracerDuration", tracers.duration, .1f, 10, "%.1f s");
+                    tracersChanged |= slider("Width", "##TracerWidth", tracers.width, .5f, 8, "%.1f px");
+                    tracersChanged |= slider("Origin offset", "##TracerOriginOffset", tracers.originOffset, 0, 16, "%.1f units");
+                    ImGui::SetItemTooltip("Offsets the drawn start toward the lower right of the camera. Cosmetic only; 0 uses the firing origin.");
+                    tracersChanged |= FeatureCheckbox("Fade out", tracers.fade);
+                    tracersChanged |= FeatureCheckbox("Impact marker", tracers.impactMarker);
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Local shot overlay. Works independently of Aim and Shot logging.");
+                    if (tracersChanged) BulletTracerSetSettings(tracers);
+                    BulletTracerDrawPreview(std::max(1.0f, ImGui::GetContentRegionAvail().x), 90, tracers);
+                    if (ImGui::Button("Reset tracers", { -1, 0 })) BulletTracerResetSettings();
                 }
                 DrawPlayerModel();
                 if (ImGui::CollapsingHeader("Grenades", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {

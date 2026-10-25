@@ -1,5 +1,6 @@
 #include "shot_logging.h"
 #include "shot_events.h"
+#include "bullet_tracers.h"
 #include "shot_log_settings.h"
 #include "movement_telemetry.h"
 #include <cstdio>
@@ -118,6 +119,8 @@ void Start(bool enabled = true, bool deferredRegistration = false) {
     captureFromSink = captureCompleted = false;
     prepareCalls = activateCalls = pumpCalls = stopCalls = flushCalls = 0;
     ShotLogSetSettings({enabled, false});
+    BulletTracerSetSettings({});
+    ShotLoggingTestEye(10, 20, 64, true);
     ShotLoggingTestClock(1000); ShotLoggingTestSource(LocalController, LocalPawn);
     Expect(ShotLoggingPrepare(Sink), "verified native adapter prepares the runtime");
     ShotLoggingActivate(); ShotLoggingPump();
@@ -534,6 +537,56 @@ void TestDamagePredictionOutput() {
     Expect(Has("| predicted unknown | actual 40 (target)") && Has("predicted_valid=0 predicted_damage=0.000"),
         "unavailable damage model cannot publish a numerical prediction beside a confirmed hurt");
 }
+void TestCosmeticTracerFeed() {
+    const auto start = [] {
+        Start(false);
+        auto settings = BulletTracerGetSettings(); settings.enabled = true;
+        BulletTracerSetSettings(settings);
+    };
+    start();
+    Deliver(Fire());
+    ShotLoggingTestEye(30, 40, 70, true);
+    Deliver(Impact());
+    auto frame = BulletTracerCapture(1020);
+    Expect(frame.count == 1 && frame.pawn == LocalPawn && frame.segments[0].start.x == 10 &&
+        frame.segments[0].start.y == 20 && frame.segments[0].start.z == 64 && frame.segments[0].end.x == 200,
+        "cosmetic tracers consume manual fire with logging disabled and retain the event-time fire eye as the player moves");
+    Deliver(Impact());
+    Expect(BulletTracerCapture(1020).count == 1 && Count("AIM_SHOT #") == 0 && ShotLogGetCounters().fires == 0,
+        "duplicate impact deliveries cannot duplicate tracers or enable shot logging");
+    auto remote = Impact(1030, 3); remote.actor = Victim(); Deliver(remote);
+    Expect(BulletTracerCapture(1030).count == 1, "nonlocal impacts cannot enter the cosmetic tracer feed");
+
+    ShotLoggingTestEye(0, 0, 0, false); ShotLoggingTestClock(1040); ShotLoggingPump();
+    Expect(BulletTracerCapture(1040).count == 0, "invalid or dead local eye clears cosmetic tracers immediately");
+    ShotLoggingTestEye(10, 20, 64, true); Deliver(Impact(1050, 4));
+    Expect(BulletTracerCapture(1050).count == 0, "restoring local eye cannot resurrect an invalidated pending fire");
+
+    start(); Deliver(Fire()); Deliver(Impact());
+    ShotLoggingTestSource(UINT32_MAX, UINT32_MAX); ShotLoggingTestClock(1030); ShotLoggingPump();
+    Expect(BulletTracerCapture(1030).count == 0, "tracers clear on transient local-source loss without waiting for tracker late-event grace");
+
+    start(); Deliver(Fire()); Deliver(Impact());
+    ShotNativeEvent reset{}; reset.kind = ShotNativeEventKind::RoundStart; reset.receiptMs = 1030;
+    Deliver(reset);
+    Expect(BulletTracerCapture(1030).count == 0, "round lifecycle reset clears cosmetic tracers while logging is disabled");
+    Deliver(Impact(1040, 4));
+    Expect(BulletTracerCapture(1040).count == 0, "a late impact after lifecycle reset cannot reuse the preceding fire origin");
+
+    start(); Deliver(Fire()); Deliver(Impact());
+    ShotLoggingTestSource(LocalController, LocalPawn + 0x8000); ShotLoggingTestClock(1030); ShotLoggingPump();
+    Expect(BulletTracerCapture(1030).count == 0, "full serialized pawn replacement clears old cosmetic tracer segments");
+
+    start(); ShotLoggingTestEye(0, 0, 0, false); Deliver(Fire());
+    ShotLoggingTestEye(10, 20, 64, true); Deliver(Impact());
+    Expect(BulletTracerCapture(1020).count == 0, "fire without a validated local eye cannot invent a tracer origin at impact");
+
+    start(); Deliver(Fire()); Deliver(Impact());
+    injectDuringStop = true; ShotLoggingTestClock(1030); ShotLoggingStop("cosmetic tracer stop");
+    Deliver(Fire(1040, 4)); Deliver(Impact(1050, 5));
+    Expect(BulletTracerCapture(1050).count == 0, "cooperative stop drains and clears tracer data and rejects later resident callbacks");
+    BulletTracerSetSettings({});
+}
 }
 
 bool ShotEventsPrepare(ShotEventsLogCallback, ShotEventsValueCallback callback) noexcept {
@@ -570,6 +623,7 @@ int main() {
     TestPublicationAndImpactEvidenceOutput();
     TestWithdrawnPublications();
     TestDamagePredictionOutput();
+    TestCosmeticTracerFeed();
     captureFromSink = false;
     ShotLoggingStop("test complete");
     ShotLogSetSettings({});

@@ -1,11 +1,14 @@
 #include "shot_logging.h"
 #include "shot_log_settings.h"
 #include "shot_events.h"
+#include "bullet_tracers.h"
 #include "cs2_offsets.h"
+#include "silent_aim_target_offsets.h"
 #include "movement_memory.h"
 #include "movement_telemetry.h"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -23,6 +26,8 @@ bool sourceSeen = false;
 bool testClock = false;
 std::uint64_t testNow = 0;
 ShotLogSource testSource{};
+EspVec3 testEye{};
+bool testEyeValid = false;
 #endif
 std::uint64_t Now() noexcept {
 #ifdef CS2_SHOT_LOGGING_CHECKS
@@ -58,12 +63,64 @@ ShotLogSource Local() noexcept {
         !Read(pawn + off::C_BasePlayerPawn::m_hController, reverse) || reverse != result.controller) return {};
     return result;
 }
+bool TracerEye(EspVec3& eye) noexcept {
+#ifdef CS2_SHOT_LOGGING_CHECKS
+    if (testClock) {
+        eye = testEye;
+        return testEyeValid && testSource.controller == source.controller && testSource.pawn == source.pawn &&
+            source.controller != UINT32_MAX && source.pawn != UINT32_MAX;
+    }
+#endif
+    namespace off = cs2_offsets;
+    const auto local = Local();
+    if (local.controller != source.controller || local.pawn != source.pawn || local.pawn == UINT32_MAX) return false;
+    std::uintptr_t pawn = 0, scene = 0, sceneAfter = 0;
+    int health = 0;
+    unsigned char life = 1, dormant = 1;
+    EspVec3 origin{}, angles{}, offset{};
+    float scale = 0;
+    const auto vector = [](const EspVec3& value) noexcept {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z) &&
+            std::abs(value.x) < 1000000 && std::abs(value.y) < 1000000 && std::abs(value.z) < 1000000;
+    };
+    if (!Read(client + off::globals::dwLocalPlayerPawn, pawn) || !pawn ||
+        !Read(pawn + off::C_BaseEntity::m_iHealth, health) || health <= 0 || health > 1000 ||
+        !Read(pawn + off::C_BaseEntity::m_lifeState, life) || life != 0 ||
+        !Read(pawn + off::C_BaseEntity::m_pGameSceneNode, scene) || !scene ||
+        !Read(scene + off::CGameSceneNode::m_bDormant, dormant) || dormant != 0 ||
+        !Read(scene + off::CGameSceneNode::m_vecAbsOrigin, origin) || !vector(origin) ||
+        !Read(scene + off::CGameSceneNode::m_angAbsRotation, angles) || !vector(angles) ||
+        !Read(scene + off::CGameSceneNode::m_flAbsScale, scale) || !std::isfinite(scale) || scale <= 0 || scale > 100 ||
+        !Read(pawn + silent_aim_target_offsets::ViewOffset, offset) || !vector(offset)) return false;
+    // Same verified scene-eye transform as target acquisition. This is the eye
+    // at event delivery, an approximation rather than native shot/muzzle origin.
+    constexpr float radians = 0.01745329251994329577f;
+    const float sp = std::sin(angles.x * radians), cp = std::cos(angles.x * radians);
+    const float sy = std::sin(angles.y * radians), cy = std::cos(angles.y * radians);
+    const float sr = std::sin(angles.z * radians), cr = std::cos(angles.z * radians);
+    eye = {
+        origin.x + scale * (cp * cy * offset.x + (sp * sr * cy - cr * sy) * offset.y + (sp * cr * cy + sr * sy) * offset.z),
+        origin.y + scale * (cp * sy * offset.x + (sp * sr * sy + cr * cy) * offset.y + (sp * cr * sy - sr * cy) * offset.z),
+        origin.z + scale * (-sp * offset.x + sr * cp * offset.y + cr * cp * offset.z)};
+    const auto after = Local();
+    return vector(eye) && after.controller == local.controller && after.pawn == local.pawn &&
+        Read(pawn + off::C_BaseEntity::m_pGameSceneNode, sceneAfter) && sceneAfter == scene &&
+        Read(pawn + off::C_BaseEntity::m_iHealth, health) && health > 0 && health <= 1000 &&
+        Read(pawn + off::C_BaseEntity::m_lifeState, life) && life == 0;
+}
+void RefreshTracer(std::uint64_t now) noexcept {
+    if (!BulletTracerGetSettings().enabled) return;
+    EspVec3 eye{};
+    const bool valid = TracerEye(eye);
+    BulletTracerSource(generation, source.pawn, eye, valid, now);
+}
 void Reset(std::uint32_t controller, std::uint32_t pawn, std::uint64_t now) noexcept {
     if (!++generation) ++generation;
     source = {generation, controller, pawn};
     sourceSeen = controller != UINT32_MAX && pawn != UINT32_MAX;
     lastSourceMs = now;
     ShotLogReset(source, now);
+    BulletTracerClear();
 }
 void Adopt(std::uint32_t controller, std::uint32_t pawn, std::uint64_t now) noexcept {
     if (source.controller != controller || source.pawn != pawn) Reset(controller, pawn, now);
@@ -89,6 +146,8 @@ void Observe(const ShotNativeEvent& event) {
     switch (event.kind) {
     case ShotNativeEventKind::WeaponFire:
         if (Ours(event.actor, event.receiptMs)) {
+            RefreshTracer(event.receiptMs);
+            BulletTracerEvent(event);
             ShotLogFire fire{};
             fire.source = source; fire.receiptMs = event.receiptMs; fire.deliveryId = event.deliveryId;
             Copy(fire.weapon, event.weapon);
@@ -96,8 +155,11 @@ void Observe(const ShotNativeEvent& event) {
         }
         break;
     case ShotNativeEventKind::BulletImpact:
-        if (event.positionKnown && Ours(event.actor, event.receiptMs))
+        if (event.positionKnown && Ours(event.actor, event.receiptMs)) {
+            RefreshTracer(event.receiptMs);
+            BulletTracerEvent(event);
             ShotLogOnImpact({source, event.receiptMs, event.deliveryId, event.position});
+        }
         break;
     case ShotNativeEventKind::PlayerHurt:
         if (event.damageKnown && Ours(event.actor, event.receiptMs)) {
@@ -220,6 +282,7 @@ bool ShotLoggingPrepare(ShotLoggingCallback logger) noexcept {
     generation = 1; source = {generation, UINT32_MAX, UINT32_MAX}; lastDropCount = 0;
     sourceSeen = false; lastSourceMs = 0;
     ShotLogInitialize(source, Now());
+    BulletTracerClear();
     ReleaseSRWLockExclusive(&stateLock);
     prepared = ShotEventsPrepare(logger, &Observe);
     if (sink) sink(prepared ? "AIM_SHOT_LOG_WAITING native contracts verified; listener registration awaits the engine owner" :
@@ -251,6 +314,7 @@ void ShotLoggingPump() noexcept {
             Adopt(local.controller, local.pawn, now);
         else if (sourceSeen && now >= lastSourceMs && now - lastSourceMs > ShotLogLateGuardMs)
             Reset(UINT32_MAX, UINT32_MAX, now);
+        RefreshTracer(now);
     }
     ReleaseSRWLockExclusive(&stateLock);
 }
@@ -283,6 +347,7 @@ void ShotLoggingStop(const char* reason) noexcept {
     stopped = true;
     active.store(false, std::memory_order_release);
     ShotLogStop(Now());
+    BulletTracerClear();
     ReleaseSRWLockExclusive(&stateLock);
 }
 void ShotLoggingFlushTelemetry() noexcept {
@@ -308,4 +373,5 @@ void ShotLoggingFlushTelemetry() noexcept {
 void ShotLoggingTestReset() noexcept { stopped = false; }
 void ShotLoggingTestClock(std::uint64_t now) noexcept { testClock = true; testNow = now; }
 void ShotLoggingTestSource(std::uint32_t controller, std::uint32_t pawn) noexcept { testSource = {0, controller, pawn}; }
+void ShotLoggingTestEye(float x, float y, float z, bool valid) noexcept { testEye = {x, y, z}; testEyeValid = valid; }
 #endif
