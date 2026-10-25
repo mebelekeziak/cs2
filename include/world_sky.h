@@ -12,4 +12,8 @@ using WorldSkyTestSetter = std::uintptr_t (*)(void*, std::uint32_t, const float*
 bool WorldSkyTestConfigure(std::uintptr_t sceneBase, WorldSkyTestRender render, WorldSkyTestSetter setter) noexcept;
 std::uintptr_t WorldSkyTestDraw(void* packets, int count) noexcept;
 std::uintptr_t WorldSkyTestSet(void* collection, std::uint32_t key, const float* value, std::uintptr_t caller) noexcept;
+using WorldSkyTestLoadResource = std::uintptr_t (*)(const char* path);
+void WorldSkyTestResourceLoader(WorldSkyTestLoadResource loader) noexcept;
+void WorldSkyTestOwnerFrame() noexcept;
+void WorldSkyTestLogger(WorldSkyLogCallback callback) noexcept;
 #endif

@@ -51,6 +51,7 @@
 #include "world_settings.h"
 #include "world_postprocess.h"
 #include "world_sky.h"
+#include "world_fullbright.h"
 #include "world_materials.h"
 #include "player_chams.h"
 #include "world_lighting_switches.h"
@@ -290,6 +291,7 @@ void CleanupOnRenderThread(const char* reason) {
     GrenadeEffectsStop();
     GrenadeVisualsStop();
     WorldSkyStop(reason);
+    WorldFullbrightStop(reason);
     WorldMaterialsStop(reason);
     PlayerChamsStop(reason);
     WorldLightingSwitchesStop(reason);
@@ -528,6 +530,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     SkinChangerFlushTelemetry();
     MovementFlushTelemetry();
     WorldSkyFlushTelemetry();
+    WorldFullbrightFlushTelemetry();
     WorldMaterialsFlushTelemetry();
     PlayerChamsFlushTelemetry();
     WorldLightingSwitchesFlushTelemetry();
@@ -617,6 +620,7 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
         ImGui::Text("Grenade borders: %s", GrenadeVisualsStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());
+        ImGui::Text("Fullbright: %s", WorldFullbrightStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
         ImGui::Text("Player chams: %s", PlayerChamsStatus());
         ImGui::Text("Local light switches: %s", WorldLightingSwitchesStatus());
@@ -735,6 +739,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             GrenadeEffectsStop();
             GrenadeVisualsStop();
             WorldSkyStop("stopped before selecting render chain");
+            WorldFullbrightStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
             PlayerChamsStop("stopped before selecting render chain");
             WorldLightingSwitchesStop("stopped before selecting render chain");
@@ -841,6 +846,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool grenadeEffectsPrepared = GrenadeEffectsPrepare(&EspLog);
     const bool grenadeVisualsPrepared = GrenadeVisualsPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
+    const bool fullbrightPrepared = WorldFullbrightPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
     const bool playerChamsPrepared = PlayerChamsPrepare(&EspLog);
     const bool lightingSwitchesPrepared = WorldLightingSwitchesPrepare(&EspLog);
@@ -870,6 +876,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         GrenadeEffectsStop();
         GrenadeVisualsStop();
         WorldSkyStop("partial hook activation failure");
+        WorldFullbrightStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
         PlayerChamsStop("partial hook activation failure");
         WorldLightingSwitchesStop("partial hook activation failure");
@@ -897,6 +904,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (grenadeEffectsPrepared) GrenadeEffectsActivate();
     if (grenadeVisualsPrepared) GrenadeVisualsActivate();
     if (skyPrepared) WorldSkyActivate();
+    if (fullbrightPrepared) WorldFullbrightActivate();
     if (materialsPrepared) WorldMaterialsActivate();
     if (playerChamsPrepared) PlayerChamsActivate();
     if (lightingSwitchesPrepared) WorldLightingSwitchesActivate();
@@ -926,6 +934,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     GrenadeEffectsStop();
     GrenadeVisualsStop();
     WorldSkyStop("explicit overlay stop request");
+    WorldFullbrightStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");
     PlayerChamsStop("explicit overlay stop request");
     WorldLightingSwitchesStop("explicit overlay stop request");

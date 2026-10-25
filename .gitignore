@@ -4,5 +4,6 @@
 /out/
 /logs/
 /configs/
+/skyboxes/materials/
 __pycache__/
 *.pyc

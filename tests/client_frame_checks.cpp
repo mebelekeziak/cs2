@@ -26,6 +26,10 @@ void Second(void*, int) noexcept { ++secondCalls; }
 void Third(void*, int) noexcept { extraCalls.fetch_add(3); }
 void Fourth(void*, int) noexcept { extraCalls.fetch_add(4); }
 void Fifth(void*, int) noexcept { extraCalls.fetch_add(5); }
+void Sixth(void*, int) noexcept { extraCalls.fetch_add(6); }
+void Seventh(void*, int) noexcept { extraCalls.fetch_add(7); }
+void Eighth(void*, int) noexcept { extraCalls.fetch_add(8); }
+void Ninth(void*, int) noexcept { extraCalls.fetch_add(9); }
 }
 int main() {
     ClientFrameTestConfigure(base, &Native);
@@ -49,7 +53,8 @@ int main() {
     mutateOwner = false;
     ClientFrameTestDispatch(nullptr, model_swap_offsets::ApplyStage);
     Expect(nativeCalls == 15 && firstCalls == 2, "unreadable receiver forwarded without dispatch");
-    Expect(ClientFrameSubscribe(&Third) && ClientFrameSubscribe(&Fourth) && !ClientFrameSubscribe(&Fifth),
+    Expect(ClientFrameSubscribe(&Third) && ClientFrameSubscribe(&Fourth) && ClientFrameSubscribe(&Fifth) &&
+        ClientFrameSubscribe(&Sixth) && ClientFrameSubscribe(&Seventh) && ClientFrameSubscribe(&Eighth) && !ClientFrameSubscribe(&Ninth),
         "fixed subscriber capacity rejects excess without corrupting registrations");
     owner = base + model_swap_offsets::FrameVtable;
     std::array<std::thread, 4> workers;
@@ -57,7 +62,7 @@ int main() {
         for (unsigned i = 0; i < 100; ++i) ClientFrameTestDispatch(&owner, model_swap_offsets::ApplyStage);
     });
     for (auto& worker : workers) worker.join();
-    Expect(nativeCalls == 415 && firstCalls == 402 && secondCalls == 402 && extraCalls == 2800,
+    Expect(nativeCalls == 415 && firstCalls == 402 && secondCalls == 402 && extraCalls == 13200,
         "thread-local nesting state isolates simultaneous owner callbacks");
     Expect(!ClientFrameInCallback(), "owner callback scope clears on return");
     std::printf("Client frame failures: %u\n", failures.load());

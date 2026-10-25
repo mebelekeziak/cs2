@@ -63,6 +63,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(world, saturation); FIELD(world, gamma); COLOR(world, tint);
     FIELD(world, vignette); FIELD(world, sharpening); FIELD(world, skyEnabled);
     COLOR(world, skyTint); COLOR(world, skyLightingTint); FIELD(world, skyBrightness);
+    FIELD(world, customSkyboxEnabled); FIELD(world, skyboxMaterial); FIELD(world, fullbrightEnabled);
     FIELD(world, worldMaterialEnabled); FIELD(world, flatTextures); FIELD(world, lightingEnabled);
     FIELD(world, disableLocalLights); COLOR(world, localLightTint); FIELD(world, localLightBrightness);
     COLOR(world, sunLightTint); FIELD(world, sunLightBrightness); FIELD(world, ambientLightEnabled);
@@ -137,7 +138,12 @@ std::string_view Trim(std::string_view value) {
     return value.substr(first, value.find_last_not_of(" \t\r") - first + 1);
 }
 template<class T> bool Parse(std::string_view text, T& value) {
-    if constexpr (std::is_same_v<T, std::array<char, 260>>) {
+    if constexpr (std::is_same_v<T, std::array<char, 256>>) {
+        WorldSettings parsed;
+        if (!WorldSetSkyboxMaterial(parsed, text)) return false;
+        value = parsed.skyboxMaterial;
+        return true;
+    } else if constexpr (std::is_same_v<T, std::array<char, 260>>) {
         ModelSwapSettings parsed;
         if (!ModelSwapSetModel(parsed, text)) return false;
         value = parsed.model;
@@ -226,6 +232,7 @@ static bool LocalConfigSaveImpl(std::string_view name, std::string& error) {
         text << key << '=';
         if constexpr (std::is_enum_v<std::remove_cvref_t<decltype(value)>>) text << static_cast<int>(value);
         else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 260>> ||
+                           std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 256>> ||
                            std::is_same_v<std::remove_cvref_t<decltype(value)>, std::array<char, 64>>) text << value.data();
         else text << value;
         text << '\n';

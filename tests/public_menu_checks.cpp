@@ -14,6 +14,7 @@
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
+#include "skybox_catalog.h"
 #include "local_config.h"
 #include "skin_settings.h"
 #include "skin_catalog.h"
@@ -1128,8 +1129,72 @@ int main() {
     Expect(Body() && std::strstr(Body()->Name, "##WorldSettings"),
            "world tab opens separate world controls");
     Expect(!WorldGetSettings().enabled && !WorldGetSettings().skyEnabled &&
+           !WorldGetSettings().customSkyboxEnabled && !WorldGetSettings().fullbrightEnabled &&
            !WorldGetSettings().worldMaterialEnabled && !WorldGetSettings().flatTextures,
            "world effects start disabled");
+    ClickControl("##Skybox");
+    Expect(ImGui::GetCurrentContext()->OpenPopupStack.empty(), "custom skybox selector starts disabled");
+    ClickControl("Custom skybox");
+    Expect(WorldGetSettings().customSkyboxEnabled && !WorldGetSettings().skyEnabled && !WorldGetSettings().enabled,
+           "custom skybox enables independently of tint and screen grading");
+    WorldSkyboxSetRuntimeStatus("Skybox resource is unavailable; map sky retained.");
+    ImGui::NewFrame();
+    ImGui::LogToBuffer();
+    DrawPublicMenu();
+    Expect(std::strstr(ImGui::GetCurrentContext()->LogBuffer.c_str(), "Skybox resource is unavailable; map sky retained.") != nullptr,
+           "custom skybox failure feedback appears in the public menu");
+    ImGui::LogFinish();
+    ImGui::Render();
+    WorldSkyboxSetRuntimeStatus(nullptr);
+    const auto firstSky = SkyboxCatalogSnapshot()->front();
+    ClickControl("##Skybox");
+    Frame(); Frame();
+    auto& skyContext = *ImGui::GetCurrentContext();
+    const bool skyOpened = !skyContext.OpenPopupStack.empty() && skyContext.OpenPopupStack.back().Window;
+    Expect(skyOpened, "skybox selection opens through mouse input");
+    if (skyOpened) {
+        ImGuiWindow* popup = skyContext.OpenPopupStack.back().Window;
+        ClickControl("##SkyboxSearch", 0.5f, popup);
+        auto upperPath = firstSky.path;
+        for (char& c : upperPath) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        io.AddInputCharactersUTF8(upperPath.c_str());
+        Frame(); Frame();
+        const auto filteredSkies = SubmittedMenuText();
+        Expect(filteredSkies.find(firstSky.label) != std::string::npos &&
+            filteredSkies.find(SkyboxCatalogSnapshot()->at(1).label) == std::string::npos,
+            "skybox search matches native resource paths without case sensitivity");
+        const auto entryId = ImHashStr(firstSky.label.c_str(), 0, popup->GetID(firstSky.path.c_str()));
+        ClickControl(firstSky.label.c_str(), 0.5f, popup, entryId);
+    }
+    Expect(firstSky.path == WorldGetSettings().skyboxMaterial.data(), "skybox combo saves the stable native resource path");
+    ClickControl("##Skybox");
+    Frame(); Frame();
+    if (!skyContext.OpenPopupStack.empty() && skyContext.OpenPopupStack.back().Window) {
+        ImGuiWindow* popup = skyContext.OpenPopupStack.back().Window;
+        ClickControl("##SkyboxSearch", 0.5f, popup);
+        io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true);
+        Frame();
+        io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        io.AddInputCharactersUTF8("no-skybox-can-match-this-value");
+        Frame(); Frame();
+        Expect(SubmittedMenuText().find("No skyboxes match your filter.") != std::string::npos &&
+            firstSky.path == WorldGetSettings().skyboxMaterial.data(),
+            "empty skybox search results preserve the selected resource and explain the empty list");
+        ClickControl("##SkyboxSearch", 0.5f, popup);
+        io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true);
+        Frame();
+        io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        io.AddKeyEvent(ImGuiKey_Backspace, true);
+        Frame();
+        io.AddKeyEvent(ImGuiKey_Backspace, false);
+        Frame(); Frame();
+        ClickControl(firstSky.label.c_str(), 0.5f, popup,
+            ImHashStr(firstSky.label.c_str(), 0, popup->GetID(firstSky.path.c_str())));
+    }
+    ClickControl("Custom skybox");
+    Expect(!WorldGetSettings().customSkyboxEnabled && firstSky.path == WorldGetSettings().skyboxMaterial.data(),
+           "disabling custom sky preserves its selected resource");
+    ClickControl("Custom skybox");
     ClickControl("Override sky");
     Expect(WorldGetSettings().skyEnabled && !WorldGetSettings().enabled,
            "sky checkbox independently updates shared settings");
@@ -1140,10 +1205,6 @@ int main() {
     Frame();
     Frame();
     Expect(Body()->Scroll.y > 0, "mouse wheel reaches world controls below the fold");
-    // Bring the material section into view through the child's real scrolling API.
-    ImGui::SetScrollY(Body(), 190);
-    Frame();
-    Frame();
     ClickControl("Flat world textures");
     Expect(WorldGetSettings().flatTextures && WorldGetSettings().worldMaterialEnabled &&
            WorldGetSettings().skyEnabled && !WorldGetSettings().enabled,
@@ -1152,10 +1213,6 @@ int main() {
     Expect(!WorldGetSettings().flatTextures && !WorldGetSettings().worldMaterialEnabled,
            "disabling flat world textures disables its native material override");
     ClickControl("Flat world textures");
-    // Bring the screen grading master into view without changing native effects.
-    ImGui::SetScrollY(Body(), 380);
-    Frame();
-    Frame();
     ClickControl("Enable color grading");
     Expect(WorldGetSettings().enabled && WorldGetSettings().skyEnabled && WorldGetSettings().worldMaterialEnabled,
            "color grading checkbox changes its shared setting independently");
@@ -1170,6 +1227,14 @@ int main() {
     Frame();
     Expect(Body() && std::strstr(Body()->Name, "##LightingSettings"),
            "lighting tab opens native lighting controls");
+    ClickControl("Fullbright");
+    Expect(WorldGetSettings().fullbrightEnabled && !WorldGetSettings().lightingEnabled &&
+           WorldGetSettings().customSkyboxEnabled && firstSky.path == WorldGetSettings().skyboxMaterial.data(),
+           "fullbright enables independently of lighting master and preserves sky selection");
+    ClickControl("Fullbright");
+    Expect(!WorldGetSettings().fullbrightEnabled && !WorldGetSettings().lightingEnabled,
+           "fullbright disables independently through mouse input");
+    ClickControl("Fullbright");
     ClickControl("Disable local lights");
     Expect(!WorldGetSettings().disableLocalLights, "disabled lighting master blocks local-light control");
     ClickControl("Add ambient light");
@@ -1227,7 +1292,7 @@ int main() {
     Frame(); Frame();
     ClickControl("Reset lighting");
     const auto lightReset = WorldGetSettings();
-    Expect(!lightReset.lightingEnabled && !lightReset.ambientLightEnabled && lightReset.ambientLightBrightness == 0.25f &&
+    Expect(!lightReset.fullbrightEnabled && !lightReset.lightingEnabled && !lightReset.ambientLightEnabled && lightReset.ambientLightBrightness == 0.25f &&
            lightReset.ambientLightTint[0] == 1 && lightReset.ambientLightTint[1] == 1 && lightReset.ambientLightTint[2] == 1 &&
            !lightReset.disableLocalLights && lightReset.localLightBrightness == 1 &&
            lightReset.localLightTint[0] == 1 && lightReset.localLightTint[1] == 1 && lightReset.localLightTint[2] == 1 &&
@@ -1235,9 +1300,11 @@ int main() {
            lightReset.sunLightBrightness == 1 && lightReset.directionalLightmapsMode == 0 &&
            lightReset.skyEnabled && lightReset.skyBrightness == 2 && lightReset.skyTint[1] == 0.3f &&
            lightReset.enabled && lightReset.exposureEv == 1.25f && lightReset.saturation == 0.4f && lightReset.tint[0] == 0.6f &&
-           lightReset.worldMaterialEnabled && lightReset.flatTextures,
+           lightReset.worldMaterialEnabled && lightReset.flatTextures && lightReset.customSkyboxEnabled &&
+           firstSky.path == lightReset.skyboxMaterial.data(),
            "lighting reset restores its controls while preserving other world effects");
     altered = lightReset;
+    altered.fullbrightEnabled = true;
     altered.lightingEnabled = true;
     altered.ambientLightEnabled = true;
     altered.ambientLightBrightness = 0.4f;
@@ -1271,7 +1338,8 @@ int main() {
     Frame();
     ClickControl("Reset world visuals");
     const WorldSettings reset = WorldGetSettings();
-    Expect(!reset.enabled && !reset.skyEnabled && !reset.worldMaterialEnabled && !reset.flatTextures &&
+    Expect(!reset.enabled && !reset.skyEnabled && !reset.customSkyboxEnabled && reset.skyboxMaterial[0] == 0 &&
+           !reset.fullbrightEnabled && !reset.worldMaterialEnabled && !reset.flatTextures &&
            !reset.lightingEnabled && !reset.disableLocalLights && reset.localLightBrightness == 1 &&
            !reset.ambientLightEnabled && reset.ambientLightBrightness == 0.25f &&
            reset.ambientLightTint[0] == 1 && reset.ambientLightTint[1] == 1 && reset.ambientLightTint[2] == 1 &&
@@ -1290,6 +1358,7 @@ int main() {
     DrawPublicMenu();
     const char* worldLabels = ImGui::GetCurrentContext()->LogBuffer.c_str();
     Expect(std::strstr(worldLabels, "Sky") && std::strstr(worldLabels, "Override sky") &&
+           std::strstr(worldLabels, "Custom skybox") && std::strstr(worldLabels, "Refresh skyboxes") &&
            std::strstr(worldLabels, "Sky probe/reflections tint") && !std::strstr(worldLabels, "Sky lighting tint") &&
            std::strstr(worldLabels, "World surfaces") && std::strstr(worldLabels, "Flat world textures") &&
            !std::strstr(worldLabels, "Surface tint") && !std::strstr(worldLabels, "World material override") &&

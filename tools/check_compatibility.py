@@ -19,7 +19,7 @@ MODULES = (
     "bin/win64/cs2.exe", "csgo/bin/win64/client.dll", "csgo/bin/win64/server.dll", "bin/win64/engine2.dll",
     "bin/win64/scenesystem.dll", "bin/win64/worldrenderer.dll",
     "bin/win64/materialsystem2.dll", "bin/win64/rendersystemdx11.dll",
-    "bin/win64/animationsystem.dll", "bin/win64/tier0.dll",
+    "bin/win64/animationsystem.dll", "bin/win64/tier0.dll", "bin/win64/filesystem_stdio.dll",
     "csgo/bin/win64/host.dll", "bin/win64/resourcesystem.dll",
 )
 
@@ -81,6 +81,8 @@ def component_commands(game):
             "--server", str(game / "csgo/bin/win64/server.dll"), "--vpk", str(game / "csgo/pak01_dir.vpk"),
             "--core-vpk", str(game / "core/pak01_dir.vpk")]),
         ("sky", "verify_sky_draw.py", ["--game", str(game)]),
+        ("fullbright", "verify_fullbright.py", ["--game", str(game)]),
+        ("skybox", "verify_skybox.py", ["--game", str(game)]),
         ("materials", "verify_world_materials.py", ["--installation", str(game / "bin/win64")]),
         ("local_lighting", "verify_world_lighting.py", ["--game", str(game)]),
         ("light_switches", "verify_lighting_switches.py", ["--game", str(game)]),

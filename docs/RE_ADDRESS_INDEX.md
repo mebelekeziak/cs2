@@ -4,7 +4,9 @@ Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
 Version date: October 22, 2026, 14:13:16. All **36/36** installed-file checks pass,
 including jumpbug, indexed spread, native cosmetics, knife animations and the installed skin catalog.
-These are exact-build constants. Runtime rendering/gameplay remains unobserved.
+The October 25 skybox/Fullbright extension adds two component checks, bringing
+the combined bundle to **38**. These are exact-build constants. The user
+confirms custom skyboxes work; Fullbright currently has no visible effect.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
 
@@ -15,6 +17,18 @@ installed contract and rejects unfamiliar hashes. Detailed current evidence is
 at the top of each linked evidence file; earlier sections remain historical.
 
 ## Address conventions and installation
+
+New native cosmetics: [skybox offsets](../include/world_skybox_offsets.h),
+[verifier](../tools/verify_skybox.py), [evidence](../tools/CS2_SKYBOX_EVIDENCE.md);
+[Fullbright offsets](../include/world_fullbright_offsets.h),
+[verifier](../tools/verify_fullbright.py), [evidence](../tools/CS2_FULLBRIGHT_EVIDENCE.md).
+Skybox loading adds the installed `filesystem_stdio.dll` dependency; its primary
+table is `0x1B0CA0`, AddSearchPath slot `+0xF8` resolves `0x53BF0` with six native
+arguments. Existing named-resource and KV3 contracts retain their owners.
+Fullbright uses engine setter `0x2485A0` at return `0x243420` and client setter
+`0x16A9D0` at returns `0xE5B0E4`/`0x799718`, key `0xC6767B23`, value `1`.
+Both features change current rendering inputs and retain stopped code/resources
+until process exit. No persistent Cvar or shared sky-scene mutations are used.
 
 RVA means module-relative virtual address, never a raw file offset or a process
 absolute address. A member/slot is relative to its object/table. Keys, sizes and

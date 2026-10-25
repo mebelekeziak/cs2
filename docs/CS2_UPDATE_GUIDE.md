@@ -26,7 +26,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all thirty-six frozen verifiers independently, so
+rewrite offsets. It runs all thirty-eight frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -39,7 +39,7 @@ The bundle contains:
 - Thirty-six component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all thirty-six static checks passed; **1** means one or more
+Exit code **0** means all thirty-eight static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -139,6 +139,8 @@ listed below; the combined runner supplies the correct installation arguments.
 | Aim eye/entity source | [inspect_silent_aim_targets.py](../tools/inspect_silent_aim_targets.py) | [eye evidence](../tools/CS2_SILENT_AIM_TARGET_EVIDENCE.md) |
 | Aim named bone points | [inspect_silent_aim_hitboxes.py](../tools/inspect_silent_aim_hitboxes.py) | [bone evidence](../tools/CS2_SILENT_AIM_HITBOX_EVIDENCE.md) |
 | Sky | [verify_sky_draw.py](../tools/verify_sky_draw.py) | [sky evidence](../tools/CS2_SKY_DRAW_EVIDENCE.md) |
+| Custom skyboxes | [verify_skybox.py](../tools/verify_skybox.py) | [skybox resources/draw evidence](../tools/CS2_SKYBOX_EVIDENCE.md) |
+| Fullbright | [verify_fullbright.py](../tools/verify_fullbright.py) | [render-mode evidence](../tools/CS2_FULLBRIGHT_EVIDENCE.md) |
 | Flat world material | [verify_world_materials.py](../tools/verify_world_materials.py) | [material evidence](../tools/CS2_MATERIAL_EVIDENCE.md) |
 | Local-light radiance | [verify_world_lighting.py](../tools/verify_world_lighting.py) | [local-light evidence](../tools/CS2_LIGHTING_EVIDENCE.md) |
 | Light removal | [verify_lighting_switches.py](../tools/verify_lighting_switches.py) | [gather evidence](../tools/CS2_ENV_LIGHT_EVIDENCE.md) |

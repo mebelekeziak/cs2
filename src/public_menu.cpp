@@ -15,6 +15,7 @@
 #include "model_catalog.h"
 #include "console_control.h"
 #include "world_settings.h"
+#include "skybox_catalog.h"
 #include "local_config.h"
 #include "skin_settings.h"
 #include "skin_catalog.h"
@@ -886,6 +887,53 @@ void DrawPublicMenu() {
             bool reset = false;
             if (ImGui::BeginChild("##WorldSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
                 ImGui::TextUnformatted("Sky");
+                changed |= FeatureCheckbox("Custom skybox", settings.customSkyboxEnabled);
+                ImGui::BeginDisabled(!settings.customSkyboxEnabled);
+                const auto skyboxes = SkyboxCatalogSnapshot();
+                const char* skyboxLabel = settings.skyboxMaterial[0] ? settings.skyboxMaterial.data() : "Choose a skybox";
+                if (skyboxes) for (const auto& entry : *skyboxes)
+                    if (entry.path == settings.skyboxMaterial.data()) { skyboxLabel = entry.label.c_str(); break; }
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##Skybox", skyboxLabel, ImGuiComboFlags_HeightLarge)) {
+                    static ImGuiTextFilter skyboxFilter;
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputTextWithHint("##SkyboxSearch", "Filter sky names or paths...",
+                            skyboxFilter.InputBuf, IM_ARRAYSIZE(skyboxFilter.InputBuf))) {
+                        skyboxFilter.Build();
+                        ImGui::SetScrollY(0);
+                    }
+                    ImGui::Separator();
+                    unsigned matches = 0;
+                    if (skyboxes) for (const auto& entry : *skyboxes) {
+                        if (skyboxFilter.IsActive()) {
+                            const auto searchable = entry.label + " " + entry.path;
+                            if (!skyboxFilter.PassFilter(searchable.c_str())) continue;
+                        }
+                        ++matches;
+                        ImGui::PushID(entry.path.c_str());
+                        const bool selected = entry.path == settings.skyboxMaterial.data();
+                        if (ImGui::Selectable(entry.label.c_str(), selected)) {
+                            changed |= WorldSetSkyboxMaterial(settings, entry.path);
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                        ImGui::PopID();
+                    }
+                    if (!matches) ImGui::TextUnformatted("No skyboxes match your filter.");
+                    ImGui::EndCombo();
+                }
+                ImGui::EndDisabled();
+                if (settings.customSkyboxEnabled) {
+                    const auto runtime = WorldSkyboxRuntimeStatus();
+                    ImGui::TextWrapped("%s", runtime.data());
+                }
+                static std::string skyboxMessage;
+                if (ImGui::Button("Refresh skyboxes", { -1, 0 })) {
+                    if (SkyboxCatalogDiscover(SkyboxCatalogDirectory(), skyboxMessage))
+                        skyboxMessage = "Skybox list refreshed.";
+                }
+                if (!skyboxMessage.empty()) ImGui::TextWrapped("%s", skyboxMessage.c_str());
+                ImGui::TextWrapped("Built-in skies are ready to use. Import custom packs into the project's skyboxes folder, then refresh.");
+                ImGui::Separator();
                 changed |= FeatureCheckbox("Override sky", settings.skyEnabled);
                 ImGui::BeginDisabled(!settings.skyEnabled);
                 ImGui::TextUnformatted("Sky tint");
@@ -1033,6 +1081,9 @@ void DrawPublicMenu() {
             bool changed = false;
             bool reset = false;
             if (ImGui::BeginChild("##LightingSettings", { 0, bodyHeight }, ImGuiChildFlags_Borders)) {
+                changed |= FeatureCheckbox("Fullbright", settings.fullbrightEnabled);
+                ImGui::SetItemTooltip("Uses the engine's unlit rendering mode. Independent of Override lighting.");
+                ImGui::Separator();
                 changed |= FeatureCheckbox("Override lighting", settings.lightingEnabled);
                 ImGui::Separator();
                 ImGui::BeginDisabled(!settings.lightingEnabled);

@@ -2,6 +2,87 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Custom skyboxes and Fullbright — October 25, 2026
+
+**Binding ownership fix:** the user confirms built-in swapping works. The next
+capture shows custom textures reach native loaded state, parse successfully and
+produce materials with their expected names, then fail our reference check.
+Native material registration initializes strong references to zero; the loader
+incorrectly required a positive count before taking its first reference. It now
+validates the exact material type, atomically retains a newly created material,
+then requires positive ownership for publication and every draw. Borrowed
+built-in materials, stale zero-count draws, wrong types and invalid counts still
+reject. The user confirms that custom skyboxes now work after this repair.
+
+Restart CS2 normally and use **Load Overlay.cmd**, then retry any installed
+custom sky. Both **Solitude Night** and **Modern Buildings Night** remain
+installed alongside the LynX pack; sources are in [installed packs](skyboxes/PACKS.md).
+There are **298 custom candidates** plus nine built-in choices. Specific public
+errors and `WORLD_SKYBOX_LOAD` diagnostics remain available. No new pack is
+needed to test the ownership repair.
+
+Open **World → Custom skybox**, then choose a sky. Nine built-in
+choices work without downloading a pack: Dust II, Mirage, Nuke, Vertigo,
+Overpass, Train, Cloudy, Rainy night and Black. Disabling the option restores
+the map's sky on subsequent draws. Existing **Override sky** tint/brightness
+controls remain independent. Replacement applies to the visible 2D sky;
+map-authored 3D skyline geometry and baked lighting remain separate.
+
+**Lighting → Fullbright** currently has no visible effect in the user's trial.
+The native input hooks execute and write their selected value, but effective
+rendering remains under investigation. Its independent toggle, config storage
+and **Reset lighting** behavior are implemented; it is not verified working.
+Both new options save and load through **Configs**; older presets leave them
+disabled.
+
+CS2 packs use compiled Source 2 cubemaps (`.vtex_c`). For example, the
+[LynX pack shared on the Neverlose forum](https://forum.neverlose.cc/t/custom-skybox-for-cs2/586843)
+contains 296 textures and 242 materials under `materials/skies/` and
+`materials/skybox/`. The full 1.59 GB archive was downloaded and imported locally
+at the user's request. Downloaded assets are ignored by Git and are not bundled
+with the repository; the original archive and author README remain in
+`logs/skybox-research/`. No redistribution license is assumed.
+
+Extract a RAR pack to a folder containing its `materials` directory, then run:
+
+```powershell
+python tools/import_skybox_pack.py 'C:\path\to\extracted-pack'
+```
+
+ZIP packs and VPK indices can also be passed directly. The importer validates
+compiled resources and copies only `.vtex_c`/`.vmat_c` data into this workspace's
+`skyboxes/materials/...`, preserving resource paths and refusing overwrites.
+Open **World → Refresh skyboxes**, then select a **Custom** entry. The picker
+accepts single cubemaps; ordinary PNG/JPG/HDR images and Source 1 VTF/VMT packs
+require conversion with CS2 Workshop Tools. Textures receive an in-memory
+`sky.vfx` material, so the LynX format needs no hand-written material file.
+The installed pack exposes **296 custom skies plus nine built-in choices**;
+the picker searches both display names and resource paths.
+
+The client mounts the workspace skybox folder for resource reads without
+copying anything into the installed game. Imported assets retain their names;
+replacing an already loaded asset requires a normal client restart. Retention
+is capped at 64 distinct loaded skies per client run; restart normally to try
+more. Resources, the read mount and forwarding callbacks remain resident after
+cooperative stop until normal process exit. This is stopped and resident,
+not physical unloading. Use the existing normal restart and **Load Overlay.cmd**
+workflow for an offline/private comparison.
+
+Native contracts and file-only verifiers are documented in
+[skybox evidence](tools/CS2_SKYBOX_EVIDENCE.md) and
+[Fullbright evidence](tools/CS2_FULLBRIGHT_EVIDENCE.md). The agent performed no
+live client/server trial; the working-sky and ineffective-Fullbright observations
+above come from the user's offline/private comparison.
+
+Both x64 Release variants build without project compiler warnings and pass
+**75/75 CTest suites each**. All **38/38 installed-file component checks** pass.
+Both payloads retain zero static TLS and delay-import directories. The native
+Fullbright fixture passes **1,092 checks** and the repaired sky suite passes
+**202 checks**, including zero-reference creation and strict draw ownership.
+Software D3D11 World/Lighting menu
+previews were visually inspected at normal and narrow sizes. These checks do
+not establish live client appearance.
+
 ## Cosmetic bullet tracers — October 25, 2026
 
 Open **Visuals → Bullet tracers → Visualize tracers**. Choose **Solid**, **Laser**

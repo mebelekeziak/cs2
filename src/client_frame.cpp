@@ -10,7 +10,7 @@ using FrameFn = void (*)(void*, int);
 FrameFn original = nullptr;
 std::uintptr_t client = 0;
 DWORD scopeTls = TLS_OUT_OF_INDEXES;
-std::array<ClientFrameCallback, 4> subscribers{};
+std::array<ClientFrameCallback, 8> subscribers{};
 std::size_t subscriberCount = 0;
 bool prepared = false;
 #ifdef CS2_CLIENT_FRAME_CHECKS

@@ -48,6 +48,37 @@ int main() {
     const auto secondPath = directory / (second + ".cfg");
     const auto badPath = directory / (bad + ".cfg");
     std::string error;
+    const std::string longSkyStatus(256, 'x');
+    WorldSkyboxSetRuntimeStatus(longSkyStatus.c_str());
+    const auto savedSkyStatus = WorldSkyboxRuntimeStatus();
+    WorldSkyboxSetRuntimeStatus("Skybox resource is unavailable; map sky retained.");
+    Expect(savedSkyStatus[190] == 'x' && savedSkyStatus[191] == 0 &&
+        std::string(WorldSkyboxRuntimeStatus().data()) == "Skybox resource is unavailable; map sky retained.",
+        "skybox runtime feedback is bounded and returned as independent copied storage");
+    WorldSkyboxSetRuntimeStatus(nullptr);
+    WorldSettings skyPath;
+    Expect(!skyPath.customSkyboxEnabled && !skyPath.fullbrightEnabled && skyPath.skyboxMaterial[0] == 0,
+        "custom skybox and fullbright start disabled without a selected resource");
+    Expect(WorldSetSkyboxMaterial(skyPath, "MATERIALS\\Skies\\Example.VTEX_C") &&
+        std::string(skyPath.skyboxMaterial.data()) == "materials/skies/example.vtex",
+        "compiled cubemap paths normalize to logical Source 2 resources");
+    Expect(WorldSetSkyboxMaterial(skyPath, "materials/skybox/sky_de_dust2.vmat_c") &&
+        std::string(skyPath.skyboxMaterial.data()) == "materials/skybox/sky_de_dust2.vmat",
+        "compiled material paths normalize to logical Source 2 resources");
+    const auto validSkyPath = skyPath.skyboxMaterial;
+    for (const char* invalid : {"../sky.vmat", "/materials/sky.vmat", "materials/../sky.vmat", "materials//sky.vmat",
+            "materials/./sky.vtex", "C:/sky.vmat", "materials/sky.png", "materials/.vmat", "materials/sky.vmat\nworld.enabled=1",
+            "materials/sky;bad.vmat", "materials/sky=bad.vmat", "materials/sky\"bad.vmat", "materials/folder /sky.vmat"})
+        Expect(!WorldSetSkyboxMaterial(skyPath, invalid) && skyPath.skyboxMaterial == validSkyPath,
+            "invalid sky paths reject transactionally");
+    skyPath.customSkyboxEnabled = true;
+    skyPath.fullbrightEnabled = true;
+    skyPath.exposureEv = 2;
+    skyPath.skyboxMaterial.fill('x');
+    const auto sanitizedSky = WorldSanitizeSettings(skyPath);
+    Expect(!sanitizedSky.customSkyboxEnabled && sanitizedSky.skyboxMaterial[0] == 0 &&
+        sanitizedSky.fullbrightEnabled && sanitizedSky.exposureEv == 2,
+        "unterminated sky path disables its override and preserves independent effects");
     Expect(!MovementGetSettings().jumpbug, "jumpbug starts disabled independently of enabled bunnyhop and autostrafe");
     const GrenadeSettings grenadeDefaults;
     const BulletTracerSettings tracerDefaults;
@@ -161,6 +192,8 @@ int main() {
     Expect(ModelSwapGetSettings() == ModelSwapSettings{}, "model swap starts disabled with no selected model");
     Expect(LocalConfigSave(first, error), "save defaults");
     const auto defaults = Read(firstPath);
+    Expect(defaults.find("world.customSkyboxEnabled=0\nworld.skyboxMaterial=\nworld.fullbrightEnabled=0\n") != std::string::npos,
+        "default preset saves custom sky and fullbright disabled with empty resource");
     Expect(defaults.find("viewmodel.enabled=0\nviewmodel.x=0\nviewmodel.y=0\nviewmodel.z=0\nviewmodel.fov=68\n") != std::string::npos,
         "default preset saves all disabled viewmodel controls");
     Expect(defaults.find("movement.bunnyhop=1\nmovement.autostrafe=1\nmovement.jumpbug=0\n") != std::string::npos,
@@ -206,6 +239,8 @@ int main() {
     world.enabled = true; world.exposureEv = -1.25f; world.contrast = 1.25f;
     world.saturation = 0.25f; world.gamma = 1.75f; world.vignette = 0.25f; world.sharpening = 0.75f;
     world.skyEnabled = true; world.skyBrightness = 2.5f;
+    world.customSkyboxEnabled = true; world.fullbrightEnabled = true;
+    Expect(WorldSetSkyboxMaterial(world, "materials/skies/example.vtex"), "select custom cubemap for preset roundtrip");
     world.worldMaterialEnabled = true; world.flatTextures = true; world.lightingEnabled = true;
     world.disableLocalLights = true; world.localLightBrightness = 6.5f; world.sunLightBrightness = 7.5f;
     world.ambientLightEnabled = true; world.ambientLightBrightness = 1.5f; world.directionalLightmapsMode = 2;
@@ -316,6 +351,8 @@ int main() {
         "human results and verbose diagnostics independently roundtrip in named presets");
     const auto loadedWorld = WorldGetSettings();
     bool sameWorld = loadedWorld.enabled == world.enabled && loadedWorld.exposureEv == world.exposureEv &&
+        loadedWorld.customSkyboxEnabled == world.customSkyboxEnabled &&
+        loadedWorld.skyboxMaterial == world.skyboxMaterial && loadedWorld.fullbrightEnabled == world.fullbrightEnabled &&
         loadedWorld.contrast == world.contrast && loadedWorld.saturation == world.saturation &&
         loadedWorld.gamma == world.gamma && loadedWorld.vignette == world.vignette &&
         loadedWorld.sharpening == world.sharpening && loadedWorld.skyEnabled == world.skyEnabled &&
@@ -425,6 +462,10 @@ int main() {
         "version=1\nskins.ct.gloves.definitionIndex=1\nskins.ct.gloves.definitionIndex=2\n",
         "version=1\naim.enabled=0\nskins.enabled=0\nskins.t.knife.customName=bad=name\n",
         "version=1\nskins.t.knife.customName=bad;name\n",
+        "version=1\nworld.customSkyboxEnabled=2\n", "version=1\nworld.fullbrightEnabled=true\n",
+        "version=1\nworld.skyboxMaterial=materials/../sky.vmat\n",
+        "version=1\nworld.skyboxMaterial=materials/sky.png\n",
+        "version=1\nworld.skyboxMaterial=materials/sky.vmat\nworld.skyboxMaterial=materials/other.vtex\n",
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
@@ -436,6 +477,8 @@ int main() {
         SilentAimGetSettings().fov == 180 && SilentAimGetSettings().hitbox == AimHitbox::Pelvis,
         "unknown keys accepted and existing setters enforce bounds");
     Expect(AntiAimGetSettings() == AntiAimSettings{}, "older presets without anti aim restore every disabled default");
+    Expect(!WorldGetSettings().customSkyboxEnabled && !WorldGetSettings().fullbrightEnabled &&
+        WorldGetSettings().skyboxMaterial[0] == 0, "older presets clear custom sky selection and disable fullbright");
     Expect(MovementGetSettings().bunnyhop && MovementGetSettings().autostrafe && !MovementGetSettings().jumpbug,
         "older presets without movement keys reset enabled jumpbug to its disabled default");
     Expect(AimVisualizationGetSettings() == AimVisualizationSettings{}, "older presets restore disabled visualization and white RGBA");
