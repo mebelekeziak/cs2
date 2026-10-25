@@ -1,5 +1,95 @@
 # Indexed primary-shot spread compensation contract
 
+## October 25 selected-time punch correction
+
+The native-built-shot capture in
+`logs/research/no_spread_native_20261025/20261025T100413Z/` establishes a
+specific query mismatch. Fifteen corrected command sequences have native
+construction observations; **all fifteen selected integer ticks match**
+their native selected ticks. Fourteen also match the copied effective angles.
+Sequence **20776** is different: published current-prediction punch is
+`(0.064690515,-0.001253350,0)`, while its first native construction, before
+the fire-event receipt, reports
+`(1.350812793,-0.027182225,0.000001516)` at the same selected raw time
+`42253/0.074814647`. The effective-angle change crosses SHA seed bins and
+can change a high-inaccuracy corrected ray substantially. This is not evidence
+for rolling back the selected clock or a later post-fire native replay.
+
+The native builder explicitly passes its selected **scene-domain** TimePair
+to `ShotPunch` at `0x80F17C/0x80F17F`. The prior raw-clock model instead copied
+the separate current-prediction getter's `weapon.aimPunch`; the one-tick model
+reused clamped-time punch. Both selected alternatives now query the verified
+scaled `ShotPunch` at their own exact selected time. The original clamped query
+remains available and freshness-checked. Selected-time output must return the
+owned pointer and write all three finite components; a failed, foreign,
+partial or nonfinite result invalidates the model. Final freshness validation
+repeats the selected query as well as the original clamped query.
+
+No native address, time-selection rule, history time, solver, spread
+distribution or firing ownership policy changes. Punch uses scene time
+directly; the scene-to-global conversion needed by the separate historical
+origin wrapper does **not** apply to `ShotPunch`. The getter's existing native
+memoization is allowed on the command owner, but future engine recoil state
+can still change before actual construction. Matching the query API/time
+does not prove an early query can foresee every later recoil impulse or
+accuracy transition. It also does not establish a server origin/seed.
+
+The independent native analysis and exact caller disassembly are under the
+capture's `native_analysis/` directory. Focused MSVC x64 Release verification
+passes **489 checks**, including distinct current/selected-time punch,
+next/raw fractional clocks, native return/output failures, unchanged clamp
+with changed selected punch, and independent seed/ray reconstruction.
+An isolated scratch build using the prior production adapter against these
+same tests reproduces **20 failures**; production sources were not reverted.
+No client/server process is launched by these fixture checks.
+
+### Selected-time punch query lifecycle review
+
+The complete installed `ShotPunch` body (`0x853410`, 206 bytes) and backing
+evaluator (`0x84E6E0`, 2446 bytes, SHA-256
+`5bb435e5c457bebbee2b449f6be708f469f836e21d84086978853f7cda7ac8ac`)
+were inspected specifically for querying two to four ticks ahead of the
+current callback. This query has native memoization effects; it does not
+advance the pawn's recoil base state.
+
+At `0x85345B`, the wrapper passes the predictable base tick/fraction from
+service `+0x48/+0x4C` **by value**, base angle/velocity at `+0x50/+0x5C` as
+input pointers, and the separate cache at `+0x68` as the evaluator's `this`.
+The second evaluation at `0x8534AE` passes the unpredictable base tick from
+`+0xA0` by value, base angle at `+0xA4`, stack-owned zero velocity, and the
+separate cache at `+0xB0`. The queried time is an input pointer in both calls.
+The wrapper combines the two stack-owned results into caller-owned output
+through `0x84C0F0`; it does not store back to either recoil base.
+
+The evaluator constructs a **base-time** pair at `0x84E75E`, subtracts it
+from the query at `0x84E773`, and compares the cache against that base time
+at `0x84E7B6` (`0x84C070`, a comparison-only leaf). It also compares the
+copied base angle and velocity. When any key differs, `0x84E840..0x84E86C`
+copies the new key into cache `+0x00..+0x1C` and resets its sample count at
+`+0x20`. Neither the key nor the vector replaces the actual service base
+tick, fraction, angle or velocity.
+
+Cache-vector writes at `0x84EC39..0x84EC5A` append float3 samples. Its count,
+capacity, allocation flags and data pointer can change; initialization through
+`0x84E0F0` copies the input base angle without writing through that pointer.
+Native allocation calls resolve to named `tier0!UtlVectorMemory_*` imports;
+the numerical indirect calls are `tier0!V_expf` and `tier0!V_powf`.
+The integration index is capped at 128 (`0x84E8C4/0x84E915`), allowing at
+most 129 cached samples including the base sample at index zero.
+A later query for an earlier time reads its indexed prefix from the cache
+at `0x84EC79..0x84EC90` and `0x84ED72..0x84ED8D`, then interpolates in local
+temporaries. It does not use the last future sample as its current state.
+Consequently, a future query can extend the memoized vector, but cannot
+commit future base state or discard the earlier prefix. A changed native
+recoil base invalidates the copied key on the next query. This static proof
+assumes the existing command-owner lifecycle and intact native objects; it
+does not predict recoil impulses or accuracy changes that occur later.
+
+Read-only disassembly and the field/write audit are saved in
+`logs/research/no_spread_native_20261025/20261025T100413Z/native_analysis/` as
+`shot_punch_safety.txt`, `punch_eval_safety.txt`,
+`punch_helpers_safety.txt`, and `PUNCH_QUERY_SAFETY.md`.
+
 Investigated October 23, 2026 against installed Windows AMD64 client 2000935,
 patch 1.41.9.2, Steam build 26144732. Installation is
 `C:/Program Files (x86)/Steam/steamapps/common/Counter-Strike Global Offensive/game`.

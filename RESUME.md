@@ -1,3 +1,119 @@
+# Remove spread revision 8 — selected-time punch, October 25, 2026
+
+FINAL R8: both normal build outputs updated after user confirmed testfinished.
+Both x64 Release builds have no project warnings and pass71/71 CTest each;
+pipeline489/native489/observer121/tracker227/adapter140. All36/36 installed
+compatibility components pass in logs/compatibility/remove-spread-r8/;18bad
+observerheadersreject. BothDLLs zeroTLS/delayimports,hashrecordlogs/
+remove-spread-r8-payload-contract.json. Public SHA256
+fcc75fc26b15392514b2cc99899e3bca742b669cee5a95f759035588a5f241b8;
+diagnosticd0b57e2dd565a0c0a238eb22e1b6e089b791380eb1d575908206ad02742ba189.
+NormalrestartthenLoadOverlay.cmd fornextoffline/private trial,loggingenabled.
+No R8 live hit-rate confirmation yet. Older testfreeze records below historical.
+
+The user completed the short instrumented test and reports ordinary aim is
+decent but Remove spread misses heavily. Test build freeze below is superseded:
+the user confirmed this run is finished, so normal build outputs can update.
+Do not physically reload/unload resident code; next trial needs a normal restart.
+
+Snapshot logs/research/no_spread_native_20261025/20261025T100413Z/
+overlay-36812-134373951938869620.log,5885630bytes,SHA256
+f768f9bc8635b6ce7d6e41461542f23cebb8bbe8b7272a8ec260dbbe97eab1d9.
+82nativecallbacks represent37commands:22ordinary/15corrected. Corrected native
+fire interval6hit/9miss;earlier10ordinaryScout allhit, but corrected mostly
+airborne/highinaccuracy, so no controlled rateclaim.15/15corrected nativeclock
+ticks match selectedraw, fractions withinrounding. No clockrollback.
+
+Event36seq20776's single nativecallback precedesfire: chosenpunch
+(.064690515,-.001253350,0) versus native(1.350812793,-.027182225,.000001516).
+Samecmd/time, effective shift1.28638deg changes SHAseed/replayray30.8673deg;
+observed29.597deg mismatch falls to.3755deg usingnativeinputs/copiedaccuracy.
+Implemented exactselected-time ShotPunch query for selectednext/rawvariant,
+freshnessrequery, poisonedoutput/failurevalidation; standaloneintent nowuses
+same selectedpunch ratherthancurrentgetter. Clockpolicy/solver/budgetsunchanged.
+Native489checks pass;scratcholdadapter20failures. Nativeevaluator safetyreview
+shows writes only native memoizationcopies/vectors keyedbybasetime/angle/vel;
+actualbasefieldsreadonly, earlierqueries usecachedprefix. Futurestate canstill
+change afterpublication; this is correctquerysemantics,notservercertainty.
+
+Nativeorigins differ.558–17.234u median3.368;movingexactpredictedray toactual
+origin missessavedcapsule only2/15. One displacementforward36.77msrulesoutfixed
+rewind. HistoricalwrapperABI/reverseclockdecoded,butearlyqueries maylacklater
+historybracket, so nohistoricalorigin integration in thisrevision.
+
+Observerrevision2 addsactualengineSpread(80E2C0,return804B77)/Inaccuracy
+(80CFD0,return804B8B) hooks, exactfloatbits, command/actor/weaponandpointerflags;
+noextraenginegettercalls/mutations,attackselectorunknown,separatebounded64
+accuracyqueue,sharedstopbarrier,loggingtogglehonored.121fixturechecks pass;
+18badheaders reject. Finalnativeaccuracy wasn’t in thisshorttrial;nextlogs
+will distinguish publicationaccuracy fromactualgetterreturns. Sourcehelper
+metadata-lossquarantine227tracker/140adapter now included in newbuild aswell.
+Tracked report docs/REMOVE_SPREAD_REVISION8.md. Source/contextsafe, no client
+orserver launched/attached;remainingactualmissrateunverified.
+
+# Renewed miss streaks and native provenance — October 25, 2026
+
+TEST BUILD FREEZE: user asked to test now. The currently built public and
+diagnostic DLLs include the main association/raw-impact/native-observer work
+and each passed71/71 CTest suites;36/36 compatibility checks pass. Public DLL
+SHA25630e81c852025d982de66018b0ebe237b6a2493e665f4ece68835086b643fd957,
+diagnosticae5fc974ac56ee9c504129ab22ebfa408daec238cbc8a01ff70d9c7a73799e8b.
+PE/hash record: logs/misses-followup-tested-before-quarantine-payload.json.
+Further full DLL builds are held while this test runs. An additional metadata
+eviction/loss-window repair is implemented in source and passes227tracker/
+140adapter focused checks (2/2), but has NOT been rebuilt into either DLL.
+Only focused test EXEs changed. Root also added source controller/pawn fields
+to AIM_PUBLICATION_MODEL after the full build; those fields are not in this
+test DLL. Do not claim the current source exactly matches the loaded test
+binary or overwrite that binary mid-trial. No new follow-up commit yet.
+
+The user reports renewed outside-cone streaks, more often in non-local sessions.
+Usual ping is about 10 ms but the exact session is unknown. They exited the
+game during investigation and authorized committing pending cosmetic work.
+Checkpoint **cef25af** contains the 29 cosmetic files; four extra EOF blank
+lines were removed before committing. Source review found no direct cosmetic
+gameplay mutation. No agent game/server interaction occurred.
+
+Final snapshot: logs/research/misses_followup_20261025/20261025T092855Z/completed/
+overlay-37228-134373926904598470.log, 11,218,076 bytes, SHA256
+bb53fc1731cb64f9704de291943de367ff9a506b0bb8a6d7f231be1be3509b74.
+Of 100 native records, the relevant native-RNG normal Scout subset has
+61 shots:42hit/18miss/1unconfirmed, eight outside/six crossed. Remove spread
+is off;509samples/minimum70. The 60 settled shots average93.415% saved HC,
+but have18 no-damage results;35 at100% include10 misses. These geometric,
+sometimes misassociated estimates are not authoritative damage probabilities.
+
+The original publication retention works. Six/eight outside cases instead fit
+an earlier different-command publication. #80: old86/seq17540/age62ms gives
+.142717deg inside .185116cone; selected87/seq17543/age15ms gives .424451deg.
+Both still show clip7/recoil0, so consumption alone cannot choose. #98 repeats
+the pattern. Origins differ <.00006u; hit controls also favor older contexts.
+No fixed62ms or best-ray binding is used. The two other outside cases mix
+inside/outside directions; their furthest impacts are inside their cones.
+
+Implemented conservative candidate ambiguity, unique-publication reservation
+separate from broad acknowledgement, bounded8 candidate identities and16 raw
+impact receipts/positions, mixed-cone evidence, and complete per-publication
+AIM_PUBLICATION_MODEL logs. Actual native HIT/MISS behavior is unchanged.
+A separate diagnostic observer records actual native shot construction at
+80E530 from ordinary caller804EDF, using the independently verified native
+controller current command+780. It copies sequence/history/time/origin/
+effective angles/punch, makes no extra native getter/builder calls or gameplay
+writes, honors logging off and drains cooperatively with stopped code resident.
+The builder's argument selects attack history, separate from scoped weapon
+mode; scoped primary is covered. Output64bytes;flags38/39 remain opaque.
+Client construction is not server acceptance; later gates can reject, and
+final spread/inaccuracy are sampled afterward and not captured by this probe.
+
+Initial compatibility35/35 and expanded36/36 pass in logs/compatibility/
+misses-followup-20261025{,-final}/. The observer's eight bad-header mutations
+reject;53 observer fixture checks pass. Detailed report:
+docs/SHOT_MISSES_FOLLOWUP_20261025.md; native contract:
+tools/CS2_AIM_FIRE_OBSERVER_EVIDENCE.md. Actual misses are not verified fixed.
+Next evidence needs a fresh normal restart/Load Overlay.cmd with Shot logging
+enabled, then comparison of AIM_NATIVE_BUILT_SHOT against publication models.
+No new loader/session gates or installed-file changes.
+
 # Shot misses and native hitchance experiment — October 25, 2026
 
 Latest request: investigate consecutive misses diagnosed as saved-capsule

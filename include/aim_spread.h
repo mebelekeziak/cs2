@@ -45,8 +45,10 @@ struct AimSpreadSnapshot {
 // private null-mutex random stream never seed or advance the engine's RNG.
 // Supported firearms select one copied indexed clock/recoil model. Indexed time
 // ahead of the clamped native time selects the retained alternative; a lead of
-// more than one tick uses raw indexed time and copied current recoil. This is a
-// client model choice, not an authoritative server shot time or seed.
+// more than one tick uses raw indexed time. Its scaled punch is queried through
+// native ShotPunch at that exact selected scene time and freshness-checked.
+// Future engine state can still change; this is a client model choice, not an
+// authoritative server shot time, future recoil state or seed.
 bool AimSpreadPrepare(std::uintptr_t client, AimSpreadContext& context) noexcept;
 // Copy the verified distribution-mode cvar on the command owner, without RNG.
 bool AimSpreadReadPattern(const AimSpreadContext& context, bool& pattern) noexcept;

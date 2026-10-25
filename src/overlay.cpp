@@ -27,6 +27,7 @@
 #include "grenade_effects.h"
 #include "movement.h"
 #include "silent_aim.h"
+#include "aim_fire_observer.h"
 #include "aim_visualization.h"
 #include "aim_console.h"
 #include "console_control.h"
@@ -276,6 +277,7 @@ void CleanupOnRenderThread(const char* reason) {
     ScopedCrosshairReset();
     MovementStop(reason);
     SilentAimStop(reason);
+    AimFireObserverStop();
     ShotLoggingStop(reason);
     AntiAimStop(reason);
     ThirdPersonStop(reason);
@@ -514,6 +516,7 @@ void PollMenuKeyboard(bool foreground) {
 void DrawFrame(IDXGISwapChain* chain) {
     ConsoleControlFlushRequests();
     SilentAimFlushTelemetry();
+    AimFireObserverFlushTelemetry();
     ShotLoggingFlushTelemetry();
     AntiAimFlushTelemetry();
     ThirdPersonFlushTelemetry();
@@ -712,6 +715,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             ConsoleControlStop();
             MovementStop("stopped before selecting render chain");
             SilentAimStop("stopped before selecting render chain");
+            AimFireObserverStop();
             ShotLoggingStop("stopped before selecting render chain");
             AntiAimStop("stopped before selecting render chain");
             ThirdPersonStop("stopped before selecting render chain");
@@ -815,6 +819,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
 #endif
     const bool consoleControlsPrepared = aimConsole && ConsoleControlPrepare();
     const bool aimPrepared = SilentAimPrepare(&EspLog);
+    const bool fireObserverPrepared = AimFireObserverPrepare(&EspLog);
     const bool shotLoggingPrepared = ShotLoggingPrepare(&EspLog);
     const bool antiAimPrepared = AntiAimPrepare(&EspLog);
     const bool thirdPersonPrepared = ThirdPersonPrepare(&EspLog);
@@ -845,6 +850,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         ConsoleControlStop();
         MovementStop("partial hook activation failure");
         SilentAimStop("partial hook activation failure");
+        AimFireObserverStop();
         ShotLoggingStop("partial hook activation failure");
         AntiAimStop("partial hook activation failure");
         ThirdPersonStop("partial hook activation failure");
@@ -872,6 +878,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     EspLog(consoleControlsPrepared ? "AIM_CONSOLE_CONTROLS_READY clear/replay and project-only native console filter available" :
         "AIM_CONSOLE_CONTROLS_UNAVAILABLE engine console contract verification or hook preparation failed");
     if (aimPrepared) SilentAimActivate(movementPrepared);
+    if (fireObserverPrepared) AimFireObserverActivate();
     if (shotLoggingPrepared && movementPrepared) ShotLoggingActivate();
     if (antiAimPrepared) AntiAimActivate(movementPrepared);
     if (thirdPersonPrepared) ThirdPersonActivate();
@@ -899,6 +906,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     ConsoleControlStop();
     MovementStop("explicit overlay stop request");
     SilentAimStop("explicit overlay stop request");
+    AimFireObserverStop();
     ShotLoggingStop("explicit overlay stop request");
     AntiAimStop("explicit overlay stop request");
     ThirdPersonStop("explicit overlay stop request");

@@ -14,8 +14,14 @@ enum class EventKind : unsigned { Fire = 1, Impact, Hurt };
 struct Pending { bool used = false; ShotLogRecord record{}; };
 struct Metadata {
     bool used = false, acknowledged = false, reported = false, withdrawn = false;
+    bool usedForFire = false;
     std::uint64_t publishedMs = 0;
     ShotLogMetadata value{};
+};
+struct MetadataLoss {
+    bool used = false;
+    std::uint64_t beginMs = 0, endMs = 0;
+    char weapon[48]{};
 };
 struct Retired { bool used = false; std::uint64_t id = 0, fireMs = 0; char weapon[48]{}; };
 struct Effect {
@@ -35,6 +41,8 @@ struct State {
     ShotLogCounters counters{};
     std::array<Pending, ShotLogPendingCapacity> pending{};
     std::array<Metadata, MetadataCapacity> metadata{};
+    std::array<MetadataLoss, MetadataCapacity> metadataLosses{};
+    std::uint64_t metadataLossOverflowBeginMs = 0, metadataLossOverflowEndMs = 0;
     std::array<Retired, ShotLogPendingCapacity> retired{};
     std::array<Effect, EventCapacity> effects{};
     std::array<Delivery, DedupCapacity> deliveries{};
@@ -84,6 +92,43 @@ bool WeaponMatch(const char (&left)[48], const char (&right)[48]) noexcept {
     char a[48]{}, b[48]{};
     Normalize(left, a); Normalize(right, b);
     return *a && *b && std::strcmp(a, b) == 0;
+}
+void RememberMetadataLoss(const Metadata& sample) noexcept {
+    // A preview or a publication conclusively assigned to an earlier fire
+    // cannot compete with a later publication. Withdrawn contexts still can.
+    if (!sample.value.publicationId || !sample.value.attackPublished || sample.usedForFire) return;
+    MetadataLoss lost{};
+    lost.used = true; lost.beginMs = sample.value.receiptMs;
+    lost.endMs = lost.beginMs > UINT64_MAX - ShotLogMetadataWindowMs ? UINT64_MAX :
+        lost.beginMs + ShotLogMetadataWindowMs;
+    Copy(lost.weapon, sample.value.weapon);
+    MetadataLoss* destination = nullptr;
+    for (auto& prior : state.metadataLosses) {
+        // Older receipt events are already explicitly late beyond this bound.
+        if (prior.used && Elapsed(state.now, prior.endMs, ShotLogReorderWindowMs)) prior.used = false;
+        if (!prior.used || !WeaponMatch(prior.weapon, lost.weapon) ||
+            prior.endMs < lost.beginMs || lost.endMs < prior.beginMs) continue;
+        lost.beginMs = std::min(lost.beginMs, prior.beginMs);
+        lost.endMs = std::max(lost.endMs, prior.endMs);
+        if (!destination) destination = &prior;
+        else prior.used = false;
+    }
+    if (!destination) for (auto& prior : state.metadataLosses) if (!prior.used) { destination = &prior; break; }
+    if (destination) { *destination = lost; return; }
+    // Unusually many disjoint loss intervals or weapon names must not restore
+    // false certainty. Expose this bounded-storage fallback separately.
+    if (!state.metadataLossOverflowEndMs) state.metadataLossOverflowBeginMs = lost.beginMs;
+    else state.metadataLossOverflowBeginMs = std::min(state.metadataLossOverflowBeginMs, lost.beginMs);
+    state.metadataLossOverflowEndMs = std::max(state.metadataLossOverflowEndMs, lost.endMs);
+}
+bool MetadataLostAt(const ShotLogRecord& record, bool& overflow) noexcept {
+    overflow = state.metadataLossOverflowEndMs && record.fireMs >= state.metadataLossOverflowBeginMs &&
+        record.fireMs <= state.metadataLossOverflowEndMs;
+    if (overflow) return true;
+    for (const auto& lost : state.metadataLosses)
+        if (lost.used && record.fireMs >= lost.beginMs && record.fireMs <= lost.endMs &&
+            WeaponMatch(lost.weapon, record.weapon)) return true;
+    return false;
 }
 bool DeliverySeen(EventKind kind, std::uint64_t id, std::uint64_t& shotId) noexcept {
     if (!id) return false;
@@ -229,7 +274,8 @@ void Geometry(ShotLogRecord& record, const AimVector& impact, const AimVector& a
     if (distance <= 0 || distance > 1000000) return;
     if (AimRayCapsuleMissDistance(metadata.eye, direction, static_cast<float>(distance), metadata.capsule) < 0) return;
     ++record.geometryImpacts;
-    if (distance >= record.impactDistance) { record.impactDistance = static_cast<float>(distance); record.furthestImpact = impact; }
+    const bool furthest = distance >= record.impactDistance;
+    if (furthest) { record.impactDistance = static_cast<float>(distance); record.furthestImpact = impact; }
     const bool segmentHit = AimRayIntersectsCapsule(metadata.eye, direction, static_cast<float>(distance), metadata.capsule);
     if (segmentHit) record.trajectory = ShotLogTrajectory::IntersectsRecordedCapsule;
     else if (record.trajectory == ShotLogTrajectory::Unknown) record.trajectory = ShotLogTrajectory::MissesRecordedCapsule;
@@ -250,6 +296,11 @@ void Geometry(ShotLogRecord& record, const AimVector& impact, const AimVector& a
     // near parallel rays and does not turn that rounding into ~0.01 deg error.
     const float angle = static_cast<float>(std::atan2(std::hypot(crossX, crossY, crossZ), dot) * degrees);
     record.impactAngle = std::max(record.impactAngle, angle);
+    if (furthest) record.furthestImpactAngle = angle;
+    if (!metadata.spreadCorrected && metadata.chanceValid) {
+        if (angle <= record.spreadCone + .01f) ++record.coneImpactsInside;
+        else ++record.coneImpactsOutside;
+    }
     if (!metadata.spreadCorrected && !rayHit && !segmentHit && metadata.chanceValid && metadata.spread + metadata.inaccuracy > 0 &&
         angle <= record.spreadCone + 0.01f) ++record.spreadMissImpacts;
 }
@@ -268,7 +319,8 @@ void Classify(ShotLogRecord& record) noexcept {
     if (record.ambiguousEvents) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
     if (!record.uniqueImpacts) return assign(ShotLogReason::NoImpact, ShotLogDiagnostic::NoImpactEvent);
     if (!record.metadataKnown) return assign(ShotLogReason::Unknown, record.metadataAmbiguous ?
-        ShotLogDiagnostic::OverlappingMetadata : ShotLogDiagnostic::NoMetadata);
+        (record.metadataEvidenceLost ? ShotLogDiagnostic::MetadataEvidenceLost : ShotLogDiagnostic::OverlappingMetadata) :
+        ShotLogDiagnostic::NoMetadata);
     if (!record.metadata.capsuleValid) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::NoCapsule);
     if (!record.aimRayValid) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidAim);
     if (!record.geometryImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::InvalidTrajectory);
@@ -281,6 +333,8 @@ void Classify(ShotLogRecord& record) noexcept {
     if (!record.metadata.spreadCorrected && record.spreadMissImpacts == record.geometryImpacts)
         return assign(ShotLogReason::Spread, ShotLogDiagnostic::ImpactMissedCapsule);
     if (record.shortImpacts) return assign(ShotLogReason::Unknown, ShotLogDiagnostic::MixedImpacts);
+    if (record.coneImpactsInside && record.coneImpactsOutside)
+        return assign(ShotLogReason::Unknown, ShotLogDiagnostic::MixedSpreadCone);
     return assign(ShotLogReason::Unknown, record.metadata.chanceValid && !record.metadata.spreadCorrected ? ShotLogDiagnostic::OutsideSpreadCone :
         ShotLogDiagnostic::ImpactMissedCapsule);
 }
@@ -306,6 +360,9 @@ void Finish(Pending& pending, ShotLogCloseReason reason) noexcept {
             } else if (unique && effect.reported) ++record.ambiguousEvents;
         } else if (unique) {
             ++record.uniqueImpacts;
+            if (record.impactEvidenceCount < record.impactEvidence.size())
+                record.impactEvidence[record.impactEvidenceCount++] = {effect.receiptMs, effect.impact};
+            else record.impactEvidenceOverflow = true;
             Geometry(record, effect.impact, aimDirection);
         }
     }
@@ -320,6 +377,8 @@ void Finish(Pending& pending, ShotLogCloseReason reason) noexcept {
 void ClearContext() noexcept {
     for (auto& shot : state.pending) shot.used = false;
     for (auto& metadata : state.metadata) metadata.used = false;
+    for (auto& lost : state.metadataLosses) lost.used = false;
+    state.metadataLossOverflowBeginMs = state.metadataLossOverflowEndMs = 0;
     for (auto& retired : state.retired) retired.used = false;
     for (auto& effect : state.effects) effect.used = false;
     for (auto& delivery : state.deliveries) delivery = {};
@@ -327,12 +386,39 @@ void ClearContext() noexcept {
     state.lostUntilMs = 0;
 }
 void SelectMetadata(ShotLogRecord& record) noexcept {
+    record.metadataEvidenceLost = MetadataLostAt(record, record.metadataLossOverflow);
+    const auto plausible = [&](const Metadata& sample) noexcept {
+        return sample.used && !sample.usedForFire && sample.value.receiptMs <= record.fireMs &&
+            record.fireMs - sample.value.receiptMs <= ShotLogMetadataWindowMs &&
+            WeaponMatch(sample.value.weapon, record.weapon);
+    };
+    Metadata* publication = nullptr;
+    for (auto& sample : state.metadata) {
+        if (!plausible(sample) || !sample.value.publicationId || !sample.value.attackPublished) continue;
+        const auto index = record.metadataCandidateCount++;
+        if (index < record.metadataCandidates.size()) record.metadataCandidates[index] = {
+            sample.value.publicationId, sample.value.receiptMs, sample.value.commandSequence, sample.withdrawn};
+        else record.metadataCandidateOverflow = true;
+        publication = &sample;
+    }
+    if (record.metadataCandidateCount) {
+        record.metadataAmbiguous = record.metadataCandidateCount != 1 || record.metadataEvidenceLost;
+        if (!record.metadataAmbiguous) {
+            record.metadata = publication->value; record.metadataKnown = true;
+            record.metadataAgeMs = record.fireMs - publication->value.receiptMs;
+            // Acknowledgement suppresses timeouts for all plausible commands;
+            // only this unique association reserves a publication for a fire.
+            publication->usedForFire = true;
+        }
+        return;
+    }
+    if (record.metadataEvidenceLost) { record.metadataAmbiguous = true; return; }
+    // Legacy preview-only callers have no immutable publication identity.
+    // Preserve their latest preceding sample semantics without inventing one.
     const ShotLogMetadata* selected = nullptr;
     bool tied = false;
     for (const auto& sample : state.metadata) {
-        if (!sample.used || sample.value.receiptMs > record.fireMs ||
-            record.fireMs - sample.value.receiptMs > ShotLogMetadataWindowMs ||
-            !WeaponMatch(sample.value.weapon, record.weapon)) continue;
+        if (!plausible(sample) || sample.value.publicationId) continue;
         if (!selected || sample.value.receiptMs > selected->receiptMs) { selected = &sample.value; tied = false; }
         else if (sample.value.receiptMs == selected->receiptMs && sample.value.commandSequence != selected->commandSequence)
             tied = true;
@@ -494,7 +580,11 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
     }
     if (!destination) {
         destination = &state.metadata[state.metadataCursor++ % MetadataCapacity];
-        if (destination->used) { ++state.counters.metadataOverflow; CompleteAttempt(*destination, ShotLogCloseReason::Capacity); }
+        if (destination->used) {
+            ++state.counters.metadataOverflow;
+            RememberMetadataLoss(*destination);
+            CompleteAttempt(*destination, ShotLogCloseReason::Capacity);
+        }
         *destination = {};
     }
     const bool previouslyPublished = destination->used && destination->value.attackPublished;
@@ -505,6 +595,7 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
     if (freshPublication) {
         destination->withdrawn = false;
         destination->reported = false;
+        destination->usedForFire = false;
         // Native fire remains authoritative if it arrived after withdrawal.
         // Reusing the command must never erase that acknowledgement.
     }
@@ -668,6 +759,8 @@ const char* ShotLogDiagnosticText(ShotLogDiagnostic diagnostic) noexcept {
     case ShotLogDiagnostic::ImpactCrossedCapsule: return "impact crossed saved capsule without damage";
     case ShotLogDiagnostic::OutsideSpreadCone: return "impact outside saved spread cone";
     case ShotLogDiagnostic::MixedImpacts: return "impacts disagree on path";
+    case ShotLogDiagnostic::MixedSpreadCone: return "impact directions straddle saved spread cone";
+    case ShotLogDiagnostic::MetadataEvidenceLost: return "aim context lost before fire association";
     case ShotLogDiagnostic::InvalidTrajectory: return "impact direction unavailable";
     default: return "insufficient evidence";
     }

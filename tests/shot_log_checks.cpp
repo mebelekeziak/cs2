@@ -168,6 +168,183 @@ void MetadataChecks() {
         records[0].trajectory == ShotLogTrajectory::Unknown, "nonfinite HC and invalid copied geometry are not presented as valid evidence");
 }
 
+void PublicationEvidenceChecks() {
+    const auto publication = [](std::uint64_t time, int sequence, std::uint64_t id) {
+        auto sample = Metadata(time, sequence);
+        sample.attackPublished = true; sample.publicationId = id;
+        return sample;
+    };
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11));
+    ShotLogAddMetadata(publication(1047, 104, 12));
+    ShotLogOnFire(Fire(1062)); ShotLogOnImpact(Impact(1070, 2)); ShotLogAdvance(1373);
+    auto records = Drain();
+    Expect(records.size() == 1 && records[0].outcome == ShotLogOutcome::Miss && !records[0].metadataKnown &&
+        records[0].metadataAmbiguous && records[0].metadataCandidateCount == 2 &&
+        records[0].diagnostic == ShotLogDiagnostic::OverlappingMetadata,
+        "a delayed fire after distinct published commands stays a no-damage miss without blaming the newest cone");
+    Expect(records.size() == 1 && records[0].metadataCandidates[0].publicationId == 11 &&
+        records[0].metadataCandidates[1].publicationId == 12 && records[0].metadataCandidates[1].commandSequence == 104 &&
+        records[0].metadataCandidates[1].receiptMs == 1047 && !records[0].metadataCandidateOverflow,
+        "ambiguous publication evidence retains both immutable identities, sequences and receipt times");
+    Expect(records.size() == 1 && records[0].impactEvidenceCount == 1 &&
+        records[0].impactEvidence[0].receiptMs == 1070 && records[0].impactEvidence[0].position.x == 200 &&
+        records[0].geometryImpacts == 0 && records[0].trajectory == ShotLogTrajectory::Unknown,
+        "raw unique impact coordinates survive even when no copied origin or capsule can be selected");
+
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11)); ShotLogAddMetadata(publication(1047, 104, 12));
+    ShotLogOnFire(Fire(1062)); ShotLogOnHurt(Hurt(1080)); ShotLogAdvance(1373); records = Drain();
+    Expect(records.size() == 1 && records[0].outcome == ShotLogOutcome::Hit && records[0].damageCount == 1 &&
+        !records[0].metadataKnown && records[0].metadataAmbiguous && !ShotLogSummarizeDamage(records[0]).predictionKnown,
+        "uncertain aim-command association preserves uniquely confirmed damage without inventing its prediction");
+
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11)); ShotLogOnFire(Fire(1062, 1));
+    ShotLogOnFire(Fire(1100, 4)); ShotLogAdvance(1411); records = Drain();
+    Expect(records.size() == 2 && records[0].metadataKnown && records[0].metadataCandidateCount == 1 &&
+        !records[1].metadataKnown && records[1].metadataCandidateCount == 0,
+        "one conclusively selected real publication cannot be reused for a later native fire");
+
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11)); ShotLogOnFire(Fire(1062, 1));
+    ShotLogAddMetadata(publication(1070, 101, 12)); ShotLogOnFire(Fire(1080, 4));
+    ShotLogAdvance(1391); records = Drain();
+    Expect(records.size() == 2 && records[0].metadata.publicationId == 11 && records[1].metadataKnown &&
+        records[1].metadata.publicationId == 12,
+        "a fresh same-sequence publication resets its unique-fire reservation without altering the prior record");
+
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11)); ShotLogAddMetadata(publication(1047, 104, 12));
+    ShotLogOnFire(Fire(1062, 1)); ShotLogOnFire(Fire(1270, 4)); ShotLogAdvance(1581); records = Drain();
+    Expect(records.size() == 2 && records[0].metadataAmbiguous && records[1].metadataKnown &&
+        records[1].metadata.publicationId == 12,
+        "broad fire acknowledgement does not reserve every candidate or hide the later uniquely plausible publication");
+
+    ShotLogInitialize(Local, 900);
+    const auto old = publication(1000, 101, 11);
+    ShotLogAddMetadata(old); ShotLogWithdrawCommand(Local, 101, old.weaponHandle, 1001);
+    ShotLogAddMetadata(publication(1047, 104, 12)); ShotLogOnFire(Fire(1062));
+    ShotLogAdvance(1373); records = Drain();
+    Expect(records.size() == 1 && records[0].metadataAmbiguous && records[0].metadataCandidateCount == 2 &&
+        records[0].metadataCandidates[0].withdrawn,
+        "withdrawn unconsumed context remains a plausible source of a genuine late native fire");
+
+    ShotLogInitialize(Local, 900);
+    ShotLogAddMetadata(publication(1000, 101, 11)); ShotLogAddMetadata(Metadata(1047, 104));
+    ShotLogOnFire(Fire(1062)); ShotLogAdvance(1373); records = Drain();
+    Expect(records.size() == 1 && records[0].metadataKnown && records[0].metadata.publicationId == 11 &&
+        records[0].metadataCandidateCount == 1,
+        "a newer legacy preview cannot displace the sole plausible real publication");
+
+    ShotLogInitialize(Local, 900);
+    for (unsigned i = 0; i < ShotLogMetadataCandidateCapacity + 2; ++i)
+        ShotLogAddMetadata(publication(1000 + i, 101 + static_cast<int>(i), 11 + i));
+    ShotLogOnFire(Fire(1062)); ShotLogAdvance(1373); records = Drain();
+    Expect(records.size() == 1 && !records[0].metadataKnown && records[0].metadataAmbiguous &&
+        records[0].metadataCandidateCount == ShotLogMetadataCandidateCapacity + 2 && records[0].metadataCandidateOverflow &&
+        records[0].metadataCandidates.back().publicationId == 11 + ShotLogMetadataCandidateCapacity - 1,
+        "candidate detail truncation preserves the total and ambiguity without overflowing its copied storage");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(publication(1000, 101, 11));
+    ShotLogReset(Local, 1050); Drain(); ShotLogOnFire(Fire(1062)); ShotLogAdvance(1373); records = Drain();
+    Expect(records.size() == 1 && !records[0].metadataKnown && records[0].metadataCandidateCount == 0,
+        "source reset clears publication candidates and unique-fire reservations");
+
+    ShotLogInitialize(Local, 900); ShotLogOnFire(Fire());
+    for (unsigned i = 0; i < ShotLogImpactEvidenceCapacity + 4; ++i)
+        ShotLogOnImpact(Impact(1005 + i, 2 + i, {200.0f + i, 4, 0}));
+    ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].uniqueImpacts == ShotLogImpactEvidenceCapacity + 4 &&
+        records[0].impactEvidenceCount == ShotLogImpactEvidenceCapacity && records[0].impactEvidenceOverflow &&
+        records[0].impactEvidence.back().position.x == 200 + ShotLogImpactEvidenceCapacity - 1,
+        "raw impact evidence has bounded storage with explicit total and overflow even without aim metadata");
+
+    ShotLogInitialize(Local, 900);
+    auto cone = Metadata(); cone.capsule.radius = 1;
+    ShotLogAddMetadata(cone); ShotLogOnFire(Fire());
+    ShotLogOnImpact(Impact(1005, 2, {50, 3, 0}));
+    ShotLogOnImpact(Impact(1006, 4, {200, 4, 0})); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].outcome == ShotLogOutcome::Miss &&
+        records[0].reason == ShotLogReason::Unknown && records[0].diagnostic == ShotLogDiagnostic::MixedSpreadCone &&
+        records[0].coneImpactsInside == 1 && records[0].coneImpactsOutside == 1 &&
+        records[0].furthestImpactAngle < records[0].spreadCone && records[0].impactAngle > records[0].spreadCone,
+        "near and far impact directions straddling the saved cone do not become a blanket outside-cone diagnosis");
+    Expect(records.size() == 1 && Format(records[0]).find("impact directions straddle saved spread cone") != std::string::npos,
+        "mixed-cone uncertainty is explicit in the human result without changing the actual miss outcome");
+}
+
+void MetadataLossChecks() {
+    const auto published = [](std::uint64_t receipt, int sequence, std::uint64_t id) {
+        auto value = Metadata(receipt, sequence); value.attackPublished = true; value.publicationId = id;
+        return value;
+    };
+    const auto evict = [&](const char* survivingWeapon = "weapon_AK47") {
+        ShotLogInitialize(Local, 900);
+        ShotLogAddMetadata(published(1000, 1, 1));
+        for (int i = 0; i < 63; ++i) {
+            auto unrelated = Metadata(1001 + i, 100 + i); Text(unrelated.weapon, "glock");
+            ShotLogAddMetadata(unrelated);
+        }
+        auto surviving = published(1047, 1000, 2); Text(surviving.weapon, survivingWeapon);
+        ShotLogAddMetadata(surviving); Drain();
+    };
+    for (const auto fireMs : {1062ull, 1250ull, 1251ull}) {
+        evict(); ShotLogOnFire(Fire(fireMs)); ShotLogOnImpact(Impact(fireMs + 8));
+        ShotLogAdvance(fireMs + 311); const auto records = Drain();
+        const bool expired = fireMs > 1250;
+        Expect(records.size() == 1 && records[0].metadataCandidateCount == 1 &&
+            records[0].metadataKnown == expired && records[0].metadataEvidenceLost != expired &&
+            records[0].metadataAmbiguous != expired && !records[0].metadataCandidateOverflow &&
+            !records[0].metadataLossOverflow && records[0].outcome == ShotLogOutcome::Miss,
+            "an evicted real publication prevents false unique context only through its inclusive receipt window");
+        if (!expired) Expect(records.size() == 1 && records[0].diagnostic == ShotLogDiagnostic::MetadataEvidenceLost &&
+            records[0].impactEvidenceCount == 1,
+            "lost aim context is distinguished from truncated candidate detail while raw native evidence remains");
+    }
+    evict("weapon_deagle"); ShotLogOnFire(Fire(1062, 1, "deagle")); ShotLogAdvance(1373);
+    auto records = Drain();
+    Expect(records.size() == 1 && records[0].metadataKnown && records[0].metadata.publicationId == 2 &&
+        !records[0].metadataEvidenceLost,
+        "evicting another weapon's context does not make the retained weapon association uncertain");
+
+    evict(); ShotLogReset(Local, 1100); Drain();
+    ShotLogAddMetadata(published(1101, 2000, 3)); ShotLogOnFire(Fire(1110)); ShotLogAdvance(1421); records = Drain();
+    Expect(records.size() == 1 && records[0].metadataKnown && !records[0].metadataEvidenceLost &&
+        records[0].metadata.publicationId == 3,
+        "source reset clears bounded metadata-loss history as well as retained publication candidates");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published(990, 1, 1)); ShotLogOnFire(Fire());
+    for (int i = 0; i < 63; ++i) {
+        auto unrelated = Metadata(1001 + i, 100 + i); Text(unrelated.weapon, "glock"); ShotLogAddMetadata(unrelated);
+    }
+    ShotLogAddMetadata(published(1047, 1000, 2)); ShotLogOnFire(Fire(1100, 4));
+    ShotLogAdvance(1411); records = Drain();
+    Expect(records.size() == 2 && records[1].metadataKnown && !records[1].metadataEvidenceLost &&
+        records[1].metadata.publicationId == 2,
+        "eviction of a publication already uniquely assigned to an earlier fire creates no competing context loss");
+
+    const auto overflowLossHistory = [&]() {
+        ShotLogInitialize(Local, 900);
+        for (int i = 0; i < 64; ++i) {
+            auto value = published(1000, i + 1, static_cast<std::uint64_t>(i + 1));
+            std::snprintf(value.weapon, sizeof(value.weapon), "lost_weapon_%d", i);
+            ShotLogAddMetadata(value);
+        }
+        for (int i = 0; i < 64; ++i) ShotLogAddMetadata(Metadata(1100, 100 + i));
+        auto extra = published(1120, 1000, 1000); Text(extra.weapon, "another_lost_weapon"); ShotLogAddMetadata(extra);
+        for (int i = 0; i < 64; ++i) ShotLogAddMetadata(Metadata(1140, 200 + i));
+        ShotLogAddMetadata(published(1160, 2000, 2000)); Drain();
+    };
+    for (const auto fireMs : {1200ull, 1371ull}) {
+        overflowLossHistory(); ShotLogOnFire(Fire(fireMs)); ShotLogAdvance(fireMs + 311); records = Drain();
+        const bool expired = fireMs > 1370;
+        Expect(records.size() == 1 && records[0].metadataCandidateCount == 1 && records[0].metadataKnown == expired &&
+            records[0].metadataEvidenceLost != expired && records[0].metadataLossOverflow != expired,
+            "bounded loss-history overflow exposes conservative uncertainty and expires at its own receipt horizon");
+    }
+}
+
 void CorrelationChecks() {
     ShotLogInitialize(Local, 900);
     ShotLogOnFire(Fire(1000, 1)); ShotLogOnFire(Fire(1100, 2)); ShotLogOnHurt(Hurt(1122, 3));
@@ -805,7 +982,7 @@ void FormattingChecks() {
 }
 
 int main() {
-    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); CorrectedSpreadChecks(); AttemptChecks(); WithdrawChecks(); DamagePredictionChecks(); FormattingChecks();
+    BasicChecks(); MetadataChecks(); PublicationEvidenceChecks(); MetadataLossChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); CorrectedSpreadChecks(); AttemptChecks(); WithdrawChecks(); DamagePredictionChecks(); FormattingChecks();
     std::printf("Shot log checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;
 }

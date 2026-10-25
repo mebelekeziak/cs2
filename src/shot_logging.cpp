@@ -4,6 +4,7 @@
 #include "cs2_offsets.h"
 #include "movement_memory.h"
 #include "movement_telemetry.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -150,8 +151,11 @@ void Drain() noexcept {
             record.metadata.minDamage, record.metadata.predictedHitgroup, damageSummary.actualKnown, damageSummary.actualDamage,
             damageSummary.targetActualKnown, damageSummary.targetActualDamage, damageSummary.partial, record.metadata.spreadVariants);
         const auto detailLength = std::strlen(detail);
-        std::snprintf(detail + detailLength, sizeof(detail) - detailLength, " publication_id=%llu",
-            static_cast<unsigned long long>(record.metadata.publicationId));
+        std::snprintf(detail + detailLength, sizeof(detail) - detailLength,
+            " publication_id=%llu metadata_candidates=%u metadata_candidates_overflow=%u metadata_evidence_lost=%u metadata_loss_overflow=%u impact_evidence_count=%u impact_evidence_total=%u impact_evidence_overflow=%u",
+            static_cast<unsigned long long>(record.metadata.publicationId), record.metadataCandidateCount,
+            record.metadataCandidateOverflow, record.metadataEvidenceLost, record.metadataLossOverflow,
+            record.impactEvidenceCount, record.uniqueImpacts, record.impactEvidenceOverflow);
         sink(detail);
         std::snprintf(detail, sizeof(detail),
             "AIM_SHOT_REASON id=%llu sequence=%d native_fire=%u reason=\"%s\" diagnostic=\"%s\" inferred=%u attack_published=%u aim_ray_valid=%u aim_intersects=%u geometry_impacts=%u short_impacts=%u spread_miss_impacts=%u miss_distance=%.4f impact_distance=%.4f impact_angle_deg=%.4f spread_cone_deg=%.4f overlapping_events=%u fire_ack_timeout_ms=%llu seed_known=0 server_seed_known=0 spread_corrected=%u client_spread_seed=0x%08x spread_variants=%u alternate_client_spread_seed=0x%08x",
@@ -162,7 +166,27 @@ void Drain() noexcept {
             record.impactDistance, record.impactAngle, record.spreadCone, record.overlappingEvents, ShotLogFireAckWindowMs,
             record.metadata.spreadCorrected, record.metadata.clientSpreadSeed, record.metadata.spreadVariants,
             record.metadata.alternateClientSpreadSeed);
+        const auto reasonLength = std::strlen(detail);
+        std::snprintf(detail + reasonLength, sizeof(detail) - reasonLength,
+            " cone_impacts_inside=%u cone_impacts_outside=%u furthest_impact_angle_deg=%.6f",
+            record.coneImpactsInside, record.coneImpactsOutside, record.furthestImpactAngle);
         sink(detail);
+        for (unsigned index = 0; index < std::min(record.metadataCandidateCount,
+                static_cast<unsigned>(record.metadataCandidates.size())); ++index) {
+            const auto& candidate = record.metadataCandidates[index];
+            std::snprintf(detail, sizeof(detail),
+                "AIM_SHOT_CONTEXT_CANDIDATE id=%llu index=%u publication_id=%llu sequence=%d receipt_ms=%llu withdrawn=%u authoritative=0",
+                record.id, index, candidate.publicationId, candidate.commandSequence, candidate.receiptMs, candidate.withdrawn);
+            sink(detail);
+        }
+        for (unsigned index = 0; index < std::min(record.impactEvidenceCount,
+                static_cast<unsigned>(record.impactEvidence.size())); ++index) {
+            const auto& impact = record.impactEvidence[index];
+            std::snprintf(detail, sizeof(detail),
+                "AIM_SHOT_IMPACT id=%llu index=%u receipt_ms=%llu position=(%.9f,%.9f,%.9f) unique_association=1 server_shot_id_known=0",
+                record.id, index, impact.receiptMs, impact.position.x, impact.position.y, impact.position.z);
+            sink(detail);
+        }
         if (record.metadataKnown) {
             const auto& metadata = record.metadata;
             std::snprintf(detail, sizeof(detail),

@@ -26,17 +26,20 @@ AimWeaponSnapshot weapon{};
 AimSpreadContext context{};
 AimShot shot{};
 struct Mock {
-    AimSpreadTime now{100, .6f}, observedPunchTime{};
+    AimSpreadTime now{100, .6f}, observedPunchTime{}, firstPunchTime{}, selectedPunchTime{};
     AimAngles punch{1, -2, .25f}, lastSeedAngles{};
+    AimAngles selectedPunch{1.350812793f, -.027182225f, .000001516f};
+    std::array<AimSpreadTime, 32> punchTimes{};
     int tickOffset = 7, historyTick = 90, scene = 2;
     int convertCalls = 0, timeCalls = 0, punchCalls = 0, seedCalls = 0, ctorCalls = 0, floatCalls = 0;
     int weaponCalls = 0;
     unsigned sampledTicks = 0;
     int expectedAlternateTick = -1;
     int badReturn = 0, lastSeedTick = -1;
+    int selectedPunchFailure = 0;
     std::uint32_t seed = 128;
     std::uint32_t streamSeed = 129;
-    bool arguments = true, weaponCurrent = true, referenceRandom = false;
+    bool arguments = true, weaponCurrent = true, referenceRandom = false, distinctSelectedPunch = false;
     std::array<float, 4> draws{.25f, .125f, .75f, .625f};
     std::array<float, 4> highs{};
 } mock;
@@ -70,6 +73,17 @@ AimAngles* Punch(void* services, AimAngles* out, const AimSpreadTime* time, bool
     ++mock.punchCalls;
     mock.arguments &= services == punchService.data() && out && time && scale;
     if (time) mock.observedPunchTime = *time;
+    if (time && mock.punchCalls == 1) mock.firstPunchTime = *time;
+    if (time && mock.punchCalls <= static_cast<int>(mock.punchTimes.size())) mock.punchTimes[mock.punchCalls - 1] = *time;
+    if (time && mock.distinctSelectedPunch && Same(*time, mock.selectedPunchTime)) {
+        if (mock.selectedPunchFailure == 5) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+        if (mock.selectedPunchFailure == 4) { out->pitch = mock.selectedPunch.pitch; return out; }
+        *out = mock.selectedPunch;
+        if (mock.selectedPunchFailure == 3) out->yaw = std::numeric_limits<float>::quiet_NaN();
+        if (mock.selectedPunchFailure == 1) return nullptr;
+        if (mock.selectedPunchFailure == 2) return reinterpret_cast<AimAngles*>(entry.data());
+        return out;
+    }
     *out = mock.punch;
     return mock.badReturn == 3 ? nullptr : out;
 }
@@ -77,8 +91,8 @@ std::uint32_t Seed(void* unused, const AimAngles* angles, int tick) {
     ++mock.seedCalls;
     mock.arguments &= !unused && angles && std::isfinite(angles->pitch) && std::isfinite(angles->yaw);
     mock.lastSeedAngles = *angles; mock.lastSeedTick = tick;
-    if (tick == mock.observedPunchTime.tick) mock.sampledTicks |= 1;
-    else if (tick == (mock.expectedAlternateTick >= 0 ? mock.expectedAlternateTick : mock.observedPunchTime.tick + 1)) mock.sampledTicks |= 2;
+    if (tick == mock.firstPunchTime.tick) mock.sampledTicks |= 1;
+    else if (tick == (mock.expectedAlternateTick >= 0 ? mock.expectedAlternateTick : mock.firstPunchTime.tick + 1)) mock.sampledTicks |= 2;
     else mock.arguments = false;
     const auto result = mock.referenceRandom ? spread_replay_reference::Seed(*angles, tick) - 1u : mock.seed;
     mock.streamSeed = result + 1u;
@@ -152,7 +166,7 @@ void ReadAndClamp() {
         Reset(); mock.historyTick = value.tick;
         Put(entry.data(), off::HistoryTick, value.tick); Put(entry.data(), off::HistoryFraction, value.fraction);
         Check(AimSpreadRead(context, source, weapon, shot, snapshot) && Same(snapshot.time, value.expected) &&
-            Same(mock.observedPunchTime, value.expected) && snapshot.seedVariants == 1 &&
+            Same(mock.observedPunchTime, snapshot.selectedVariant == 1 ? snapshot.alternateTime : value.expected) && snapshot.seedVariants == 1 &&
             snapshot.selectedVariant == (value.tick + mock.tickOffset > value.expected.tick ? 1U : 0U),
             "four-tick diagnostic clamp is preserved and indexed tick lead selects one firing model");
     }
@@ -287,8 +301,8 @@ void SolveKnownDraws() {
         Check(raw.seedVariants == 1 && raw.selectedVariant == 1 && raw.rawClockAlternative == useRaw &&
             raw.alternateTime.tick == mock.now.tick + lead &&
             raw.alternateTime.fraction == (useRaw ? .25f : mock.now.fraction) &&
-            (useRaw ? raw.alternatePunch.pitch == 0 : raw.alternatePunch.pitch == mock.punch.pitch),
-            "one-tick lead selects next tick with native recoil and larger leads select raw tick with copied current recoil");
+            raw.alternatePunch.pitch == mock.punch.pitch,
+            "next/raw selected clock retains the native punch query at its own exact time");
         mock.expectedAlternateTick = raw.alternateTime.tick;
         const int punchCalls = mock.punchCalls, timeCalls = mock.timeCalls;
         const auto rawSolved = AimSpreadSolve(context, raw, {});
@@ -390,6 +404,47 @@ void SelectedClockReferenceChecks() {
             "bounded cached selected-model solve never samples the unselected clock");
     }
 }
+void SelectedPunchChecks() {
+    for (int lead : {1, 3}) {
+        Reset();
+        weapon.aimPunch = {.064690515f, -.001253350f, 0};
+        mock.historyTick = mock.now.tick + lead - mock.tickOffset;
+        Put(entry.data(), off::HistoryTick, mock.historyTick);
+        mock.distinctSelectedPunch = true;
+        mock.selectedPunchTime = {mock.now.tick + lead, lead > 1 ? .25f : mock.now.fraction};
+        AimSpreadSnapshot snapshot{};
+        Check(AimSpreadRead(context, source, weapon, shot, snapshot) && snapshot.selectedVariant == 1 &&
+            !std::memcmp(&snapshot.alternatePunch, &mock.selectedPunch, sizeof(AimAngles)) &&
+            snapshot.alternatePunch.pitch != weapon.aimPunch.pitch,
+            "selected next/raw model queries shot-time punch instead of substituting current-prediction recoil");
+        Check(mock.punchCalls == 4 && Same(mock.punchTimes[0], snapshot.time) &&
+            Same(mock.punchTimes[1], snapshot.alternateTime) && Same(mock.punchTimes[2], snapshot.time) &&
+            Same(mock.punchTimes[3], snapshot.alternateTime) && mock.arguments,
+            "initial read and final freshness validation both query exact scene-domain clocks with their canonical fractions");
+        const auto clamped = mock.punch;
+        mock.selectedPunch.pitch += .125f;
+        Check(!AimSpreadStillCurrent(context, source, snapshot) && !std::memcmp(&mock.punch, &clamped, sizeof(clamped)),
+            "changed selected-time punch invalidates freshness even while the original clamped punch remains identical");
+    }
+    for (int failure = 1; failure <= 5; ++failure) {
+        Reset(); mock.historyTick = 96; Put(entry.data(), off::HistoryTick, mock.historyTick);
+        mock.distinctSelectedPunch = true; mock.selectedPunchTime = {103, .25f}; mock.selectedPunchFailure = failure;
+        AimSpreadSnapshot snapshot{};
+        Check(!AimSpreadRead(context, source, weapon, shot, snapshot) && !snapshot.valid,
+            "selected-time native failure, foreign pointer, nonfinite or partial output rejects the model explicitly");
+        Reset(); mock.historyTick = 96; Put(entry.data(), off::HistoryTick, mock.historyTick);
+        mock.distinctSelectedPunch = true; mock.selectedPunchTime = {103, .25f};
+        Check(AimSpreadRead(context, source, weapon, shot, snapshot), "selected-time failure fixture starts from a verified model");
+        mock.selectedPunchFailure = failure;
+        Check(!AimSpreadStillCurrent(context, source, snapshot), "late selected-time getter failure invalidates the copied model");
+    }
+    Reset(); mock.historyTick = 96; Put(entry.data(), off::HistoryTick, mock.historyTick);
+    mock.distinctSelectedPunch = true; mock.selectedPunchTime = {103, .5f};
+    AimSpreadSnapshot wrongFraction{};
+    Check(AimSpreadRead(context, source, weapon, shot, wrongFraction) && wrongFraction.alternateTime.fraction == .25f &&
+        wrongFraction.alternatePunch.pitch == mock.punch.pitch,
+        "selected-time query does not accidentally use a different fraction of the same raw tick");
+}
 }
 
 bool AimWeaponStillCurrent(const AimWeaponContext& actualContext, const AimSource& actual, const AimWeaponSnapshot& actualWeapon) noexcept {
@@ -402,7 +457,7 @@ int main() {
     memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, cs2_offsets::ClientImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     if (!memory) return 2;
     client = Address(memory); AimSpreadTestRuntime(true);
-    ReadAndClamp(); RejectAndInvalidate(); SolveKnownDraws(); CacheBoundaryChecks(); SelectedClockReferenceChecks();
+    ReadAndClamp(); RejectAndInvalidate(); SolveKnownDraws(); CacheBoundaryChecks(); SelectedClockReferenceChecks(); SelectedPunchChecks();
     AimSpreadTestRuntime(false); VirtualFree(memory, 0, MEM_RELEASE);
     std::printf("aim_spread_checks: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;

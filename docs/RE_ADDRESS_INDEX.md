@@ -2,7 +2,7 @@
 
 Current Windows AMD64 **client** baseline, recertified October 23, 2026:
 **1.41.9.2 / client-server 2000935 / Source revision 11162119 / Steam 26144732**.
-Version date: October 22, 2026, 14:13:16. All **35/35** installed-file checks pass,
+Version date: October 22, 2026, 14:13:16. All **36/36** installed-file checks pass,
 including jumpbug, indexed spread, native cosmetics, knife animations and the installed skin catalog.
 These are exact-build constants. Runtime rendering/gameplay remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
@@ -219,6 +219,25 @@ Held-fire histories without a native attack index are outside this contract.
 | `RandomCtor` | tier0 | `0x15E7A0` |
 | `RandomFloat` | tier0 | `0x15E880` |
 | `RandomGenerate` | tier0 | `0x15E1B0` |
+
+## Native client shot-construction observer
+
+Header: [aim_fire_observer_offsets.h](../include/aim_fire_observer_offsets.h);
+verifier: [inspect_aim_fire_observer.py](../tools/inspect_aim_fire_observer.py);
+[evidence](../tools/CS2_AIM_FIRE_OBSERVER_EVIDENCE.md).
+
+The observer copies actual native construction output and the native-owned
+local command. It does not manufacture a shot or establish server acceptance.
+The builder's third argument selects primary/secondary attack history; it is
+separate from the scoped weapon mode.
+
+| Symbol | Meaning | Current value |
+| --- | --- | --- |
+| `Builder` | client function RVA | `0x80E530` |
+| `BuilderCall` / `BuilderReturn` | verified ordinary caller | `0x804EDA` / `0x804EDF` |
+| `CurrentCommand` | controller member | `0x780` |
+| `OwnerHandle` | weapon full owner handle | `0x520` |
+| `NativeShotSize` | copied caller-owned output bytes | `0x40` |
 
 ## Native autofire request
 

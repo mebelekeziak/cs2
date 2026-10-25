@@ -648,6 +648,29 @@ void CaptureShot(const Decision& decision, std::uintptr_t command, bool automati
         decision.nativeCompared, decision.baselineChance.valid, decision.baselineChance.percent,
         decision.chance.valid, decision.chance.percent, decision.chance.samples);
     MovementTelemetryPush(message);
+    // Every publication keeps its complete copied model, even if a later fire
+    // receipt has several plausible commands. Never reconstruct this from the
+    // throttled decision report or select an older candidate by ray fit.
+    std::uint32_t flags = 0;
+    AimVector velocity{};
+    const bool movementKnown = Read(decision.source.pawn + movement_offsets::pawn::Flags, flags) &&
+        Read(decision.source.pawn + movement_offsets::pawn::Velocity, velocity) &&
+        std::isfinite(velocity.x) && std::isfinite(velocity.y) && std::isfinite(velocity.z);
+    if (!movementKnown) { flags = 0; velocity = {}; }
+    char model[1408]{};
+    std::snprintf(model, sizeof(model),
+        "AIM_PUBLICATION_MODEL revision=9 sequence=%d publication_id=%llu source_controller=0x%08x source_pawn=0x%08x weapon_time=%.9f command=(%.9f,%.9f,%.9f) current_punch=(%.9f,%.9f,%.9f) desired=(%.9f,%.9f) spread=%.9g inaccuracy=%.9g range=%.3f recoil_index=%.9g clip=%d mode=%d ready=%u minimum_hitchance=%.3f capsule_valid=%u capsule_start=(%.9f,%.9f,%.9f) capsule_end=(%.9f,%.9f,%.9f) capsule_radius=%.9g movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f) autowall=%u penetrations=%d; copied publication model, not native firing inputs",
+        metadata.commandSequence, static_cast<unsigned long long>(metadata.publicationId), metadata.source.controller,
+        metadata.source.pawn, decision.weapon.currentTime,
+        decision.commandAngles.pitch, decision.commandAngles.yaw, decision.commandAngles.roll,
+        decision.weapon.aimPunch.pitch, decision.weapon.aimPunch.yaw, decision.weapon.aimPunch.roll,
+        decision.target.solution.angles.pitch, decision.target.solution.angles.yaw,
+        metadata.spread, metadata.inaccuracy, metadata.range, decision.weapon.recoilIndex, decision.weapon.clip,
+        decision.weapon.mode, decision.weapon.ready, decision.settings.hitchance, metadata.capsuleValid,
+        metadata.capsule.start.x, metadata.capsule.start.y, metadata.capsule.start.z,
+        metadata.capsule.end.x, metadata.capsule.end.y, metadata.capsule.end.z, metadata.capsule.radius,
+        movementKnown, flags, velocity.x, velocity.y, velocity.z, decision.settings.autowall, decision.occlusion.penetrations);
+    MovementTelemetryPush(model);
 }
 bool ModelUnchanged(const Decision& decision) noexcept {
     AimWeaponSnapshot current{};
@@ -789,7 +812,7 @@ void TraceSpread(const AimSpreadSnapshot& model, const AimSpreadSearchResult& co
     const auto& punch = model.selectedVariant ? model.alternatePunch : model.punch;
     char message[1400]{};
     const int written = std::snprintf(message, sizeof(message),
-        "AIM_SPREAD corrected=%u client_seed=0x%08x shot_tick=%d shot_fraction=%.6f residual_degrees=%.6f evaluations=%u command=(%.9f,%.9f) predicted=(%.9f,%.9f) revision=7 sequence=%d history_index=%d scene=%d history_time=%d/%.6f converted_time=%d/%.6f now=%d/%.6f controller_tick=%d variants=%u selected_clock=%u clamped_time=%d/%.6f raw_clock_alternative=%u shot_punch=(%.6f,%.6f,%.6f) current_punch=(%.6f,%.6f,%.6f) clamped_punch=(%.6f,%.6f,%.6f) model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f) native_calls=%u cache_hits=%u; indexed client prediction; server seed/timing not observed",
+        "AIM_SPREAD corrected=%u client_seed=0x%08x shot_tick=%d shot_fraction=%.6f residual_degrees=%.6f evaluations=%u command=(%.9f,%.9f) predicted=(%.9f,%.9f) revision=8 sequence=%d history_index=%d scene=%d history_time=%d/%.6f converted_time=%d/%.6f now=%d/%.6f controller_tick=%d variants=%u selected_clock=%u clamped_time=%d/%.6f raw_clock_alternative=%u shot_punch=(%.6f,%.6f,%.6f) current_punch=(%.6f,%.6f,%.6f) clamped_punch=(%.6f,%.6f,%.6f) model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f) native_calls=%u cache_hits=%u; indexed client prediction; server seed/timing not observed",
         published, correction.seed, time.tick, time.fraction, correction.residualDegrees, correction.evaluations,
         correction.command.pitch, correction.command.yaw, correction.predicted.pitch, correction.predicted.yaw,
         model.commandSequence, model.historyIndex, model.scene, model.historyTick, model.historyFraction,
@@ -802,7 +825,7 @@ void TraceSpread(const AimSpreadSnapshot& model, const AimSpreadSearchResult& co
         model.velocity.x, model.velocity.y, model.velocity.z, correction.nativeSeedCalls, correction.nativeCacheHits);
     if (written < 0 || static_cast<std::size_t>(written) >= sizeof(message))
         std::snprintf(message, sizeof(message),
-            "AIM_SPREAD corrected=%u client_seed=0x%08x revision=7 sequence=%d shot_tick=%d variants=%u selected_clock=%u diagnostic_compact=1 model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f) native_calls=%u cache_hits=%u; indexed client prediction; server seed/timing not observed",
+            "AIM_SPREAD corrected=%u client_seed=0x%08x revision=8 sequence=%d shot_tick=%d variants=%u selected_clock=%u diagnostic_compact=1 model_inaccuracy=%.9g model_spread=%.9g pattern=%u movement_known=%u flags=0x%x velocity=(%.6f,%.6f,%.6f) native_calls=%u cache_hits=%u; indexed client prediction; server seed/timing not observed",
             published, correction.seed, model.commandSequence, time.tick, correction.variants, model.selectedVariant,
             model.weapon.inaccuracy, model.weapon.spread, model.pattern, model.movementStateKnown, model.movementFlags,
             model.velocity.x, model.velocity.y, model.velocity.z, correction.nativeSeedCalls, correction.nativeCacheHits);
@@ -956,9 +979,9 @@ void StandaloneSpread(void* input, std::uintptr_t command) noexcept {
     ObserveSpreadWeaponSample(source, weapon, weaponValid);
     if (!weaponValid || !weapon.ready) { spreadReason = weapon.reason; return; }
     if (!AimSpreadRead(spreadContext, source, weapon, shot, model)) { spreadReason = model.reason; return; }
-    // Preserve current predicted manual recoil when raw input is ahead of the
-    // callback clock; historical clamped punch may already have decayed away.
-    const auto& intendedPunch = model.rawClockAlternative ? weapon.aimPunch : model.punch;
+    // Preserve the native unspread direction using the same selected-time
+    // punch as the solve; current-prediction punch is a different query.
+    const auto& intendedPunch = model.selectedVariant ? model.alternatePunch : model.punch;
     const AimAngles desired{shot.view.pitch + intendedPunch.pitch, shot.view.yaw + intendedPunch.yaw, 0};
     const auto correction = AimSpreadSolve(spreadContext, model, desired);
     Decision validation{}; validation.source = source; validation.weapon = weapon;
@@ -1454,7 +1477,7 @@ void SilentAimFlushTelemetry() noexcept {
     char spreadMessage[512]{};
     AcquireSRWLockShared(&mutationLock);
     std::snprintf(spreadMessage, sizeof(spreadMessage),
-        "AIM_SPREAD_DIAGNOSTICS revision=7 enabled=%u available=%u corrected=%llu skipped=%llu retained=%llu replayed=%llu replay_rejected=%llu retired=%llu retries=%llu reason=\"%s\"; indexed client prediction; server seed/timing unobserved",
+        "AIM_SPREAD_DIAGNOSTICS revision=8 enabled=%u available=%u corrected=%llu skipped=%llu retained=%llu replayed=%llu replay_rejected=%llu retired=%llu retries=%llu reason=\"%s\"; indexed client prediction; server seed/timing unobserved",
         settings.removeSpread, spreadPrepared, spreadCorrected, spreadSkipped, spreadRetained, spreadReplayed, spreadReplayRejected, spreadRetired, spreadRetries, spreadReason);
     ReleaseSRWLockShared(&mutationLock);
     logger(spreadMessage);

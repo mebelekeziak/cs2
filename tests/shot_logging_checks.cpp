@@ -382,6 +382,60 @@ void TestReasonOutput() {
         Has("actual_damage_known=0 actual_damage=0 target_actual_known=0 target_actual_damage=0"),
         "ambiguous effects keep confirmed event damage separate from each shot's unknown actual damage");
 }
+void TestPublicationAndImpactEvidenceOutput() {
+    Start();
+    auto old = Metadata(1000, 42); old.attackPublished = true; old.publicationId = 11;
+    auto newer = Metadata(1047, 45); newer.attackPublished = true; newer.publicationId = 12;
+    ShotLoggingCapture(old); ShotLoggingCapture(newer);
+    Deliver(Fire(1062)); Deliver(Impact(1070)); FlushAt(1373);
+    Expect(Has("AIM_SHOT #1 MISS unknown: several possible aim commands") &&
+        Has("metadata=0 ambiguous_metadata=1") && Has("metadata_candidates=2 metadata_candidates_overflow=0"),
+        "delayed native fire reports competing publications instead of diagnosing the newer command's cone");
+    Expect(Count("AIM_SHOT_CONTEXT_CANDIDATE ") == 2 &&
+        Has("publication_id=11 sequence=42 receipt_ms=1000 withdrawn=0 authoritative=0") &&
+        Has("publication_id=12 sequence=45 receipt_ms=1047 withdrawn=0 authoritative=0"),
+        "file output retains each candidate identity, sequence and timestamp without claiming server attribution");
+    Expect(Count("AIM_SHOT_GEOMETRY ") == 0 && Count("AIM_SHOT_IMPACT ") == 1 &&
+        Has("receipt_ms=1070 position=(200.000000000,0.000000000,0.000000000)") &&
+        Has("impact_evidence_count=1 impact_evidence_total=1 impact_evidence_overflow=0"),
+        "raw native impact output survives ambiguous metadata without synthesizing copied shot geometry");
+
+    Start(); Deliver(Fire()); const auto raw = Impact(); Deliver(raw); Deliver(raw); FlushAt(1321);
+    Expect(Count("AIM_SHOT_IMPACT ") == 1 && Has("receipt_ms=1020 position=(200.000000000,0.000000000,0.000000000)") &&
+        Count("AIM_SHOT_GEOMETRY ") == 0,
+        "a uniquely associated raw impact is emitted exactly once even when no aim metadata exists");
+
+    Start(); Deliver(Fire());
+    for (unsigned i = 0; i < ShotLogImpactEvidenceCapacity + 4; ++i) {
+        auto impact = Impact(1020 + i, 2 + i); impact.position.x += i; Deliver(impact);
+    }
+    FlushAt(1321);
+    Expect(Count("AIM_SHOT_IMPACT ") == ShotLogImpactEvidenceCapacity &&
+        Has("impact_evidence_count=16 impact_evidence_total=20 impact_evidence_overflow=1"),
+        "raw-impact logging keeps bounded output while exposing the actual receipt total and truncation");
+
+    Start(); auto cone = Metadata(); cone.capsule = {{100, 0, -2}, {100, 0, 2}, 1};
+    ShotLoggingCapture(cone); Deliver(Fire());
+    auto near = Impact(); near.position = {50, 3, 0}; Deliver(near);
+    auto far = Impact(1021, 4); far.position = {200, 4, 0}; Deliver(far); FlushAt(1321);
+    Expect(Has("diagnostic=\"impact directions straddle saved spread cone\"") &&
+        Has("cone_impacts_inside=1 cone_impacts_outside=1 furthest_impact_angle_deg=") &&
+        Count("AIM_SHOT_IMPACT ") == 2 && !Has("diagnostic=\"impact outside saved spread cone\""),
+        "straddling penetration-impact directions retain both points and a specific uncertainty diagnostic");
+
+    Start();
+    auto lost = Metadata(1000, 1); lost.attackPublished = true; lost.publicationId = 1; ShotLoggingCapture(lost);
+    for (int i = 0; i < 63; ++i) {
+        auto other = Metadata(1001 + i, 100 + i); Copy(other.weapon, "glock"); ShotLoggingCapture(other);
+    }
+    auto retained = Metadata(1047, 1000); retained.attackPublished = true; retained.publicationId = 2;
+    ShotLoggingCapture(retained); Deliver(Fire(1062)); Deliver(Impact(1070)); FlushAt(1373);
+    Expect(Has("AIM_SHOT #1 MISS unknown: aim context lost before fire association") &&
+        Has("metadata_candidates=1 metadata_candidates_overflow=0 metadata_evidence_lost=1 metadata_loss_overflow=0") &&
+        Count("AIM_SHOT_IMPACT ") == 1,
+        "evicted publication uncertainty is explicit even when one retained candidate and a raw impact remain");
+}
+
 void TestWithdrawnPublications() {
     for (unsigned close = 0; close < 3; ++close) {
         Start();
@@ -513,6 +567,7 @@ int main() {
     TestTransientLocalLoss();
     TestStopAndUnlockedSink();
     TestReasonOutput();
+    TestPublicationAndImpactEvidenceOutput();
     TestWithdrawnPublications();
     TestDamagePredictionOutput();
     captureFromSink = false;

@@ -2,6 +2,55 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Remove spread selected-time punch — revision 8, October 25
+
+The new native capture shows the selected clock matches all 15 observed
+corrected commands, but one command uses a different native shot punch. That
+1.29-degree difference changes the spread seed and produces a roughly
+31-degree reconstructed ray error. Remove spread now queries punch at its
+selected native shot time and revalidates that value before publication,
+instead of substituting current-prediction recoil. Standalone compensation
+uses the same selected punch consistently. The existing solver, clock rule
+and ordinary hitchance path remain.
+
+The short corrected interval contains six hits and nine misses. Native origin
+and final-accuracy differences remain under investigation; improved live
+accuracy is not claimed yet. Actual final native spread/inaccuracy getter
+returns now join the existing construction diagnostics. See
+[revision 8 evidence and limits](docs/REMOVE_SPREAD_REVISION8.md).
+
+Restart CS2 normally, then use **Load Overlay.cmd** and keep Shot logging
+enabled for the next offline/private comparison. Stopped code stays resident
+until process exit. Build/launch commands are unchanged.
+
+Both x64 Release variants build without project compiler warnings and pass
+**71/71 CTest suites each**. The selected-punch adapter and integrated pipeline
+each pass **489 checks**; the expanded observer passes **121**. All **36/36**
+installed-file components pass, with **18** bad observer headers rejected.
+Both DLLs retain zero static TLS and delay imports. These checks do not
+establish post-fix live hit rate.
+
+## Renewed miss-streak investigation — October 25, 2026
+
+A later capture confirms recurring Scout misses after the initial clean
+reports. The retained publication is intact, but native fire receipts can
+have several plausible command publications. Six of eight outside-cone cases
+fit an earlier publication; the other two mix inside/outside impact directions.
+The tracker now reports ambiguous context instead of confidently choosing the
+latest command, retains raw impacts and exposes mixed-cone evidence.
+
+`AIM_PUBLICATION_MODEL` records each complete copied model.
+`AIM_NATIVE_BUILT_SHOT` observes the engine's actual local shot construction,
+including its native command, time, origin, effective angles and punch. It
+does not edit firing behavior or establish server acceptance. The remaining
+actual misses are **not verified fixed** by these diagnostic changes.
+See [the completed capture and next comparison](docs/SHOT_MISSES_FOLLOWUP_20261025.md).
+
+The cosmetics are checkpointed in **cef25af**; source review found no direct
+gameplay mutation from those visual controls. Build/launch commands remain
+unchanged. Use a fresh normal restart and **Load Overlay.cmd** for new logs;
+existing Shot logging must be enabled. Stopped code remains resident.
+
 ## Viewmodel controls and cosmetic recoil — October 25, 2026
 
 **Revision 2 follow-up:** the user found the first implementation left scoped

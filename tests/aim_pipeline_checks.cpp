@@ -80,6 +80,8 @@ unsigned spreadBudget = 0;
 bool spreadAvailable = true, spreadCurrent = true, spreadMiss = false;
 bool spreadAlternateMiss = false;
 bool spreadRawAlternative = false;
+bool spreadPunchOverride = false;
+AimAngles spreadSelectedPunch{}, spreadRequestedAim{};
 int spreadMutation = 0;
 void MutateModel(int mode) {
     if (mode == 1) weapon.inaccuracy = .5f;
@@ -279,6 +281,7 @@ struct World {
         spreadTolerance = 0; spreadBudget = 0;
         spreadAlternateMiss = false;
         spreadRawAlternative = false;
+        spreadPunchOverride = false; spreadSelectedPunch = spreadRequestedAim = {};
         weapon = {};
         weapon.weapon = 0x444000; weapon.identity = 0x445000; weapon.services = 0x446000;
         weapon.identity = Address(weaponIdentity);
@@ -941,6 +944,7 @@ bool AimSpreadRead(const AimSpreadContext&, const AimSource& source, const AimWe
         out.rawClockAlternative = true; out.converted = out.alternateTime = {104, .25f};
         out.punch.pitch = 1.25f;
         out.selectedVariant = 1;
+        if (spreadPunchOverride) out.alternatePunch = spreadSelectedPunch;
     }
     out.seedVariants = 1;
     out.valid = spreadAvailable && shot.index >= 0;
@@ -951,6 +955,7 @@ bool AimSpreadStillCurrent(const AimSpreadContext&, const AimSource&, const AimS
 AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext&, const AimSpreadSnapshot& model, const AimAngles& desired,
     double tolerance, unsigned budget) noexcept {
     ++spreadSolves;
+    spreadRequestedAim = desired;
     spreadTolerance = tolerance; spreadBudget = budget;
     const auto corrected = AimSpreadCompensate(desired, model.selectedVariant ? model.alternatePunch : model.punch, .15, -.08);
     AimSpreadSearchResult result{};
@@ -1727,7 +1732,14 @@ void SpreadPipelineChecks(World& world) {
     world.Reset(); enable(false, false); weapon.name = "C_WeaponSSG08"; spreadRawAlternative = true;
     Command rawManual; physical(rawManual); world.History(rawManual);
     Expect(Equal(rawManual.History(), AimSpreadCompensate(Command::PhysicalView, {}, .15, -.08).command),
-        "raw-clock standalone Scout preserves current intended recoil rather than reintroducing decayed historical punch");
+        "raw-clock standalone Scout preserves selected-time recoil rather than reintroducing decayed clamped punch");
+    world.Reset(); enable(false, false); spreadRawAlternative = spreadPunchOverride = true;
+    weapon.aimPunch = {.064690515f, -.001253350f, 0};
+    spreadSelectedPunch = {1.350812793f, -.027182225f, .000001516f};
+    Command nativePunchManual; physical(nativePunchManual); world.History(nativePunchManual);
+    Expect(Equal(spreadRequestedAim, {Command::PhysicalView.pitch + spreadSelectedPunch.pitch,
+        Command::PhysicalView.yaw + spreadSelectedPunch.yaw, 0}) && spreadSolves == 1 && recorderCalls == 0,
+        "standalone correction uses selected native shot punch for both desired unspread direction and solver input");
     world.Reset(); enable(true, false); Command heldAim; physical(heldAim, false); world.History(heldAim);
     Expect(Equal(heldAim.History(), Desired()) && spreadSolves == 0,
         "unsupported held spread history keeps ordinary manual silent aim available");
@@ -1741,7 +1753,7 @@ void SpreadPipelineChecks(World& world) {
         "corrected indexed automatic ray can fire below uncorrected cone chance; metadata is one conditional ray");
     bool copiedMovement = false;
     for (const auto& message : telemetry) if (message.find("AIM_SPREAD corrected=1") == 0)
-        copiedMovement = message.size() < 1399 && message.find("revision=7 ") != std::string::npos &&
+        copiedMovement = message.size() < 1399 && message.find("revision=8 ") != std::string::npos &&
             message.find("model_inaccuracy=0.800000012 model_spread=0 pattern=0 movement_known=1 flags=0x0 velocity=(10.000000,-20.000000,30.000000)") != std::string::npos &&
             message.ends_with("server seed/timing not observed");
     Expect(copiedMovement, "bounded revision-seven spread trace retains exact model accuracy and copied movement without truncation");

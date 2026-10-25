@@ -53,6 +53,19 @@ bool Pattern(const AimSpreadContext& context, bool& pattern) noexcept {
     pattern = value != 0;
     return true;
 }
+bool ReadPunch(const AimSpreadContext& context, const AimWeaponSnapshot& weapon,
+    const AimSpreadTime& time, AimAngles& punch) noexcept {
+    if (!context.punch || !weapon.punchServices || time.tick < 0 ||
+        time.tick >= std::numeric_limits<int>::max() - 4 ||
+        !std::isfinite(time.fraction) || time.fraction < 0 || time.fraction >= 1) return false;
+    // A partial native output is unavailable, rather than a mixture of an old
+    // current-prediction value and the selected timestamp's punch.
+    punch = {NAN, NAN, NAN};
+    __try {
+        if (context.punch(reinterpret_cast<void*>(weapon.punchServices), &punch, &time, true) != &punch) return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return std::isfinite(punch.pitch) && std::isfinite(punch.yaw) && std::isfinite(punch.roll);
+}
 bool ReadTimePunch(const AimSpreadContext& context, const AimWeaponSnapshot& weapon,
     int historyTick, float historyFraction, int scene, AimSpreadTime& shotTime,
     AimSpreadTime& now, AimAngles& punch, AimSpreadTime& converted) noexcept {
@@ -68,9 +81,8 @@ bool ReadTimePunch(const AimSpreadContext& context, const AimWeaponSnapshot& wea
         const AimSpreadTime minimum{now.tick - 4, now.fraction};
         if (Before(shotTime, minimum)) shotTime = minimum;
         if (Before(now, shotTime)) shotTime = now;
-        if (context.punch(reinterpret_cast<void*>(weapon.punchServices), &punch, &shotTime, true) != &punch) return false;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-    return std::isfinite(punch.pitch) && std::isfinite(punch.yaw) && std::isfinite(punch.roll);
+    return ReadPunch(context, weapon, shotTime, punch);
 }
 struct CachedSample {
     std::uint32_t pitch = 0, yaw = 0, seed = 0;
@@ -209,20 +221,23 @@ bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source, con
     // The later user trial places raw indexed input 2-5 ticks ahead of this
     // callback's clock. Its observed rays fit that raw timestamp much better.
     // Keep the one-tick alternative for a one-tick lead. Larger leads retain
-    // raw indexed time with the already copied current-prediction recoil.
+    // raw indexed time. Its recoil must be queried at that same time below.
     if (out.converted.tick > out.time.tick + 1) {
         if (out.converted.tick > std::numeric_limits<int>::max() - 4) {
             out.reason = "raw history time outside supported range"; return false;
         }
         out.rawClockAlternative = true;
         out.alternateTime = out.converted;
-        // This is an existing native current-prediction snapshot, not a query
-        // into future punch caches or a claim about authoritative server recoil.
-        out.alternatePunch = weapon.aimPunch;
     }
     // Compensate the one model chosen by indexed timing. Requiring a second,
     // unselected random ray to hit postpones otherwise usable automatic shots.
     out.selectedVariant = out.converted.tick > out.time.tick ? 1U : 0U;
+    // The native builder passes its selected scene-domain TimePair to this
+    // exact getter. Current-prediction punch is a different query and can cross
+    // a seed bin even when the selected firing tick is otherwise correct.
+    if (out.selectedVariant == 1 && !ReadPunch(context, weapon, out.alternateTime, out.alternatePunch)) {
+        out.reason = "selected-time shot punch unavailable"; return false;
+    }
     out.valid = true;
     if (!AimSpreadStillCurrent(context, source, out)) { out.valid = false; out.reason = "shot model changed"; return false; }
     out.reason = "indexed native shot model";
@@ -234,7 +249,7 @@ bool AimSpreadStillCurrent(const AimSpreadContext& context, const AimSource& sou
     std::uint32_t presence = 0;
     bool pattern = false;
     AimSpreadTime time{}, now{}, converted{}; AimAngles punch{};
-    return snapshot.valid && Current(context) && WeaponCurrent(context, source, snapshot.weapon) &&
+    if (!(snapshot.valid && snapshot.selectedVariant <= 1 && Current(context) && WeaponCurrent(context, source, snapshot.weapon) &&
         Read(snapshot.entry + silent_aim_offsets::history::Presence, presence) &&
         (presence & off::HistoryTimePresent) == off::HistoryTimePresent &&
         Read(snapshot.entry + off::HistoryTick, tick) && tick == snapshot.historyTick &&
@@ -243,7 +258,15 @@ bool AimSpreadStillCurrent(const AimSpreadContext& context, const AimSource& sou
         Pattern(context, pattern) && pattern == snapshot.pattern &&
         ReadTimePunch(context, snapshot.weapon, tick, fraction, scene, time, now, punch, converted) &&
         Same(time, snapshot.time) && Same(now, snapshot.now) && Same(converted, snapshot.converted) &&
-        !std::memcmp(&punch, &snapshot.punch, sizeof(punch));
+        !std::memcmp(&punch, &snapshot.punch, sizeof(punch)))) return false;
+    // Freshness includes the punch actually used by the solve, not only the
+    // original clamped query. The native evaluator may refresh memoized state.
+    if (snapshot.selectedVariant == 1) {
+        AimAngles selectedPunch{};
+        return ReadPunch(context, snapshot.weapon, snapshot.alternateTime, selectedPunch) &&
+            !std::memcmp(&selectedPunch, &snapshot.alternatePunch, sizeof(selectedPunch));
+    }
+    return true;
 }
 AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext& context, const AimSpreadSnapshot& snapshot,
     const AimAngles& desired, double stopResidualDegrees, unsigned maxEvaluations) noexcept {

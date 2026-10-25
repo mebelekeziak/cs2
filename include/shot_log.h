@@ -14,6 +14,8 @@ inline constexpr std::uint64_t ShotLogFireAckWindowMs = 1000;
 inline constexpr unsigned ShotLogPendingCapacity = 64;
 inline constexpr unsigned ShotLogCompletedCapacity = 64;
 inline constexpr unsigned ShotLogDamageCapacity = 8;
+inline constexpr unsigned ShotLogMetadataCandidateCapacity = 8;
+inline constexpr unsigned ShotLogImpactEvidenceCapacity = 16;
 
 struct ShotLogSource {
     std::uint64_t lifecycle = 0;
@@ -87,7 +89,17 @@ enum class ShotLogReason { None, Spread, ImpactShort, NoImpact, UnregisteredShot
 enum class ShotLogDiagnostic { None, NoFireEvent, NoImpactEvent, OverlappingEvents,
     LateDelivery, SourceChanged, Stopped, Capacity, NoMetadata, OverlappingMetadata,
     NoCapsule, InvalidAim, AimMissedCapsule, ImpactMissedCapsule, ImpactBeforeCapsule,
-    ImpactCrossedCapsule, OutsideSpreadCone, MixedImpacts, InvalidTrajectory };
+    ImpactCrossedCapsule, OutsideSpreadCone, MixedImpacts, InvalidTrajectory,
+    MixedSpreadCone, MetadataEvidenceLost };
+struct ShotLogMetadataCandidate {
+    std::uint64_t publicationId = 0, receiptMs = 0;
+    int commandSequence = 0;
+    bool withdrawn = false;
+};
+struct ShotLogImpactEvidence {
+    std::uint64_t receiptMs = 0;
+    AimVector position{};
+};
 struct ShotLogDamage {
     std::uint32_t victimController = UINT32_MAX, victimPawn = UINT32_MAX;
     char victimName[64]{};
@@ -104,6 +116,11 @@ struct ShotLogRecord {
     ShotLogMetadata metadata{};
     std::uint64_t metadataAgeMs = 0;
     bool metadataKnown = false, metadataAmbiguous = false;
+    // Plausible real publications at fire receipt, not authoritative shot IDs.
+    std::array<ShotLogMetadataCandidate, ShotLogMetadataCandidateCapacity> metadataCandidates{};
+    unsigned metadataCandidateCount = 0;
+    bool metadataCandidateOverflow = false;
+    bool metadataEvidenceLost = false, metadataLossOverflow = false;
     ShotLogOutcome outcome = ShotLogOutcome::Unconfirmed;
     ShotLogCloseReason closeReason = ShotLogCloseReason::Settled;
     ShotLogTrajectory trajectory = ShotLogTrajectory::Unknown;
@@ -111,8 +128,14 @@ struct ShotLogRecord {
     ShotLogDiagnostic diagnostic = ShotLogDiagnostic::None;
     bool aimRayValid = false, aimIntersectsCapsule = false;
     unsigned geometryImpacts = 0, shortImpacts = 0, spreadMissImpacts = 0;
+    unsigned coneImpactsInside = 0, coneImpactsOutside = 0;
     float missDistance = -1, impactDistance = 0, impactAngle = 0, spreadCone = 0;
+    float furthestImpactAngle = -1;
     AimVector furthestImpact{};
+    // Unique raw receipts survive even when no publication can be selected.
+    std::array<ShotLogImpactEvidence, ShotLogImpactEvidenceCapacity> impactEvidence{};
+    unsigned impactEvidenceCount = 0;
+    bool impactEvidenceOverflow = false;
     std::array<ShotLogDamage, ShotLogDamageCapacity> damage{};
     unsigned damageCount = 0, uniqueImpacts = 0, ambiguousEvents = 0, overlappingEvents = 0;
     bool damageOverflow = false, evidenceLost = false, possibleLateEvent = false, reorderedEvent = false;

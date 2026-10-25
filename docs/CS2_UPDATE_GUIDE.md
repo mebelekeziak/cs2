@@ -26,7 +26,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all thirty-five frozen verifiers independently, so
+rewrite offsets. It runs all thirty-six frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -36,10 +36,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Thirty-five component JSON files: exact command, exit code, stdout and stderr.
+- Thirty-six component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all thirty-five static checks passed; **1** means one or more
+Exit code **0** means all thirty-six static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -118,6 +118,7 @@ listed below; the combined runner supplies the correct installation arguments.
 | Silent aim history | [inspect_silent_aim.py](../tools/inspect_silent_aim.py) | [history evidence](../tools/CS2_SILENT_AIM_EVIDENCE.md) |
 | Aim spread/inaccuracy/punch/readiness | [inspect_aim_weapon.py](../tools/inspect_aim_weapon.py) | [weapon evidence](../tools/CS2_AIM_WEAPON_EVIDENCE.md) |
 | Native current shooting origin | [inspect_aim_shoot_origin.py](../tools/inspect_aim_shoot_origin.py) | [origin evidence](../tools/CS2_AIM_SHOOT_ORIGIN_EVIDENCE.md) |
+| Native client shot-construction observer | [inspect_aim_fire_observer.py](../tools/inspect_aim_fire_observer.py) | [observer evidence](../tools/CS2_AIM_FIRE_OBSERVER_EVIDENCE.md) |
 | Native penetration | [inspect_autowall.py](../tools/inspect_autowall.py) | [autowall evidence](../tools/CS2_AUTOWALL_EVIDENCE.md) |
 | Smoke/inferno areas | [inspect_grenade_areas.py](../tools/inspect_grenade_areas.py) | [area evidence](../tools/CS2_GRENADE_AREAS_EVIDENCE.md) |
 | Smoke/flash effects | [inspect_grenade_effects.py](../tools/inspect_grenade_effects.py) | [effect evidence](../tools/CS2_GRENADE_EFFECTS_EVIDENCE.md) |
