@@ -27,6 +27,7 @@ struct SilentAimSettings {
     std::uint32_t hitgroups = AimHitgroupBit(AimHitgroup::Chest);
     bool autowall = false;
     bool removeSpread = false;
+    bool nativeHitchance = false;
 
     bool operator==(const SilentAimSettings&) const = default;
 };

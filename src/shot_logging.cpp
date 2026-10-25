@@ -149,6 +149,9 @@ void Drain() noexcept {
             damageSummary.predictionKnown, damageSummary.predictionKnown ? record.metadata.predictedDamage : 0,
             record.metadata.minDamage, record.metadata.predictedHitgroup, damageSummary.actualKnown, damageSummary.actualDamage,
             damageSummary.targetActualKnown, damageSummary.targetActualDamage, damageSummary.partial, record.metadata.spreadVariants);
+        const auto detailLength = std::strlen(detail);
+        std::snprintf(detail + detailLength, sizeof(detail) - detailLength, " publication_id=%llu",
+            static_cast<unsigned long long>(record.metadata.publicationId));
         sink(detail);
         std::snprintf(detail, sizeof(detail),
             "AIM_SHOT_REASON id=%llu sequence=%d native_fire=%u reason=\"%s\" diagnostic=\"%s\" inferred=%u attack_published=%u aim_ray_valid=%u aim_intersects=%u geometry_impacts=%u short_impacts=%u spread_miss_impacts=%u miss_distance=%.4f impact_distance=%.4f impact_angle_deg=%.4f spread_cone_deg=%.4f overlapping_events=%u fire_ack_timeout_ms=%llu seed_known=0 server_seed_known=0 spread_corrected=%u client_spread_seed=0x%08x spread_variants=%u alternate_client_spread_seed=0x%08x",
@@ -237,6 +240,16 @@ void ShotLoggingCapture(const ShotLogMetadata& copied) noexcept {
         metadata.source = source;
         ShotLogAddMetadata(metadata);
     }
+    ReleaseSRWLockExclusive(&stateLock);
+}
+void ShotLoggingWithdrawCommand(const ShotLogSource& copiedSource, int sequence,
+    std::uint32_t weaponHandle) noexcept {
+    if (!active.load(std::memory_order_acquire) || !ShotLogGetSettings().enabled ||
+        copiedSource.controller == UINT32_MAX || copiedSource.pawn == UINT32_MAX) return;
+    AcquireSRWLockExclusive(&stateLock);
+    if (active.load(std::memory_order_acquire) && copiedSource.controller == source.controller &&
+        copiedSource.pawn == source.pawn)
+        ShotLogWithdrawCommand(source, sequence, weaponHandle, Now());
     ReleaseSRWLockExclusive(&stateLock);
 }
 void ShotLoggingStop(const char* reason) noexcept {

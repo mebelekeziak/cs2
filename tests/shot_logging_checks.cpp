@@ -382,6 +382,79 @@ void TestReasonOutput() {
         Has("actual_damage_known=0 actual_damage=0 target_actual_known=0 target_actual_damage=0"),
         "ambiguous effects keep confirmed event damage separate from each shot's unknown actual damage");
 }
+void TestWithdrawnPublications() {
+    for (unsigned close = 0; close < 3; ++close) {
+        Start();
+        for (int i = 0; i < 512; ++i) {
+            auto sample = Metadata(1000 + i, i + 1); sample.attackPublished = true;
+            ShotLoggingTestClock(sample.receiptMs); ShotLoggingCapture(sample);
+            ShotLoggingWithdrawCommand(sample.source, sample.commandSequence, sample.weaponHandle);
+            ShotLoggingWithdrawCommand(sample.source, sample.commandSequence, sample.weaponHandle);
+        }
+        if (close == 0) FlushAt(5000);
+        else if (close == 1) {
+            ShotNativeEvent roundEnd{}; roundEnd.kind = ShotNativeEventKind::RoundEnd; roundEnd.receiptMs = 1512;
+            Deliver(roundEnd); FlushAt(1512);
+        } else {
+            ShotLoggingTestClock(1512); ShotLoggingStop("withdrawn publication test"); FlushAt(1512);
+        }
+        Expect(Count("AIM_SHOT cmd #") == 0 && Count("AIM_SHOT #") == 0 && Count("AIM_SHOT_DETAIL") == 0 &&
+            ShotLogGetCounters().withdrawnCommands == 512 && ShotLogGetCounters().completed == 0 &&
+            ShotLogGetCounters().unregistered == 0,
+            "withdrawn publication flood produces no results on timeout, round end or cooperative stop");
+    }
+
+    Start(); auto published = Metadata(); published.attackPublished = true;
+    ShotLoggingCapture(published); ShotLoggingTestClock(1001);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    Deliver(Fire()); Deliver(Hurt()); FlushAt(1321);
+    Expect(Count("AIM_SHOT #") == 1 && Count("AIM_SHOT cmd #") == 0 && Has("HIT BOT Delta") && Has("HC 75%") &&
+        Has("metadata=1 ambiguous_metadata=0 metadata_age_ms=10 sequence=42") && ShotLogGetCounters().withdrawnCommands == 1,
+        "native fire and hurt remain visible with copied aim metadata after adapter withdrawal");
+
+    Start(); ShotLoggingCapture(published);
+    auto stale = published.source; stale.controller += 0x8000;
+    ShotLoggingWithdrawCommand(stale, published.commandSequence, published.weaponHandle);
+    stale = published.source; stale.pawn += 0x8000;
+    ShotLoggingWithdrawCommand(stale, published.commandSequence, published.weaponHandle);
+    auto raw = Fire(); raw.actor.local = false; Deliver(raw); Deliver(Hurt()); FlushAt(1321);
+    Expect(Count("AIM_SHOT #") == 1 && Has("HIT BOT Delta") && !Has("source changed before settlement") &&
+        ShotLogGetCounters().withdrawnCommands == 0,
+        "stale controller or pawn withdrawals cannot adopt a source or interrupt actual local fire");
+
+    Start(); ShotLoggingCapture(published);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle + 0x8000);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence + 1, published.weaponHandle); FlushAt(2061);
+    Expect(Count("AIM_SHOT cmd #") == 1 && ShotLogGetCounters().withdrawnCommands == 0 && ShotLogGetCounters().unregistered == 1,
+        "adapter withdrawal matches the full weapon handle and command sequence before retiring an attempt");
+
+    Start(); ShotLoggingCapture(published);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    auto retry = published; retry.receiptMs = 1100; ShotLoggingCapture(retry);
+    auto duplicate = retry; duplicate.receiptMs = 1200; ShotLoggingCapture(duplicate); FlushAt(2160);
+    Expect(Count("AIM_SHOT cmd #") == 0, "fresh command retry keeps its inclusive acknowledgement boundary");
+    FlushAt(2161); FlushAt(3000);
+    Expect(Count("AIM_SHOT cmd #") == 1 && Has("fire_ms=1100") && ShotLogGetCounters().withdrawnCommands == 1,
+        "fresh retry produces one attempt and duplicate capture cannot extend or repeat it");
+
+    Start(); ShotLoggingCapture(published);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    Deliver(Fire()); Deliver(Hurt()); retry.receiptMs = 2500; ShotLoggingCapture(retry); FlushAt(5000);
+    Expect(Count("AIM_SHOT #") == 1 && Has("HIT BOT Delta") && Count("AIM_SHOT cmd #") == 0 && ShotLogGetCounters().unregistered == 0,
+        "recapturing a withdrawn command preserves its already observed native fire acknowledgement");
+
+    Start(); ShotLoggingCapture(published);
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    ShotLogSetSettings({false, false}); ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    ShotLoggingPump(); ShotLogSetSettings({true, false}); ShotLoggingPump(); FlushAt(5000);
+    Expect(Count("AIM_SHOT cmd #") == 0 && ShotLogGetCounters().withdrawnCommands == 1 && ShotLogGetCounters().abandonedDisabled == 0,
+        "disable and reenable discard withdrawn context without resurrecting a canceled attempt");
+    ShotLoggingStop("withdrawal after stop");
+    ShotLoggingWithdrawCommand(published.source, published.commandSequence, published.weaponHandle);
+    ShotLoggingCapture(retry); FlushAt(6000);
+    Expect(Count("AIM_SHOT cmd #") == 0 && ShotLogGetCounters().withdrawnCommands == 1,
+        "withdrawal and capture after stop cannot restart publication tracking");
+}
 void TestDamagePredictionOutput() {
     Start(); ShotLoggingCapture(Metadata()); Deliver(Fire()); FlushAt(1321);
     Expect(Has("| predicted 42.2 (target) | actual unknown") &&
@@ -440,6 +513,7 @@ int main() {
     TestTransientLocalLoss();
     TestStopAndUnlockedSink();
     TestReasonOutput();
+    TestWithdrawnPublications();
     TestDamagePredictionOutput();
     captureFromSink = false;
     ShotLoggingStop("test complete");

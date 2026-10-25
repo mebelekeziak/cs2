@@ -940,6 +940,10 @@ void DrawPublicMenu() {
                 ImGui::TextUnformatted("Spread samples");
                 ImGui::SetNextItemWidth(-1);
                 changed |= ImGui::SliderInt("##AimSamples", &settings.samples, 64, 1024);
+                ImGui::BeginDisabled(settings.removeSpread);
+                changed |= FeatureCheckbox("Native RNG experiment", settings.nativeHitchance);
+                ImGui::SetItemTooltip("Experimental native random stream sampling. Used only with Remove spread off; the full engine spread helper is not called.");
+                ImGui::EndDisabled();
                 ImGui::BeginDisabled(!settings.autofire);
                 ImGui::TextUnformatted("Minimum damage");
                 ImGui::SetNextItemWidth(-1);

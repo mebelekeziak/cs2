@@ -152,6 +152,26 @@ describe this as proof of a server seed or guaranteed airborne hits.
 
 ## Static verification result
 
+Revision 7 selects one of the retained copied clock/recoil models for production
+solves, using indexed-versus-clamped tick lead. Both native snapshots remain
+available and the original clamp still participates in freshness checks. This
+policy is a client prediction choice, not new proof of the authoritative firing
+clock. Native functions, addresses, timing conversion and seed contracts below
+are unchanged. See [revision 7](../docs/REMOVE_SPREAD_REVISION7.md) for capture
+evidence, latency changes and offline comparison limits.
+
+Revision 5 (October 24) independently retraces the installed indexed branch and
+ordinary firing caller. The selected protobuf angle is copied verbatim before
+punch; nonzero history fraction does not interpolate its angle. Read-only
+decoded evidence is in `logs/research/26144732/spread_revision5/native/`.
+Pistol log replay establishes the same timing uncertainty previously observed
+for Scout, so all supported indexed firearms now use two copied hypotheses.
+The native normalization/clamp and seed contracts above are unchanged. The
+per-solve sample cache applies only to exact canonical float-bin/tick keys;
+noncanonical angles still call the native helper. See
+[revision 5](../docs/REMOVE_SPREAD_REVISION5.md) for implementation, regression
+coverage, performance tradeoffs and observation limits.
+
 The frozen verifier passes the installed client and tier0. Twenty-three
 independent deliberate mutations covering every header constant and runtime
 fingerprint are rejected; results are preserved in `negative.json`. Runtime

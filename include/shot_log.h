@@ -36,6 +36,9 @@ struct ShotLogMetadata {
     // Set only after publishing a ready primary attack. Estimates and held
     // attacks during cooldown must not produce unregistered-shot timeouts.
     bool attackPublished = false;
+    // Nonzero identity of an immutable copied history publication. A fresh
+    // indexed publication may reuse a command sequence and has a new identity.
+    std::uint64_t publicationId = 0;
     // Copied direct-hit estimate for the intended target; never actual damage.
     bool damageValid = false;
     float predictedDamage = 0;
@@ -118,6 +121,7 @@ struct ShotLogCounters {
     std::uint64_t fires = 0, completed = 0, duplicates = 0, ignoredSource = 0, invalid = 0;
     std::uint64_t pendingOverflow = 0, closedOverflow = 0, eventOverflow = 0, metadataOverflow = 0, completedDropped = 0;
     std::uint64_t dedupEvictions = 0, lateEvents = 0, orphanEvents = 0, abandonedDisabled = 0, unregistered = 0;
+    std::uint64_t withdrawnCommands = 0;
 };
 
 struct ShotLogDamageSummary {
@@ -138,6 +142,10 @@ void ShotLogReset(const ShotLogSource& source, std::uint64_t nowMs,
 void ShotLogSetEnabled(bool enabled, std::uint64_t nowMs) noexcept;
 void ShotLogStop(std::uint64_t nowMs) noexcept;
 void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept;
+// Retire an unconsumed publication's attempt bookkeeping. Copied context stays
+// available for real native events; a fresh publication can reuse the command.
+void ShotLogWithdrawCommand(const ShotLogSource& source, int sequence,
+    std::uint32_t weaponHandle, std::uint64_t nowMs) noexcept;
 std::uint64_t ShotLogOnFire(const ShotLogFire& event) noexcept;
 void ShotLogOnImpact(const ShotLogImpact& event) noexcept;
 void ShotLogOnHurt(const ShotLogHurt& event) noexcept;

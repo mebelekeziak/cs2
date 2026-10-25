@@ -330,7 +330,7 @@ bool SilentAimCancelAutofire(AimAutofirePatch& patch, AimAutofireDiagnostics* di
 }
 
 bool SilentAimRestoreAutofireRebuild(std::uintptr_t input, std::uintptr_t command,
-    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics) noexcept {
+    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics, bool retainCompleted) noexcept {
     if (diagnostics) *diagnostics = {};
     if (!patch.active) return true;
     int sequence = 0;
@@ -357,6 +357,10 @@ bool SilentAimRestoreAutofireRebuild(std::uintptr_t input, std::uintptr_t comman
     if (!SameAttack(buttons, patch.applied)) {
         patch = {};
         if (diagnostics) diagnostics->reason = "native_primary_rebuilt";
+        return true;
+    }
+    if (retainCompleted && !patch.inputPending) {
+        if (diagnostics) diagnostics->reason = "completed_primary_retained";
         return true;
     }
     return SilentAimCancelAutofire(patch, diagnostics);

@@ -28,7 +28,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_visuals.cpp src/grenade_effects.cpp
   src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_pvs.asm src/player_chams_material.cpp src/client_frame.cpp
   src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_shoot_origin.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
-  src/aim_spread.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp
+  src/aim_spread.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_native_hitchance.cpp
   src/shot_log.cpp src/shot_log_settings.cpp src/shot_logging.cpp src/shot_events.cpp
   src/zoom.cpp src/zoom_settings.cpp
   src/scoped_crosshair.cpp src/scoped_crosshair_draw.cpp src/scope_overlay.cpp
@@ -80,11 +80,21 @@ if(BUILD_TESTING)
   target_compile_options(skin_changer_checks PRIVATE /W4 /Zc:threadSafeInit-)
   add_test(NAME skin_changer_checks COMMAND skin_changer_checks)
   add_executable(aim_spread_math_checks tests/aim_spread_math_checks.cpp src/aim_spread_math.cpp)
+  add_executable(aim_native_hitchance_checks tests/aim_native_hitchance_checks.cpp src/aim_native_hitchance.cpp src/aim_hitchance.cpp)
+  target_include_directories(aim_native_hitchance_checks PRIVATE include)
+  target_compile_definitions(aim_native_hitchance_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(aim_native_hitchance_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME aim_native_hitchance_checks COMMAND aim_native_hitchance_checks)
   add_executable(aim_spread_search_checks tests/aim_spread_search_checks.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp)
   add_executable(aim_spread_checks tests/aim_spread_checks.cpp src/aim_spread.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp)
   add_executable(aim_spread_replay_checks tests/aim_spread_replay_checks.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_hitchance.cpp)
   add_executable(aim_spread_clock_replay_checks tests/aim_spread_clock_replay_checks.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_hitchance.cpp)
-  foreach(target aim_spread_math_checks aim_spread_search_checks aim_spread_checks aim_spread_replay_checks aim_spread_clock_replay_checks)
+  add_executable(aim_spread_pistol_replay_checks tests/aim_spread_pistol_replay_checks.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_hitchance.cpp)
+  add_executable(aim_spread_search_benchmark EXCLUDE_FROM_ALL tests/aim_spread_search_benchmark.cpp src/aim_spread.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_hitchance.cpp)
+  target_include_directories(aim_spread_search_benchmark PRIVATE include)
+  target_compile_definitions(aim_spread_search_benchmark PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_AIM_SPREAD_CHECKS)
+  target_compile_options(aim_spread_search_benchmark PRIVATE /W4 /Zc:threadSafeInit-)
+  foreach(target aim_spread_math_checks aim_spread_search_checks aim_spread_checks aim_spread_replay_checks aim_spread_clock_replay_checks aim_spread_pistol_replay_checks)
     target_include_directories(${target} PRIVATE include)
     target_compile_definitions(${target} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_AIM_SPREAD_CHECKS)
     target_compile_options(${target} PRIVATE /W4 /Zc:threadSafeInit-)

@@ -773,28 +773,25 @@ void QuantizedMovementBasis() {
                AntiAimRestoreCommand(patch) && Same(f, before),
                "all cardinal and diagonal digital fallbacks upgrade to the same ideal trajectory and restore exactly");
     }
-    for (int kind = 0; kind < 11; ++kind) {
+    for (int kind : {2, 5, 6, 7, 8, 9, 10, 11}) {
         Fixture f; prepare(f); AntiAimCommandPatch patch{};
         auto buttons = Get<MovementButtons>(Address(f.command) + mo::command::Buttons);
-        if (kind == 0) buttons.down |= 1; // primary attack
-        if (kind == 1) buttons.changed |= 0x800; // secondary tap
         if (kind == 2) buttons.third |= 0x20; // use tap
         Put(Address(f.command) + mo::command::Buttons, buttons);
-        if (kind == 3) { f.steps[1].button = 0x800; f.steps[1].presence |= 3; }
-        if (kind == 4) { Put(Address(f.command) + mo::command::Presence, std::uint32_t{0x8021}); Put(Address(f.command) + so::command::Attack1Index, 0); }
         if (kind == 5) Put(Address(f.base) + mo::base::Forward, 0.6f);
         if (kind == 6) f.steps[0].when = 0.1f;
         if (kind == 7) { f.steps[1].forwardDelta = 0.25f; f.steps[1].presence |= 8; }
         if (kind == 8) Put(Address(f.angles) + so::angle::Pitch, AimAngles{90, 35, 0});
         if (kind == 9) Put(Address(f.command) + mo::command::Sequence, 0);
+        if (kind == 11) { f.steps[1].button = 0x20; f.steps[1].presence |= 3; }
         const Fixture before = f;
         const auto transition = kind == 10 ? Address(f.steps[0]) + 8 : Address(f.steps[0]);
         Expect(!AntiAimApplyMovementCommand(Address(f.command), 62, transition, patch) && !patch.valid && Same(f, before),
-               "actions non-digital fallback stale transition identity and unsupported scopes leave safe fallback untouched");
+               "Use non-digital fallback stale transition identity and unsupported scopes leave safe fallback untouched");
         auto antiAim = Settings();
         Expect(!AntiAimApplyMovementCommand(Address(f.command), 62, transition, patch, nullptr, nullptr, nullptr, &antiAim) &&
                !patch.valid && Same(f, before),
-               "anti aim composition retains strict action and ownership rejection without invoking legacy payload relaxations");
+               "anti aim composition retains Use and ownership rejection without invoking legacy payload relaxations");
     }
     Fixture f; prepare(f); AntiAimCommandPatch patch{};
     const Fixture before = f;
@@ -853,6 +850,97 @@ void QuantizedMovementBasis() {
             repeat &= AntiAimReapplyCommand(owned) && Same(current, outgoingFallback);
         }
         Expect(repeat, "digital fallback handoff ownership restores original planner event on every rebuild");
+    }
+}
+void FiringMovementCoexistence() {
+    for (bool combined : {false, true}) for (int kind = 0; kind < 8; ++kind) {
+        Fixture f; PrepareDigitalMovement(f);
+        std::array<unsigned char, 0x78> history{};
+        std::array<unsigned char, 0x38> historyAngles{};
+        std::array<unsigned char, 0x10> historyRep{};
+        Put(Address(f.command) + so::command::HistorySize, 1);
+        Put(Address(f.command) + so::command::HistoryCapacity, 1);
+        Put(Address(f.command) + so::command::HistoryRep, Address(historyRep));
+        Put(Address(historyRep), 1); Put(Address(historyRep) + 8, Address(history));
+        Put(Address(history) + so::history::Presence, std::uint32_t{1});
+        Put(Address(history) + so::history::Angles, Address(historyAngles));
+        Put(Address(historyAngles) + so::angle::Presence, std::uint32_t{7});
+        Put(Address(historyAngles) + so::angle::Pitch, AimAngles{-7, 112, 0});
+        auto buttons = Get<MovementButtons>(Address(f.command) + mo::command::Buttons);
+        if (kind == 0) buttons.down |= 1;
+        if (kind == 1) buttons.changed |= 1;
+        if (kind == 2) buttons.third |= 1;
+        if (kind == 3) {
+            Put(Address(f.command) + mo::command::Presence, std::uint32_t{0x8021});
+            Put(Address(f.command) + so::command::Attack1Index, 0);
+        }
+        if (kind == 4 || kind == 7) {
+            f.steps[1].button = kind == 4 ? 1 : 0x800;
+            f.steps[1].pressed = true; f.steps[1].presence |= 3;
+        }
+        if (kind == 5) buttons.down |= 0x800;
+        if (kind == 6) buttons.changed |= 0x800;
+        Put(Address(f.command) + mo::command::Buttons, buttons);
+        const Fixture before = f;
+        const auto historyBefore = history;
+        const auto anglesBefore = historyAngles;
+        auto settings = Settings(147); settings.pitchMode = AntiAimPitchMode::Up;
+        AimAngles requested{};
+        AntiAimBuildAngles({20, 35, 0}, settings, 17, requested);
+        const bool primary = kind < 5;
+        const auto expected = AntiAimChooseDigitalBasis(combined && !primary ? requested.yaw : 35, 62);
+        AntiAimCommandPatch patch{};
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), 62, Address(f.steps[0]), patch,
+            nullptr, nullptr, nullptr, combined ? &settings : nullptr);
+        const double axisYaw = std::atan2(static_cast<double>(patch.editedLeft), patch.editedForward) * 57.29577951308232;
+        Expect(applied && expected.valid && Near(patch.editedView.yaw, expected.yaw) &&
+            patch.editedView.pitch == (combined && !primary ? -89 : 20) &&
+            std::abs(Wrap(patch.editedView.yaw + axisYaw - 62)) < .0002f,
+            "held indexed and timed firing retain ideal quantized steering while primary fire bypasses the anti-aim pattern");
+        if (!applied) continue;
+        const auto outgoing = Get<MovementButtons>(Address(f.command) + mo::command::Buttons);
+        Expect((outgoing.down & ~mo::Directions) == (buttons.down & ~mo::Directions) &&
+            (outgoing.changed & ~mo::Directions) == (buttons.changed & ~mo::Directions) &&
+            (outgoing.third & ~mo::Directions) == (buttons.third & ~mo::Directions) &&
+            Get<std::uint32_t>(Address(f.command) + mo::command::Presence) == patch.commandPresence &&
+            Get<int>(Address(f.command) + so::command::Attack1Index) == Get<int>(Address(before.command) + so::command::Attack1Index) &&
+            f.steps[1].button == before.steps[1].button && f.steps[1].pressed == before.steps[1].pressed &&
+            f.steps[1].when == before.steps[1].when && f.steps[2].button == mo::Jump && f.steps[2].pressed &&
+            f.steps[2].when == before.steps[2].when && history == historyBefore && historyAngles == anglesBefore,
+            "firing steering preserves all attack masks native index primary history and timed jump edges");
+        Put(Address(f.base) + mo::base::Presence, patch.editedPresence | 1u);
+        const bool restored = AntiAimRestoreCommand(patch);
+        Put(Address(f.base) + mo::base::Presence, Get<std::uint32_t>(Address(f.base) + mo::base::Presence) & ~1u);
+        Expect(restored && Same(f, before), "firing movement restores exactly after native CRC presence is added");
+    }
+    // A real jumpbug command has Duck down, a timed Duck release and Jump
+    // press. Attack events must coexist with those independently owned edges.
+    for (std::uint64_t attack : {std::uint64_t{1}, std::uint64_t{0x800}}) {
+        Fixture f; PrepareDigitalMovement(f);
+        std::array<MovementSubtick, 6> steps{};
+        std::array<unsigned char, 8 + 6 * sizeof(std::uintptr_t)> rep{};
+        steps[0] = f.steps[0];
+        for (unsigned i = 1; i < steps.size(); ++i) {
+            steps[i].vtable = 0x123450; steps[i].arena = 0x543210; steps[i].presence = 0x80000007;
+            steps[i].cachedSize = 19;
+        }
+        steps[1].button = mo::Duck; steps[1].pressed = true; steps[1].when = 0;
+        steps[2].button = attack; steps[2].pressed = true; steps[2].when = .25f;
+        steps[3].button = mo::Duck; steps[3].pressed = false; steps[3].when = .5f;
+        steps[4].button = mo::Jump; steps[4].pressed = true; steps[4].when = .5f;
+        steps[5].button = attack; steps[5].pressed = false; steps[5].when = .75f;
+        Put(Address(rep), 6);
+        for (unsigned i = 0; i < steps.size(); ++i) Put(Address(rep) + 8 + i * 8, Address(steps[i]));
+        Put(Address(f.base) + mo::base::SubtickSize, 6); Put(Address(f.base) + mo::base::SubtickCapacity, 6);
+        Put(Address(f.base) + mo::base::SubtickRep, Address(rep));
+        const auto before = steps;
+        AntiAimCommandPatch patch{};
+        const bool applied = AntiAimApplyMovementCommand(Address(f.command), 62, Address(steps[0]), patch);
+        Expect(applied && std::memcmp(&steps[1], &before[1], 5 * sizeof(MovementSubtick)) == 0 &&
+            steps[3].when == steps[4].when && steps[3].when == .5f && !steps[3].pressed && steps[4].pressed,
+            "quantized steering remains active during firing without suspending or retiming jumpbug Duck release and Jump");
+        Expect(applied && AntiAimRestoreCommand(patch) && std::memcmp(steps.data(), before.data(), sizeof(steps)) == 0,
+            "firing jumpbug and steering payload restores exactly on a prediction rebuild");
     }
 }
 void CombinedMovementAntiAim() {
@@ -937,6 +1025,6 @@ void CombinedMovementAntiAim() {
 }
 }
 int main() {
-    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); DigitalBasisFacing(); QuantizedMovementBasis(); CombinedMovementAntiAim();
+    PatternMath(); CustomCommands(); SparseAndDigital(); PatternCommands(); PhysicalInputReplay(); PredictionRebuildHandoffs(); HistoricalHandoffs(); RoundReadiness(); Rejections(); DigitalBasisFacing(); QuantizedMovementBasis(); CombinedMovementAntiAim(); FiringMovementCoexistence();
     return failures ? 1 : 0;
 }

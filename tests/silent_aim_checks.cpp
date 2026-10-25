@@ -85,8 +85,19 @@ void MathChecks() {
     SilentAimSetSettings({true, std::numeric_limits<float>::quiet_NaN(), static_cast<AimHitbox>(99)});
     const auto settings = SilentAimGetSettings();
     Expect(settings.enabled && settings.fov == 5 && settings.hitbox == AimHitbox::Pelvis, "one atomic settings snapshot sanitizes FOV and hitbox");
+    auto nativeSettings = settings;
+    nativeSettings.nativeHitchance = true;
+    nativeSettings.removeSpread = true;
+    nativeSettings.autowall = true;
+    nativeSettings.hitgroups = AimAllHitgroups;
+    SilentAimSetSettings(nativeSettings);
+    Expect(SilentAimGetSettings() == nativeSettings, "native sampler bit roundtrips alongside adjacent spread, autowall and hitgroup bits");
+    nativeSettings.nativeHitchance = false;
+    SilentAimSetSettings(nativeSettings);
+    Expect(SilentAimGetSettings() == nativeSettings, "clearing the native sampler preserves every other aim option");
     SilentAimSetSettings({});
-    Expect(!SilentAimGetSettings().enabled && SilentAimGetSettings().hitbox == AimHitbox::Chest, "silent aim starts disabled with chest selected");
+    Expect(!SilentAimGetSettings().enabled && !SilentAimGetSettings().nativeHitchance && SilentAimGetSettings().hitbox == AimHitbox::Chest,
+        "silent aim starts disabled with chest selected and the baseline hitchance sampler");
 }
 void CommandChecks() {
     ShotFixture fixture;

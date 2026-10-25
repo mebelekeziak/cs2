@@ -12,6 +12,7 @@ constexpr std::uint64_t autofireBit = 1ull << 19;
 constexpr std::uint64_t quickstopBit = 1ull << 45;
 constexpr std::uint64_t autowallBit = 1ull << 61;
 constexpr std::uint64_t removeSpreadBit = 1ull << 62;
+constexpr std::uint64_t nativeHitchanceBit = 1ull << 63;
 std::atomic<std::uint64_t> settings{500 | (1ull << 17) | (5000ull << 20) | (256ull << 34) | (1ull << 46) |
     (static_cast<std::uint64_t>(AimHitgroupBit(AimHitgroup::Chest)) << 53)};
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
@@ -25,7 +26,7 @@ SilentAimSettings SilentAimGetSettings() noexcept {
         static_cast<float>((value >> 20) & 0x3fff) / 100.0f, static_cast<int>((value >> 34) & 0x7ff),
         (value & quickstopBit) != 0, static_cast<int>((value >> 46) & 0x7f),
         static_cast<std::uint32_t>((value >> 53) & AimAllHitgroups), (value & autowallBit) != 0,
-        (value & removeSpreadBit) != 0};
+        (value & removeSpreadBit) != 0, (value & nativeHitchanceBit) != 0};
 }
 void SilentAimSetSettings(const SilentAimSettings& value) noexcept {
     const float fov = std::isfinite(value.fov) ? std::clamp(value.fov, 0.1f, 180.0f) : 5.0f;
@@ -38,7 +39,8 @@ void SilentAimSetSettings(const SilentAimSettings& value) noexcept {
         (value.quickstop ? quickstopBit : 0) |
         (static_cast<std::uint64_t>(std::clamp(value.minDamage, 1, 100)) << 46) |
         (static_cast<std::uint64_t>(value.hitgroups & AimAllHitgroups) << 53) |
-        (value.autowall ? autowallBit : 0) | (value.removeSpread ? removeSpreadBit : 0), std::memory_order_release);
+        (value.autowall ? autowallBit : 0) | (value.removeSpread ? removeSpreadBit : 0) |
+        (value.nativeHitchance ? nativeHitchanceBit : 0), std::memory_order_release);
 }
 void SilentAimPollControls(bool foreground) noexcept {
     const bool down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;

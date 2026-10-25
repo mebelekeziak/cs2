@@ -73,5 +73,9 @@ bool SilentAimCancelAutofire(AimAutofirePatch& patch,
 // Before rebuilding a current command, retire its old owned pulse if still
 // present. Address/sequence changes abandon copied state without dereferencing
 // cached engine addresses. Physical primary takeover is always preserved.
+// retainCompleted keeps an unchanged, fully released owned pulse for indexed
+// replay. Native resets/takeover still retire its copied ownership. Pending
+// temporary input is never retained by this option.
 bool SilentAimRestoreAutofireRebuild(std::uintptr_t input, std::uintptr_t command,
-    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics = nullptr) noexcept;
+    AimAutofirePatch& patch, AimAutofireDiagnostics* diagnostics = nullptr,
+    bool retainCompleted = false) noexcept;

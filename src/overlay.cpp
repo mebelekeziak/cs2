@@ -595,6 +595,8 @@ void DrawFrame(IDXGISwapChain* chain) {
         ImGui::Text("Skins: %s", SkinRuntimeStatus().data());
         ImGui::Text("F10 silent aim: %s", SilentAimGetSettings().enabled ? "ON" : "OFF");
         ImGui::Text("Remove spread: %s", aimSettings.removeSpread ? "ON" : "OFF");
+        ImGui::Text("Hitchance sampler: %s%s", aimSettings.nativeHitchance ? "Native RNG experiment" : "Baseline",
+            aimSettings.removeSpread ? " (bypassed by Remove spread)" : "");
         ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
         ImGui::Text("Grenade borders: %s", GrenadeVisualsStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());

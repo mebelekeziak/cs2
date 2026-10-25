@@ -156,6 +156,8 @@ int main() {
         "default preset saves autofire and quickstop off, hitchance controls and minimum damage");
     Expect(defaults.find("aim.remove_spread=0\n") != std::string::npos,
         "default preset explicitly saves remove spread disabled");
+    Expect(defaults.find("aim.native_hitchance=0\n") != std::string::npos,
+        "default preset explicitly preserves the baseline hitchance sampler");
     Expect(defaults.find("camera.enabled=0\ncamera.distance=120\ncamera.shoulder=0\ncamera.height=0\ncamera.collision=1\n") != std::string::npos,
         "default preset explicitly saves every camera control");
     Expect(defaults.find("zoom.enabled=0\nzoom.zoom1=100\nzoom.zoom2=100\nzoom.sensitivity=100\nzoom.removeScope=0\n") != std::string::npos,
@@ -195,7 +197,7 @@ int main() {
         for (unsigned i = 0; i < 3; ++i) worldColors[c][i] = (c + i + 1) / 16.0f;
     WorldSetSettings(world);
     const SilentAimSettings expectedAim{true, 172.34f, AimHitbox::Pelvis, true, 73.25f, 512, true, 67,
-        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true, true};
+        AimHitgroupBit(AimHitgroup::Head) | AimHitgroupBit(AimHitgroup::Chest) | AimHitgroupBit(AimHitgroup::Legs), true, true, true};
     SilentAimSetSettings(expectedAim);
     const AimVisualizationSettings expectedVisualization{true, {.125f, .25f, .5f, .75f}};
     AimVisualizationSetSettings(expectedVisualization);
@@ -267,8 +269,8 @@ int main() {
     Expect(AimVisualizationGetSettings() == expectedVisualization, "visualization toggle and all RGBA channels roundtrip");
     Expect(EspGetSettings() == expectedEsp, "all ESP fields and array channels roundtrip");
     Expect(SilentAimGetSettings() == expectedAim && custom.find("aim.min_damage=67\n") != std::string::npos &&
-        custom.find("aim.hitgroups=67\n") != std::string::npos,
-        "aim, autofire, hitchance, sample count, minimum damage and independent hitgroups roundtrip");
+        custom.find("aim.hitgroups=67\n") != std::string::npos && custom.find("aim.native_hitchance=1\n") != std::string::npos,
+        "aim, autofire, hitchance, native sampler, sample count, minimum damage and independent hitgroups roundtrip");
     Expect(AntiAimGetSettings() == expectedAntiAim, "all anti aim modes, interval and fractional angle controls roundtrip");
     Expect(ThirdPersonGetSettings() == expectedCamera, "all camera fields roundtrip including fractional offsets and disabled collision");
     Expect(ZoomGetSettings() == expectedZoom && custom.find("zoom.sensitivity=38.25\nzoom.removeScope=1\n") != std::string::npos,
@@ -324,6 +326,8 @@ int main() {
         "version=1\naim.autowall=2\n", "version=1\naim.autowall=0\naim.autowall=1\n",
         "version=1\naim.remove_spread=2\n", "version=1\naim.remove_spread=true\n",
         "version=1\naim.remove_spread=0\naim.remove_spread=1\n",
+        "version=1\naim.native_hitchance=2\n", "version=1\naim.native_hitchance=true\n",
+        "version=1\naim.native_hitchance=0\naim.native_hitchance=1\n",
         "version=1\naim.quickstop=0\naim.quickstop=1\n",
         "version=1\naim.min_damage=1.5\n", "version=1\naim.min_damage=nan\n",
         "version=1\naim.min_damage=35junk\n", "version=1\naim.min_damage=99999999999999\n",
@@ -394,6 +398,7 @@ int main() {
         SilentAimGetSettings().samples == 256 && !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1,
         "older presets restore autofire and quickstop off, hitchance defaults and minimum damage 1");
     Expect(!SilentAimGetSettings().removeSpread, "older presets reset enabled remove spread to its disabled default");
+    Expect(!SilentAimGetSettings().nativeHitchance, "older presets restore the baseline hitchance sampler");
     Expect(ThirdPersonGetSettings() == cameraDefaults, "older presets without camera keys restore all camera defaults");
     Expect(ZoomGetSettings() == zoomDefaults, "older presets without scoped zoom keys restore default levels and native sensitivity disabled");
     Expect(ShotLogGetSettings()==ShotLogSettings{true,false}, "older presets without logging keys restore human results on and verbose diagnostics off");

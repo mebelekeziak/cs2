@@ -1,3 +1,198 @@
+# Shot misses and native hitchance experiment — October 25, 2026
+
+Latest request: investigate consecutive misses diagnosed as saved-capsule
+crossing/outside cone, plus separate native spread-source hitchance experiment.
+Work preserved all pre-existing uncommitted R5/R6/R7 and movement changes.
+
+Six recent logs:951 native shots=438 hit/245 miss/268 unconfirmed;48 crossed
+capsule(25corrected/23normal),8 outsidecone(all normal Scout;none latest3).
+Four outsidecone examples have changed saved aim vs nearby earlier pub;
+9276#44 earlier yaw110.110 saved109.0704 impact within earlier0.1851deg cone.
+Old throttled pub logs omit seq so association is not proven. Reproduced/fixed
+normal indexed history being reevaluated/recaptured after publication: it now
+shares completed publication retention/replay/consumption/retry with corrected
+shots. Scratch build disabling only this repair fails7 regressions;fixed488/488.
+
+New monotonic publicationId distinguishes duplicate captured model from genuine
+same-sequence replacement. Tracker freezes same/older nonzeroID, newerID resets
+timeout/withdrawn/reported state preserving existing native ack semantics.
+Unidentified preview refresh remains. AIM_PUBLICATION revision8 unthrottled per
+capture records seq/ID/time/index/origin/aim/native sampling;AIM_SHOT_DETAIL adds
+publication_id. Impact-angle cross/dot atan2 fixes old float-unit acos error
+of~0.00965deg on identical rays. Tracker202/202 checks.
+
+Corrected evidence:13964#138 seq2332 impact matches prediction~0.000050deg,
+crosses saved head but no damage,stationary. Latest3 independent SHA/ran1 replay
+118/118 seeds and predicted rays within0.00000693deg.43unambiguousScout misses:
+selected clock/punch best42/43;clamp rollback worse39/43. Current-vs-historical
+origin lead:back velocity/64 reduces median .682568->.330636deg but helps26/43,
+worsens17;no blind rewind shipped. Native firing historical/controller-adjusted
+time ownership and target/server pose timing remain unestablished. Not all
+crossed-capsule misses fixed. Reports/scripts/hashes in logs/research/
+misses_20261025/ and corrected_misses_20261025/.
+
+Separate bool nativeHitchance(defaultfalse,bit63,config aim.native_hitchance),
+public Native RNG experiment control disabled while Remove spread on but keeps
+preference. With Remove spread off experiment uses real private native RNG
+seeds1..N plus verified copied single-projectile distribution;native result
+drives ranking/gating,baseline/native threshold diagnostics retained. Prepared
+once per decision. Failure invalidates experiment(no hidden baseline autofire).
+Halton default and indexed solver unchanged. Does NOT call full client spread
+helper(shared RNG/cache/TLS). Native samples not intrinsically superior:
+analytic50.0025% case at1024 Halton50.0977%,native52.9297%.
+
+Final both public/diagnostic x64 Release build no project compiler warnings,
+CTest68/68 each;native18546 synthetic,37098 installed-tier0 checks. Baseline
+compatibility33/33 logs/compatibility/misses-20261025-baseline/. Both DLLs zero
+staticTLS/delayimports;hashes logs/misses-20261025-payload-contract.json.
+Logs misses-20261025-{build,tests}-{public,diagnostic}.log. git diff--check clean.
+No client/server launched/injected, no installed files/settings changed.
+Restart normally then Load Overlay.cmd;baseline first,compare native with
+Remove spread off. Subsequent user report: substantially better behavior and
+essentially no random misses so far;later confirms clean behavior with native
+RNG both ON and OFF,also briefly tried Remove spread on/off. Native sampling
+not required for improvement;shared publication repair stronger explanation.
+No exact configuration matrix/counts/rates or independently audited post-fix
+capture. Native option stays experimental/defaultOFF;no advantage established.
+Remove spread still bypasses statistical sampling. Details tracked in
+docs/SHOT_MISSES_20261025.md and docs/NATIVE_HITCHANCE_EXPERIMENT.md.
+
+# Autofire delay, attempt spam and firing movement, revision 7 — October 24, 2026
+
+Latest user requests: console spam (`AIM_SHOT cmd #15481`..`#15515`), excessive
+shooting delay, and remove firing-related autostrafe/Jumpbug restriction.
+Immutable R6 capture audit: 287 corrected pubs,236 native_primary_rebuilt
+retirements0-16ms later;0 retired pubs match native fire vs44/51 nonretired.
+Continuous123 accepted-pub burst lasts1.984s before native fire. Pasted35 lines
+are command attempts flushed at lifecycle transition, plausibly normal round
+end; not35 fired bullets. 2360/2647 searches rejected by old dual-clock gate.
+Audit/snapshot/hash: logs/research/26144732/spread_revision7/log_audit/.
+
+R7 implemented: record clip/recoil at publication, latch consumption on every
+valid weapon sample including RefreshShot and ModelUnchanged. Native-primary
+reset with no observed consumption may retry immediately at Prepare from
+current base view/native recorder. Post-History waits for Prepare. Retry
+tombstone persists until replacement acquisition succeeds, protecting live old
+indexed correction through missing-target/cooldown/manual-index failure.
+Observed consumption survives rollback. Physical takeover, consumed shots and
+real restore/CRC failures retain ownership guards. Exact serialized actor/seq/
+weapon withdrawal suppresses obsolete attempt settlements, preserves context
+for late native events; fresh publication can reuse seq. Remaining cmd-only
+console output follows existing Verbose; actual native shot/hit stays visible.
+
+Production spread now picks one retained clock/punch: converted tick ahead of
+clamp selects alternative; >1tick uses raw/current punch. Original clamp still
+freshness-checked. Seed1 routes selectedVariant0/1 to corresponding time/punch;
+generic dual models remain test/benchmark only. Telemetry revision7 reports
+chosen clock/punch+native clamp; automatic4096/manual8192 and cache preserved.
+Tradeoff: choosing wrong client clock can miss; no authoritative seed claim.
+4096 offline70cases: saved capsules22->64,callbacks median4096->626,native SHA/
+RNG2683->273,solver median2.198->.353ms,p953.717->2.479ms(11reps).
+34olderScoutcases explicitly assume nexttick; timestamped36cases15->33;
+pistols6cases1->3. Not live FPS/hit rate.
+
+Firing movement: anti_aim.cpp MovementReady ignores attacks but retains Use;
+anti_aim_command allows held/indexed/timed primary/secondary through quantized
+orientation. Primary yields AA pattern, preserves physical pitch/nearest
+physical-facing movement basis. Attack fields/history and Jumpbug timed Duck/
+Jump edges preserved. Jumpbug had no direct attack gate; Quickstop already
+yields airborne/jump. No movement.cpp/timing changes.20 regressions fail before
+fix, focused5/5 pass including435Jumpbug checks.
+
+Final public+diagnostic x64 Release build no project warnings,CTest67/67 each;
+pipeline474/native467/search738/pistol44/tracker198/adapter128/console67 checks.
+Compatibility33/33 logs/compatibility/20261024T135615263957Z/; both DLLs zero
+staticTLS/delayimports. Build/test logs remove-spread-r7-{build,tests}-
+{public,diagnostic}.log; payload hashes logs/remove-spread-r7-payload-contract.json.
+Root reviewer found/fixed History-only consumption gap and early-tombstone
+removal; rereview no additional actionable issues. No native offsets/installed
+files/settings/hooks/loader changes, no game/server launched/injected.
+Restart CS2 normally then Load Overlay.cmd; stopped DLL remains resident until
+normal exit. Live delay/FPS/accuracy/movement coexistence remains unobserved.
+Detailed tracked docs: docs/REMOVE_SPREAD_REVISION7.md. All R5/R6/R7 work is
+still uncommitted; preserve it and unrelated current edits.
+
+# Remove spread regression, revision 6 — October 24, 2026
+
+User reports revision 5 stops the entire ragebot and visualization after
+enabling Remove spread; toggling it off does not recover. Logs 19784 and 11208
+confirm active=0, "autofire ownership changed; stopped" immediately after a
+completed-publication rejection with empty history, index -1 and buttons 0x8.
+Callbacks continue but aim/fire counters freeze. Failing corrected sequences
+2235/2461 have no observed native fire; earlier corrected sequence 1998 fires
+and hits. Exact audit is logs/research/26144732/spread_revision6/log_audit/.
+
+Root cause: the revision 5 replay rejection strict-cancels a copied completed
+request before normal native rebuild ownership classification can retire it.
+Native primary replacement then becomes a permanent component stop. Also its
+early Prepare return skips refreshing the 100 ms point preview.
+
+Fix implemented: optional retainCompleted in existing rebuild helper keeps
+only unchanged, fully released owned pulses; normal button replacement and
+physical takeover retire without writes. Completed replay uses that classifier
+and normal safe retirement, with CRC deferred to the original finalizer during
+Prepare and repaired immediately after History only when command bits changed.
+Retired sequence markers prevent repeat auto requests, including through a
+temporary unavailable weapon model. Prepare retains preview-only scans for
+completed/retired shots. Pending cancellation and real failure stops remain.
+New AIM_SPREAD_REBUILD revision=6 and retired diagnostic counter identify paths.
+
+New fixture reproduces eight revision 5 failures before the fix. Focused checks
+now pass 452 pipeline and 89 command-ownership assertions. Includes native empty
+reset in both phases, subsequent shots, off/on recovery, physical takeover,
+preview refresh, transient model loss and genuine checksum failure behavior.
+Full verification results follow in docs/REMOVE_SPREAD_REVISION6.md.
+Final public and diagnostic x64 Release builds pass 67/67 CTest suites each,
+without project compiler warnings. Compatibility passes 33/33 in
+logs/compatibility/20261024T133137220121Z/. Both DLLs have zero static TLS/delay
+imports. Logs: remove-spread-r6-{build,tests}-{public,diagnostic}.log; hashes/PE
+inspection: logs/remove-spread-r6-payload-contract.json.
+No native offsets, hooks, installed files/settings, loader or launch changes;
+no game/server was launched, joined or injected. Restart CS2 normally before
+Load Overlay.cmd; revision 5's already stopped resident DLL cannot be replaced
+with a menu toggle. New live private/offline recovery remains unobserved.
+
+# Remove spread, revision 5 — October 24, 2026
+
+User reports Deagle/Autofire worst misses, inconsistent Scout results during
+movement, and major FPS drops with Remove spread on. Initial worktree clean.
+Implemented shared two-clock coverage for supported indexed firearms (formerly
+Scout only), copied successful-publication replay to avoid later shot penalties
+and compounding corrected manual angles, plus owned automatic cancellation for
+unverified rebuilds. Exact original indexed history rebuilds restore the copied
+correction; original shot metadata remains. Source, settings, weapon, scene and
+lifecycle changes invalidate reuse.
+
+Performance: skip unused statistical cone preparation/estimation in this mode;
+analytic yaw intervals preserve original search ordering/results; per-solve
+canonical float-bin/tick cache reuses native samples. Automatic search stops
+at a conservative interior tolerance and uses a 4096-sample maximum; manual
+retains 8192 and precise tolerance. Both final capsule checks remain required.
+Smaller search may defer Autofire. Actual-adapter offline benchmark, 70 dual
+states/19 repetitions: p95 5.986 ms at 8192 -> 3.080 ms at 4096; saved
+both-capsule intersections 26 -> 22. Synthetic native callbacks, not live FPS.
+
+Three unambiguous Deagle misses replay from 5.925/11.063/4.278 degrees of
+mismatch to .089/.748/.011 degrees at raw ticks. Glock sequence 1848 was
+rewritten after clip 8 -> 7, recoil 0 -> 1, accuracy .14672 -> .20352. The new
+six-shot pistol fixture retains hashes/source lines and reproduces every old
+seed/ray first. Native indexed angles are copied verbatim: no fraction-angle
+interpolation or invented future-accuracy interval was introduced.
+
+Both Release builds pass 67/67 CTest suites without project compiler warnings.
+Focused counts: 433 pipeline, 738 search, 169 adapter, 37 pistol assertions.
+Both DLLs are AMD64 with zero static TLS and delay imports. Initial and final
+33/33 compatibility bundles: logs/compatibility/20261024T124041948447Z/ and
+20261024T130324406480Z/. Logs: remove-spread-r5-{build,tests}-{public,diagnostic}.log;
+payload hashes: logs/remove-spread-r5-payload-contract.json. Full notes:
+docs/REMOVE_SPREAD_REVISION5.md. Research: logs/research/26144732/spread_revision5/.
+
+No game/server was launched, joined or injected; no installed file/config was
+changed. Independent server seeds and later motion/origin/pose changes remain
+model limits. Actual accuracy, cadence and FPS need a fresh permitted private
+or offline trial. Restart normally before Load Overlay.cmd; stopped code stays
+resident until normal process exit.
+
 # Anti aim + quantized movement, revision 16 — October 24, 2026
 
 User requests both working features together instead of movement replacing AA.

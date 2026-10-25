@@ -120,10 +120,11 @@ bool Action(std::uintptr_t command, bool movement = false) noexcept {
         !Read(command + movement_offsets::command::Presence, presence) ||
         !Read(command + silent_aim_offsets::command::Attack1Index, attack1)) return true;
     // Also cover released intra-command taps, before the history builder runs.
-    // Secondary attack keeps anti aim active, including short subtick taps.
-    const auto actions = off::Attack | off::Use | (movement ? off::Attack2 : 0);
+    // Firing yields only the anti-aim pattern. Assisted movement continues
+    // through held, indexed and timed attacks; Use still owns its command.
+    const auto actions = movement ? off::Use : off::Attack | off::Use;
     if ((buttons.down | buttons.changed | buttons.third) & actions) return true;
-    if ((presence & 0x20) && attack1 >= 0) return true;
+    if (!movement && (presence & 0x20) && attack1 >= 0) return true;
     std::uintptr_t base = 0, rep = 0; int size = 0, capacity = 0, allocated = 0;
     if (!Read(command + movement_offsets::command::Base, base) || !base ||
         !Read(base + movement_offsets::base::SubtickSize, size) || size < 0 || size > 128) return true;
@@ -374,7 +375,7 @@ void AntiAimFinishCommand(void* input, void* command) noexcept {
                     const bool transform = movementRequested ? movementEnabled :
                         enabled && roundReady && ReadSource(walking, true) && walking == current && !Action(address);
                     const AntiAimMovementHistory nativeHistory{historicalForward, historicalLeft};
-                    const bool combinedMovement = movementRequested && enabled && roundReady;
+                    const bool combinedMovement = movementRequested && enabled && roundReady && !Action(address);
                     if (transform) entry.valid = movementRequested ?
                         AntiAimApplyMovementCommand(address, requested.yaw, requested.transition, entry.patch, &reason, &commandDiagnostics, &nativeHistory,
                             combinedMovement ? &options : nullptr) :

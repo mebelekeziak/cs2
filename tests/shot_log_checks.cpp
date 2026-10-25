@@ -138,6 +138,23 @@ void MetadataChecks() {
     ShotLogOnFire(Fire()); ShotLogAdvance(1311); records = Drain();
     Expect(records.size() == 1 && records[0].metadataKnown && records[0].metadata.hitchance == 50,
         "a newer copied sample for the same command replaces its earlier snapshot");
+    ShotLogInitialize(Local, 900);
+    auto published = Metadata(); published.attackPublished = true; published.publicationId = 7;
+    auto postFire = published; postFire.receiptMs = 995; postFire.aim.yaw = 1.04f;
+    postFire.inaccuracy = .4f; postFire.eye.y = 5; postFire.capsule.start.y = postFire.capsule.end.y = 5;
+    postFire.hitchance = 12;
+    ShotLogAddMetadata(published); ShotLogAddMetadata(postFire);
+    ShotLogOnFire(Fire()); ShotLogOnImpact(Impact()); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].metadataAgeMs == 10 && records[0].metadata.aim.yaw == 0 &&
+        records[0].metadata.inaccuracy == published.inaccuracy && records[0].metadata.eye.y == 0 &&
+        records[0].metadata.capsule.start.y == 0 && records[0].metadata.hitchance == published.hitchance,
+        "later callbacks cannot overwrite a published shot's original view, cone, origin, pose or publication time");
+    ShotLogInitialize(Local, 900);
+    postFire.publicationId = 8;
+    ShotLogAddMetadata(published); ShotLogAddMetadata(postFire);
+    ShotLogOnFire(Fire()); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].metadata.publicationId == 8 && records[0].metadata.aim.yaw == 1.04f,
+        "a genuinely new publication can replace context while reusing command sequence and weapon handle");
     ShotLogInitialize(Local, 900); auto unknownWeapon = Metadata(); unknownWeapon.weapon[0] = 0;
     ShotLogAddMetadata(unknownWeapon); ShotLogOnFire(Fire()); ShotLogAdvance(1311); records = Drain();
     Expect(records.size() == 1 && !records[0].metadataKnown, "an unknown metadata weapon never bridges a weapon change");
@@ -329,6 +346,16 @@ void ReasonChecks() {
         return records.empty() ? ShotLogRecord{} : records[0];
     };
     auto narrow = Metadata(); narrow.capsule.radius = 1;
+    auto parallel = narrow;
+    parallel.aim = {-.195545986f, 29.347879410f, 0};
+    constexpr double radians = .01745329251994329577;
+    const AimVector direction{static_cast<float>(std::cos(parallel.aim.pitch * radians) * std::cos(parallel.aim.yaw * radians)),
+        static_cast<float>(std::cos(parallel.aim.pitch * radians) * std::sin(parallel.aim.yaw * radians)),
+        static_cast<float>(-std::sin(parallel.aim.pitch * radians))};
+    parallel.capsule.start = parallel.capsule.end = {direction.x * 100, direction.y * 100, direction.z * 100};
+    const auto aligned = resolve(parallel, {direction.x * 200, direction.y * 200, direction.z * 200});
+    Expect(aligned.impactAngle < .00001f && aligned.trajectory == ShotLogTrajectory::IntersectsRecordedCapsule,
+        "parallel noncardinal rays do not turn float aim length rounding into a false angular residual");
     auto record = resolve(narrow, {200, 4, 0});
     Expect(record.reason == ShotLogReason::Spread && record.aimRayValid && record.aimIntersectsCapsule &&
         record.geometryImpacts == 1 && record.spreadMissImpacts == 1 && record.missDistance > .99f && record.missDistance < 1.01f,
@@ -552,6 +579,91 @@ void AttemptChecks() {
         "attempt ring eviction reports capacity instead of pretending a timeout elapsed");
 }
 
+void WithdrawChecks() {
+    auto published = Metadata(); published.attackPublished = true;
+    for (const auto close : {ShotLogCloseReason::Settled, ShotLogCloseReason::SourceChanged, ShotLogCloseReason::Stopped}) {
+        ShotLogInitialize(Local, 900);
+        for (int i = 0; i < 512; ++i) {
+            auto sample = published; sample.commandSequence = i + 1; sample.receiptMs = 1000 + i;
+            ShotLogAddMetadata(sample);
+            ShotLogWithdrawCommand(Local, sample.commandSequence, sample.weaponHandle, sample.receiptMs);
+            ShotLogWithdrawCommand(Local, sample.commandSequence, sample.weaponHandle, sample.receiptMs);
+        }
+        if (close == ShotLogCloseReason::Settled) ShotLogAdvance(5000);
+        else if (close == ShotLogCloseReason::Stopped) ShotLogStop(1512);
+        else ShotLogReset({2, Local.controller, Local.pawn}, 1512);
+        const auto counters = ShotLogGetCounters();
+        Expect(Drain().empty() && counters.withdrawnCommands == 512 && counters.metadataOverflow == 448 &&
+            counters.fires == 0 && counters.unregistered == 0 && counters.completed == 0,
+            "hundreds of withdrawn publications survive eviction, timeout and lifecycle flush without command-attempt records");
+    }
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 999);
+    ShotLogOnFire(Fire()); ShotLogOnImpact(Impact()); ShotLogOnHurt(Hurt()); ShotLogAdvance(1311);
+    auto records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot && records[0].outcome == ShotLogOutcome::Hit &&
+        records[0].metadataKnown && records[0].metadata.commandSequence == 1 && records[0].metadata.hits == 200 &&
+        ShotLogGetCounters().fires == 1 && ShotLogGetCounters().withdrawnCommands == 1,
+        "native fire and hurt after withdrawal retain copied command context and produce an actual HIT");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    auto other = published; other.commandSequence = 2; ++other.weaponHandle; ShotLogAddMetadata(other);
+    ShotLogWithdrawCommand({2, Local.controller, Local.pawn}, 1, published.weaponHandle, 1000);
+    ShotLogWithdrawCommand({Local.lifecycle, Local.controller + 0x8000, Local.pawn}, 1, published.weaponHandle, 1000);
+    ShotLogWithdrawCommand({Local.lifecycle, Local.controller, Local.pawn + 0x8000}, 1, published.weaponHandle, 1000);
+    ShotLogWithdrawCommand(Local, 1, other.weaponHandle, 1000);
+    ShotLogWithdrawCommand(Local, 99, published.weaponHandle, 1000);
+    Expect(ShotLogGetCounters().withdrawnCommands == 0, "wrong lifecycle, full actor identity, weapon and sequence cannot withdraw another publication");
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1000); ShotLogAdvance(2051); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::CommandAttempt &&
+        records[0].metadata.commandSequence == 2 && ShotLogGetCounters().withdrawnCommands == 1,
+        "withdrawing one exact command leaves the other weapon publication's timeout intact");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1000);
+    auto estimate = published; estimate.receiptMs = 1200; estimate.attackPublished = false; ShotLogAddMetadata(estimate);
+    ShotLogAdvance(2051);
+    Expect(Drain().empty(), "estimate-only recapture cannot reopen a withdrawn command attempt");
+    auto retry = published; retry.receiptMs = 2100; ShotLogAddMetadata(retry);
+    auto duplicate = retry; duplicate.receiptMs = 2300; ShotLogAddMetadata(duplicate); ShotLogAdvance(3160);
+    Expect(Drain().empty(), "fresh retry restarts its acknowledgement window at publication time");
+    ShotLogAdvance(3161); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::CommandAttempt && records[0].fireMs == 2100 &&
+        ShotLogGetCounters().unregistered == 1 && ShotLogGetCounters().withdrawnCommands == 1,
+        "duplicate retry capture cannot postpone or duplicate the fresh publication's one timeout");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1000);
+    retry.receiptMs = 1010; ShotLogAddMetadata(retry);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1011);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1012); ShotLogAdvance(5000);
+    Expect(Drain().empty() && ShotLogGetCounters().withdrawnCommands == 2,
+        "a fresh unconsumed retry can be withdrawn once without repeated withdrawal counting");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 999); ShotLogOnFire(Fire()); ShotLogOnHurt(Hurt());
+    retry.receiptMs = 2500; ShotLogAddMetadata(retry); ShotLogAdvance(5000); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot && records[0].outcome == ShotLogOutcome::Hit &&
+        records[0].metadata.receiptMs == 990 && ShotLogGetCounters().unregistered == 0,
+        "recapture preserves a native acknowledgement even beyond reorder and acknowledgement windows");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published); ShotLogOnFire(Fire());
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1001); ShotLogAdvance(1311); records = Drain();
+    Expect(records.size() == 1 && records[0].kind == ShotLogRecordKind::Shot && ShotLogGetCounters().withdrawnCommands == 0,
+        "withdrawal after native consumption cannot erase or relabel a genuine shot");
+
+    ShotLogInitialize(Local, 900); ShotLogAddMetadata(published);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1000); ShotLogSetEnabled(false, 1001);
+    ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 1002); ShotLogAddMetadata(published);
+    ShotLogSetEnabled(true, 1010); ShotLogAdvance(5000);
+    Expect(Drain().empty() && ShotLogGetCounters().withdrawnCommands == 1 && ShotLogGetCounters().abandonedDisabled == 0,
+        "disabled logging clears withdrawn context without counting it as an abandoned attack or resurrecting it");
+    ShotLogStop(5001); ShotLogWithdrawCommand(Local, 1, published.weaponHandle, 5002);
+    Expect(Drain().empty() && ShotLogGetCounters().withdrawnCommands == 1,
+        "withdrawal after cooperative stop cannot restart command tracking");
+}
+
 void DamagePredictionChecks() {
     auto metadata = Metadata(); metadata.damageValid = true;
     metadata.predictedDamage = 35.5f; metadata.minDamage = 30; metadata.predictedHitgroup = 2;
@@ -693,7 +805,7 @@ void FormattingChecks() {
 }
 
 int main() {
-    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); CorrectedSpreadChecks(); AttemptChecks(); DamagePredictionChecks(); FormattingChecks();
+    BasicChecks(); MetadataChecks(); CorrelationChecks(); DuplicateAndLifecycleChecks(); CapacityChecks(); ReasonChecks(); CorrectedSpreadChecks(); AttemptChecks(); WithdrawChecks(); DamagePredictionChecks(); FormattingChecks();
     std::printf("Shot log checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;
 }

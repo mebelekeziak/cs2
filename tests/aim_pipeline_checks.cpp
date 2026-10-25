@@ -8,6 +8,9 @@
 #include "aim_autofire_offsets.h"
 #include "aim_weapon.h"
 #include "aim_spread.h"
+#include "aim_native_hitchance.h"
+#include "aim_spread_offsets.h"
+#include "aim_weapon_offsets.h"
 #include "aim_shoot_origin.h"
 #include <limits>
 #include "aim_occlusion.h"
@@ -34,6 +37,8 @@ namespace move = movement_offsets;
 unsigned failures = 0, checks = 0, recorderCalls = 0, builderCalls = 0, checksumCalls = 0;
 bool selectAvailable = true, targetCurrent = true, volumeAvailable = true, volumeCurrent = true;
 bool weaponAvailable = true, weaponCurrent = true, checksumAvailable = true, badHistory = false;
+bool builderKeepsHistory = false;
+bool builderKeepsAttackIndex = false;
 bool pathAvailable = true, pathClear = true, changeDuringTrace = false;
 bool penetrationClear = true, penetrationChange = false;
 unsigned penetrationCalls = 0;
@@ -59,6 +64,8 @@ bool healthChangeDuringTrace = false;
 bool recorderSawNativePress = false, builderSawPrimary = false, checksumSawCancelledPrimary = false;
 std::vector<std::string> telemetry;
 std::vector<ShotLogMetadata> shotMetadata;
+struct WithdrawnCommand { ShotLogSource source; int sequence; std::uint32_t weapon; };
+std::vector<WithdrawnCommand> withdrawnCommands;
 unsigned shotPumps = 0;
 AimWeaponSnapshot weapon{};
 AimVector nativeOrigin{};
@@ -66,6 +73,10 @@ bool originAvailable = true;
 int builderMutation = 0, traceModelMutation = 0, modelReadMutation = 0;
 unsigned modelMutationTrace = 3;
 unsigned spreadReads = 0, spreadSolves = 0;
+unsigned nativePatternCalls = 0;
+bool nativePatternAvailable = true;
+double spreadTolerance = 0;
+unsigned spreadBudget = 0;
 bool spreadAvailable = true, spreadCurrent = true, spreadMiss = false;
 bool spreadAlternateMiss = false;
 bool spreadRawAlternative = false;
@@ -82,6 +93,7 @@ void MutateModel(int mode) {
     if (mode == 9) weapon.currentTime += .01f;
     if (mode == 10) { auto settings = SilentAimGetSettings(); settings.enabled = false; SilentAimSetSettings(settings); }
     if (mode == 11) SilentAimTestForeground(false);
+    if (mode == 12) { --weapon.clip; weapon.recoilIndex += 1; }
 }
 constexpr std::uint64_t UnrelatedDown = 0x1000, UnrelatedChanged = 0x2000, UnrelatedThird = 0x4000;
 constexpr std::uint32_t UnrelatedPresence = 0x400000;
@@ -110,7 +122,8 @@ bool Equal(const MovementButtons& left, const MovementButtons& right) noexcept {
 
 struct Command {
     std::array<unsigned char, 0x90> command{}, base{};
-    std::array<unsigned char, 0x38> baseAngles{}, entry{}, historyAngles{};
+    std::array<unsigned char, 0x38> baseAngles{}, historyAngles{};
+    std::array<unsigned char, 0x70> entry{};
     std::array<unsigned char, 0x18> repeated{};
     std::array<unsigned char, 0x18> subticks{};
     std::array<MovementSubtick, 2> steps{};
@@ -131,8 +144,10 @@ struct Command {
         Put(Address(baseAngles) + cmd::angle::Pitch, PhysicalView);
         Put(Address(repeated) + cmd::repeated::Allocated, 1);
         Put(Address(repeated) + cmd::repeated::Entries, Address(entry));
-        Put(Address(entry) + cmd::history::Presence, std::uint32_t{0x8001});
+        Put(Address(entry) + cmd::history::Presence, std::uint32_t{0x8001 | aim_spread_offsets::HistoryTimePresent});
         Put(Address(entry) + cmd::history::Angles, Address(historyAngles));
+        Put(Address(entry) + aim_spread_offsets::HistoryTick, 100);
+        Put(Address(entry) + aim_spread_offsets::HistoryFraction, .5f);
         Put(Address(historyAngles) + cmd::angle::Presence, std::uint32_t{0x8007});
         Put(Address(historyAngles) + cmd::angle::Pitch, PhysicalView);
     }
@@ -189,8 +204,10 @@ void NativeBuilder(void* input, int slot, void* command) {
     const auto inputAddress = reinterpret_cast<std::uintptr_t>(input);
     const auto buttons = Get<MovementButtons>(address + move::command::Buttons);
     builderSawPrimary = slot == 0 && (buttons.down & 1) && (buttons.changed & 1) && !(buttons.third & 1);
-    const int index = Get<int>(inputAddress + fire::InputPrimaryIndex);
+    int index = Get<int>(inputAddress + fire::InputPrimaryIndex);
     auto presence = Get<std::uint32_t>(address + cmd::command::Presence);
+    if (builderKeepsAttackIndex && index < 0 && (presence & cmd::command::Attack1Present))
+        index = Get<int>(address + cmd::command::Attack1Index);
     presence = index >= 0 ? presence | cmd::command::Attack1Present : presence & ~cmd::command::Attack1Present;
     Put(address + cmd::command::Presence, presence);
     Put(address + cmd::command::Attack1Index, index);
@@ -199,7 +216,8 @@ void NativeBuilder(void* input, int slot, void* command) {
     const auto angles = Get<std::uintptr_t>(entry + cmd::history::Angles);
     const auto base = Get<std::uintptr_t>(address + move::command::Base);
     const auto baseAngles = Get<std::uintptr_t>(base + move::base::Angles);
-    Put(angles + cmd::angle::Pitch, baseAngles ? Get<AimAngles>(baseAngles + cmd::angle::Pitch) : AimAngles{});
+    if (!builderKeepsHistory)
+        Put(angles + cmd::angle::Pitch, baseAngles ? Get<AimAngles>(baseAngles + cmd::angle::Pitch) : AimAngles{});
     Put(angles + cmd::angle::Presence, badHistory ? std::uint32_t{0} : std::uint32_t{0x8007});
     MutateModel(builderMutation);
 }
@@ -207,6 +225,7 @@ void NativeBuilder(void* input, int slot, void* command) {
 struct World {
     std::vector<unsigned char> client = std::vector<unsigned char>(cs2_offsets::ClientImageSize);
     std::array<unsigned char, 0x500> pawn{};
+    std::array<unsigned char, 0x70> pawnIdentity{};
     std::array<unsigned char, 0x40> weaponIdentity{};
     std::uintptr_t Base() noexcept { return reinterpret_cast<std::uintptr_t>(client.data()); }
     std::uintptr_t InputAddress() noexcept { return Base() + cmd::Input; }
@@ -219,9 +238,13 @@ struct World {
     void Reset() {
         std::memset(Input(), 0, 0xC00);
         pawn.fill(0); // Stable airborne state unless the scenario requests ground.
+        pawnIdentity.fill(0); weaponIdentity.fill(0);
         Put(Base() + cs2_offsets::globals::dwEntityList, std::uintptr_t{0x111000});
         Put(Base() + cs2_offsets::globals::dwLocalPlayerController, std::uintptr_t{0x222000});
         Put(Base() + cs2_offsets::globals::dwLocalPlayerPawn, Address(pawn));
+        Put(Address(pawn) + cs2_offsets::CEntityInstance::m_pEntity, Address(pawnIdentity));
+        Put(Address(pawnIdentity), Address(pawn));
+        Put(Address(pawnIdentity) + cs2_offsets::entity_layout::HandleOffset, std::uint32_t{0x8003});
         Put(InputAddress() + fire::InputPrimaryIndex, -1);
         Put(InputAddress() + fire::InputEventCount, 1);
         Put(InputAddress() + fire::InputEventsProcessed, 1);
@@ -233,7 +256,7 @@ struct World {
         recorderSawNativePress = builderSawPrimary = checksumSawCancelledPrimary = false;
         selectAvailable = targetCurrent = volumeAvailable = volumeCurrent = true;
         weaponAvailable = weaponCurrent = checksumAvailable = true;
-        badHistory = false;
+        badHistory = builderKeepsHistory = builderKeepsAttackIndex = false;
         pathAvailable = pathClear = true; changeDuringTrace = false; traceCalls = 0;
         changeOnTraceCall = 0;
         penetrationClear = true; penetrationChange = false; penetrationCalls = 0;
@@ -248,10 +271,12 @@ struct World {
         quickstopBrakes.clear(); quickstopCommands.clear();
         selectedPawnHandle = 0x8004; localPawnHandle = 0x8003;
         telemetry.clear();
-        shotMetadata.clear(); shotPumps = 0;
+        shotMetadata.clear(); withdrawnCommands.clear(); shotPumps = 0;
         ShotLogSetSettings({});
         nativeOrigin = {}; originAvailable = true; modelMutationTrace = 3; builderMutation = traceModelMutation = modelReadMutation = 0;
         spreadReads = spreadSolves = 0; spreadAvailable = spreadCurrent = true; spreadMiss = false; spreadMutation = 0;
+        nativePatternCalls = 0; nativePatternAvailable = true;
+        spreadTolerance = 0; spreadBudget = 0;
         spreadAlternateMiss = false;
         spreadRawAlternative = false;
         weapon = {};
@@ -589,8 +614,12 @@ void OcclusionChecks(World& world) {
     world.Prepare(rebuild); world.History(rebuild);
     pathClear = false;
     world.Prepare(rebuild);
+    Expect(recorderCalls == 1 && shotMetadata.size() == 1,
+        "completed normal publication is retained instead of issuing a replacement with a newer path/pose");
+    world.History(rebuild); // Native drops the original primary index.
+    world.Prepare(rebuild);
     Expect(recorderCalls == 1 && Equal(rebuild.Buttons(), rebuild.originalButtons) && rebuild.Index() == -1,
-        "same-command rebuild removes the earlier owned pulse when cover blocks the replacement request");
+        "native reset retires the normal publication and blocked cover prevents its replacement request");
 
     world.Reset();
     Command manual;
@@ -889,6 +918,17 @@ bool AimWeaponRead(const AimWeaponContext&, const AimSource&, AimWeaponSnapshot&
 }
 bool AimWeaponStillCurrent(const AimWeaponContext&, const AimSource&, const AimWeaponSnapshot&) noexcept { return weaponCurrent; }
 bool AimSpreadPrepare(std::uintptr_t, AimSpreadContext&) noexcept { return false; }
+bool AimSpreadReadPattern(const AimSpreadContext&, bool& pattern) noexcept { pattern = false; return nativePatternAvailable; }
+bool AimPrepareNativeSpreadPattern(const AimSpreadContext&, const AimHitchanceInput& input, bool,
+    AimSpreadPattern& pattern, const char** reason) noexcept {
+    ++nativePatternCalls;
+    if (!nativePatternAvailable) { pattern.valid = false; if (reason) *reason = "fixture native failure"; return false; }
+    if (!AimPrepareSpreadPattern(input, pattern)) return false;
+    // Deliberately different fixture distribution proves routing and gating.
+    for (auto& offset : pattern.offsets) offset = {0, 0};
+    if (reason) *reason = "fixture native samples";
+    return true;
+}
 bool AimSpreadRead(const AimSpreadContext&, const AimSource& source, const AimWeaponSnapshot& value, const AimShot& shot,
     AimSpreadSnapshot& out) noexcept {
     ++spreadReads;
@@ -900,16 +940,19 @@ bool AimSpreadRead(const AimSpreadContext&, const AimSource& source, const AimWe
     if (spreadRawAlternative) {
         out.rawClockAlternative = true; out.converted = out.alternateTime = {104, .25f};
         out.punch.pitch = 1.25f;
+        out.selectedVariant = 1;
     }
-    out.seedVariants = !std::strcmp(value.name, "C_WeaponSSG08") ? 2u : 1u;
+    out.seedVariants = 1;
     out.valid = spreadAvailable && shot.index >= 0;
     out.reason = out.valid ? "fixture indexed shot model" : "fixture timing unavailable";
     return out.valid;
 }
 bool AimSpreadStillCurrent(const AimSpreadContext&, const AimSource&, const AimSpreadSnapshot&) noexcept { return spreadCurrent; }
-AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext&, const AimSpreadSnapshot& model, const AimAngles& desired) noexcept {
+AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext&, const AimSpreadSnapshot& model, const AimAngles& desired,
+    double tolerance, unsigned budget) noexcept {
     ++spreadSolves;
-    const auto corrected = AimSpreadCompensate(desired, model.punch, .15, -.08);
+    spreadTolerance = tolerance; spreadBudget = budget;
+    const auto corrected = AimSpreadCompensate(desired, model.selectedVariant ? model.alternatePunch : model.punch, .15, -.08);
     AimSpreadSearchResult result{};
     result.command = corrected.command; result.effective = corrected.effective;
     result.predicted = desired; if (spreadMiss) result.predicted.yaw += 90;
@@ -977,6 +1020,9 @@ bool MovementQuickstop(void* command, bool brake) noexcept {
 void MovementTelemetryPush(const char* message) noexcept { if (message) telemetry.emplace_back(message); }
 void ShotLoggingPump() noexcept { ++shotPumps; }
 void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept { shotMetadata.push_back(metadata); }
+void ShotLoggingWithdrawCommand(const ShotLogSource& source, int sequence, std::uint32_t weaponHandle) noexcept {
+    withdrawnCommands.push_back({source, sequence, weaponHandle});
+}
 
 void DamageGateChecks(World& world) {
     world.Reset(); pathClear = false;
@@ -1680,7 +1726,7 @@ void SpreadPipelineChecks(World& world) {
         "selected manual target receives spread compensation exactly once");
     world.Reset(); enable(false, false); weapon.name = "C_WeaponSSG08"; spreadRawAlternative = true;
     Command rawManual; physical(rawManual); world.History(rawManual);
-    Expect(Equal(rawManual.History(), AimSpreadCompensate(Command::PhysicalView, {1.25f, 0, 0}, .15, -.08).command),
+    Expect(Equal(rawManual.History(), AimSpreadCompensate(Command::PhysicalView, {}, .15, -.08).command),
         "raw-clock standalone Scout preserves current intended recoil rather than reintroducing decayed historical punch");
     world.Reset(); enable(true, false); Command heldAim; physical(heldAim, false); world.History(heldAim);
     Expect(Equal(heldAim.History(), Desired()) && spreadSolves == 0,
@@ -1695,25 +1741,19 @@ void SpreadPipelineChecks(World& world) {
         "corrected indexed automatic ray can fire below uncorrected cone chance; metadata is one conditional ray");
     bool copiedMovement = false;
     for (const auto& message : telemetry) if (message.find("AIM_SPREAD corrected=1") == 0)
-        copiedMovement = message.size() < 1399 && message.find("revision=4 ") != std::string::npos &&
+        copiedMovement = message.size() < 1399 && message.find("revision=7 ") != std::string::npos &&
             message.find("model_inaccuracy=0.800000012 model_spread=0 pattern=0 movement_known=1 flags=0x0 velocity=(10.000000,-20.000000,30.000000)") != std::string::npos &&
             message.ends_with("server seed/timing not observed");
-    Expect(copiedMovement, "bounded revision-four spread trace retains exact model accuracy and copied movement without truncation");
+    Expect(copiedMovement, "bounded revision-seven spread trace retains exact model accuracy and copied movement without truncation");
 
     for (bool alternateMiss : {false, true}) {
         world.Reset(); enable(true, true); weapon.name = "C_WeaponSSG08"; weapon.inaccuracy = .4f;
         auto settings = SilentAimGetSettings(); settings.hitchance = 0; SilentAimSetSettings(settings);
         spreadAlternateMiss = alternateMiss;
         Command scout; world.Prepare(scout); world.History(scout);
-        if (alternateMiss)
-            Expect(checksumCalls == 1 && Equal(scout.Buttons(), scout.originalButtons) && shotMetadata.empty(),
-                "Scout primary-ray hit cannot authorize autofire when the next-tick ray misses, even at minimum zero");
-        else
-            Expect(checksumCalls == 0 && shotMetadata.size() == 1 && shotMetadata[0].spreadVariants == 2 &&
-                shotMetadata[0].samples == 2 && shotMetadata[0].hits == 2 &&
-                shotMetadata[0].alternateClientSpreadSeed == 0x12345679 &&
-                Equal(shotMetadata[0].alternatePredictedRay, Desired()),
-                "Scout publishes only after both timing rays intersect and copies both conditional predictions");
+        Expect(checksumCalls == 0 && shotMetadata.size() == 1 && shotMetadata[0].spreadVariants == 1 &&
+            shotMetadata[0].samples == 1 && shotMetadata[0].hits == 1,
+            "Scout selected ray authorizes autofire without waiting for the unselected prediction; alternate_miss=" + std::to_string(alternateMiss));
     }
 
     for (int rejection = 0; rejection < 5; ++rejection) {
@@ -1738,6 +1778,440 @@ void SpreadPipelineChecks(World& world) {
     }
 }
 
+void SpreadPublicationChecks(World& world) {
+    const auto enable = [&](bool aim, bool automatic) {
+        auto settings = SilentAimGetSettings(); settings.enabled = aim; settings.autofire = automatic;
+        settings.removeSpread = true; SilentAimSetSettings(settings); SilentAimTestSpread(true);
+    };
+    const auto physical = [&](Command& command) {
+        auto buttons = command.originalButtons; buttons.down |= 1;
+        Put(Address(command.command) + move::command::Buttons, buttons);
+        Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+    };
+    const auto afterFire = [&]() {
+        --weapon.clip; weapon.recoilIndex += 1; weapon.inaccuracy = .8f;
+        weapon.aimPunch = {3, -4, 0}; weapon.currentTime += .01f; weapon.ready = false;
+    };
+    world.Reset();
+    SilentAimTestConfigure(world.Base(), NativeBuilder, NativeRecorder, &CaptureLog);
+    enable(true, true);
+    builderKeepsAttackIndex = true;
+    Command automatic;
+    world.Prepare(automatic); world.History(automatic);
+    Expect(spreadTolerance > .0002 && spreadBudget == 4096,
+        "automatic spread search receives a capsule interior tolerance and the bounded command-time budget");
+    const auto applied = automatic.History();
+    const auto captured = shotMetadata;
+    const auto selectedBefore = selectionCalls;
+    afterFire(); builderKeepsHistory = true;
+    world.History(automatic);
+    Expect(spreadSolves == 1 && Equal(automatic.History(), applied) && shotMetadata.size() == 1 &&
+        selectionCalls == selectedBefore && automatic.Index() == 0,
+        "completed indexed automatic shot retains its correction during a repeated native history callback");
+    builderKeepsHistory = false;
+    world.History(automatic);
+    Expect(spreadSolves == 1 && Equal(automatic.History(), applied) && shotMetadata.size() == 1 &&
+        shotMetadata[0].inaccuracy == captured[0].inaccuracy && shotMetadata[0].spread == captured[0].spread &&
+        Equal(shotMetadata[0].aim, captured[0].aim),
+        "exact native automatic rebuild replays the original correction and retains pre-fire shot metadata despite changed clip/recoil/readiness");
+    const auto commandBefore = automatic.command;
+    const auto inputBefore = world.InputBytes();
+    world.Prepare(automatic); world.History(automatic);
+    Expect(recorderCalls == 1 && spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 0 &&
+        automatic.command == commandBefore && world.InputBytes() == inputBefore && Equal(automatic.History(), applied),
+        "repeated preparation keeps a completed owned pulse and cannot request or solve the same shot again");
+    SilentAimFlushTelemetry();
+    bool noStatistics = false, replayReported = false;
+    for (const auto& message : telemetry) {
+        if (message.find("AIM_PERFORMANCE ") == 0)
+            noStatistics = message.find("estimates=0 ") != std::string::npos && message.find("spread_patterns=0 ") != std::string::npos;
+        if (message.find("AIM_SPREAD_DIAGNOSTICS ") == 0)
+            replayReported = message.find("corrected=1 ") != std::string::npos && message.find("replayed=2 ") != std::string::npos;
+    }
+    Expect(noStatistics && replayReported,
+        "spread correction performs no unused statistical estimates/patterns and reports native replay separately from solved shots");
+
+    for (int invalid = 0; invalid < 6; ++invalid) {
+        world.Reset(); enable(true, true); builderKeepsAttackIndex = true;
+        Command rebuilt; world.Prepare(rebuilt); world.History(rebuilt);
+        AimAngles expected = Command::PhysicalView;
+        if (invalid == 0) builderKeepsAttackIndex = false;
+        if (invalid == 1) {
+            builderKeepsHistory = true; expected = {7, 8, 0};
+            Put(Address(rebuilt.historyAngles) + cmd::angle::Pitch, expected);
+        }
+        if (invalid == 2) Put(Address(rebuilt.entry) + aim_spread_offsets::HistoryTick, 101);
+        if (invalid == 3) Put(Address(rebuilt.entry) + cmd::history::Presence, std::uint32_t{0x8001});
+        if (invalid == 4) badHistory = true;
+        if (invalid == 5) weaponAvailable = false;
+        world.History(rebuilt);
+        Expect(spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 1 &&
+            Equal(rebuilt.Buttons(), rebuilt.originalButtons) && rebuilt.Index() == -1 && Equal(rebuilt.History(), expected),
+            "unvalidated automatic rebuild cancels only its completed owned pulse and preserves native history; case=" + std::to_string(invalid));
+    }
+
+    for (bool aim : {false, true}) {
+        world.Reset(); enable(aim, false); Command manual; physical(manual);
+        world.History(manual); const auto correction = manual.History(); const auto metadataCount = shotMetadata.size();
+        Expect(spreadTolerance == .0002 && spreadBudget == 8192,
+            "manual spread search retains the precise solver tolerance and its normal budget; aim=" + std::to_string(aim));
+        afterFire(); builderKeepsHistory = true; world.History(manual);
+        Expect(spreadSolves == 1 && Equal(manual.History(), correction) && shotMetadata.size() == metadataCount,
+            "already corrected indexed manual history never compounds its desired angle or recaptures metadata; aim=" + std::to_string(aim));
+        builderKeepsHistory = false; world.History(manual);
+        Expect(spreadSolves == 1 && Equal(manual.History(), correction) && shotMetadata.size() == metadataCount,
+            "exact indexed manual native rebuild reuses the original correction after firing; aim=" + std::to_string(aim));
+        builderKeepsHistory = true;
+        const AimAngles unknown{7, 8, 0};
+        Put(Address(manual.historyAngles) + cmd::angle::Pitch, unknown);
+        world.History(manual);
+        Expect(spreadSolves == 1 && Equal(manual.History(), unknown),
+            "unknown views on an already published indexed shot stay untouched; aim=" + std::to_string(aim));
+    }
+
+    world.Reset(); enable(false, false); Command relocated; physical(relocated); world.History(relocated);
+    const auto relocatedCorrection = relocated.History();
+    std::array<unsigned char, 0x38> replacementAngles{};
+    Put(Address(replacementAngles) + cmd::angle::Presence, std::uint32_t{0x8007});
+    Put(Address(replacementAngles) + cmd::angle::Pitch, Command::PhysicalView);
+    Put(Address(relocated.entry) + cmd::history::Angles, Address(replacementAngles));
+    world.History(relocated);
+    Expect(spreadSolves == 1 && Equal(Get<AimAngles>(Address(replacementAngles) + cmd::angle::Pitch), relocatedCorrection),
+        "native history may rebuild into new message storage; replay follows only revalidated callback addresses");
+
+    for (int changed = 0; changed < 8; ++changed) {
+        world.Reset(); enable(false, false); Command fresh; physical(fresh); world.History(fresh);
+        if (changed == 0) Put(Address(fresh.entry) + aim_spread_offsets::HistoryTick, 101);
+        if (changed == 1) Put(Address(fresh.entry) + aim_spread_offsets::HistoryFraction, .75f);
+        if (changed == 2) Put(Address(fresh.command) + move::command::Sequence, 38);
+        if (changed == 3) { auto settings = SilentAimGetSettings(); settings.fov = 29; SilentAimSetSettings(settings); }
+        if (changed == 4) ++weapon.handle;
+        if (changed == 5) Put(weapon.identity + aim_weapon_offsets::IdentityScene, 1);
+        if (changed == 6) Put(Address(world.pawnIdentity) + cs2_offsets::entity_layout::HandleOffset, std::uint32_t{0x10003});
+        if (changed == 7) ++weapon.mode;
+        world.History(fresh);
+        Expect(spreadSolves == 2,
+            "new timestamp, sequence, settings, weapon ownership, scene or source serial receives a fresh indexed solve; case=" + std::to_string(changed));
+    }
+
+    world.Reset(); enable(false, false); Command changedTime; physical(changedTime); world.History(changedTime);
+    const auto timedCorrection = changedTime.History();
+    builderKeepsHistory = true;
+    Put(Address(changedTime.entry) + aim_spread_offsets::HistoryTick, 101);
+    world.History(changedTime);
+    Expect(spreadSolves == 1 && Equal(changedTime.History(), timedCorrection),
+        "a changed timestamp with an unreconstructed old corrected view never compounds standalone input");
+
+    world.Reset(); enable(false, false); Command sourceEpoch; physical(sourceEpoch); world.History(sourceEpoch);
+    Put(world.Base() + cs2_offsets::globals::dwLocalPlayerPawn, std::uintptr_t{0});
+    world.History(sourceEpoch);
+    Put(world.Base() + cs2_offsets::globals::dwLocalPlayerPawn, Address(world.pawn));
+    world.History(sourceEpoch);
+    Expect(spreadSolves == 2,
+        "source loss invalidates the publication epoch even when the same pawn address returns");
+
+    world.Reset(); enable(false, false); Command toggled; physical(toggled); world.History(toggled);
+    auto settings = SilentAimGetSettings(); settings.removeSpread = false; SilentAimSetSettings(settings);
+    world.History(toggled);
+    settings.removeSpread = true; SilentAimSetSettings(settings); world.History(toggled);
+    Expect(spreadSolves == 2, "an observed spread disable invalidates completed publications before re-enable");
+
+    world.Reset(); enable(false, false); Command stopped; physical(stopped); world.History(stopped);
+    const auto stoppedCorrection = stopped.History();
+    SilentAimStop("completed spread publication stop regression");
+    builderKeepsHistory = true; world.History(stopped);
+    Expect(spreadSolves == 1 && Equal(stopped.History(), stoppedCorrection),
+        "stop forwards native unchanged history without recomputing a completed correction");
+    builderKeepsHistory = false; world.History(stopped);
+    Expect(spreadSolves == 1 && Equal(stopped.History(), Command::PhysicalView),
+        "stop invalidates replay and leaves a subsequent native rebuild untouched");
+}
+
+void SpreadRebuildRecoveryChecks(World& world) {
+    // The failing user logs revisit a completed indexed command after native
+    // primary/history fields have been cleared. This is a normal rebuild,
+    // rather than an unresolved owned write that may stop the aim component.
+    for (bool historyPhase : {false, true}) {
+        world.Reset(); AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+        SilentAimSetSettings(settings); SilentAimTestSpread(true);
+        builderKeepsAttackIndex = true;
+        Command rebuilt(2461); world.Prepare(rebuilt); world.History(rebuilt);
+        Expect(shotMetadata.size() == 1 && shotMetadata[0].spreadCorrected,
+            "recovery fixture first publishes a corrected automatic shot");
+        --weapon.clip; weapon.recoilIndex += 1;
+        Put(Address(rebuilt.command) + move::command::Buttons, rebuilt.originalButtons);
+        Put(Address(rebuilt.command) + cmd::command::Presence, std::uint32_t{1});
+        Put(Address(rebuilt.command) + cmd::command::Attack1Index, -1);
+        Put(Address(rebuilt.command) + cmd::command::HistorySize, 0);
+        Put(Address(rebuilt.command) + cmd::command::HistoryCapacity, 0);
+        Put(Address(rebuilt.repeated) + cmd::repeated::Allocated, 0);
+        const auto nativeCommand = rebuilt.command;
+        const auto nativeInput = world.InputBytes();
+        AimVisualizationClear();
+        if (historyPhase) world.History(rebuilt); else world.Prepare(rebuilt);
+        world.Prepare(rebuilt); // A retired sequence must not request fire again.
+        bool retiredNative = false;
+        for (const auto& message : telemetry)
+            retiredNative |= message.find("AIM_SPREAD_REBUILD revision=7 sequence=2461 ") == 0 &&
+                message.find("reason=native_primary_rebuilt") != std::string::npos;
+        Expect(rebuilt.command == nativeCommand && world.InputBytes() == nativeInput &&
+            recorderCalls == 1 && spreadSolves == 1 && checksumCalls == 0 && shotMetadata.size() == 1 &&
+            retiredNative && !std::strstr(SilentAimStatus(), "stopped") && AimVisualizationCapture(GetTickCount64()).count == 1,
+            "empty native rebuild retires old ownership, refreshes points and cannot stop or refire; history_phase=" + std::to_string(historyPhase));
+        weaponAvailable = false; world.Prepare(rebuilt);
+        weaponAvailable = true; AimVisualizationClear(); world.Prepare(rebuilt);
+        Expect(recorderCalls == 1 && spreadSolves == 1 && shotMetadata.size() == 1 &&
+            AimVisualizationCapture(GetTickCount64()).count == 1,
+            "temporary model loss cannot erase the completed-sequence guard or disable preview when the model returns");
+        settings.removeSpread = false; SilentAimSetSettings(settings);
+        Command ordinary(2462); world.Prepare(ordinary); world.History(ordinary);
+        Expect(recorderCalls == 2 && spreadSolves == 1 && shotMetadata.size() == 2 &&
+            !shotMetadata.back().spreadCorrected && AimVisualizationCapture(GetTickCount64()).count == 1,
+            "turning Remove spread off after native retirement immediately keeps normal Autofire and points working");
+        settings.removeSpread = true; SilentAimSetSettings(settings);
+        Command corrected(2463); world.Prepare(corrected); world.History(corrected);
+        Expect(recorderCalls == 3 && spreadSolves == 2 && shotMetadata.size() == 3 &&
+            shotMetadata.back().spreadCorrected && AimVisualizationCapture(GetTickCount64()).count == 1,
+            "fresh command after retirement and toggle cycle can publish a new corrected shot");
+    }
+    for (bool takeover : {false, true}) {
+        world.Reset(); AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+        SilentAimSetSettings(settings); SilentAimTestSpread(true);
+        builderKeepsAttackIndex = true;
+        Command retained; world.Prepare(retained); world.History(retained);
+        if (takeover) Put(world.InputAddress() + fire::InputNativeButtons, MovementButtons{1, 1, 0});
+        const auto nativeCommand = retained.command;
+        const auto nativeInput = world.InputBytes();
+        AimVisualizationClear(); world.Prepare(retained);
+        Expect(recorderCalls == 1 && spreadSolves == 1 && checksumCalls == 0 &&
+            retained.command == nativeCommand && world.InputBytes() == nativeInput &&
+            AimVisualizationCapture(GetTickCount64()).count == 1,
+            "completed sequence refreshes preview without new attack/angle edits, including physical takeover=" + std::to_string(takeover));
+        Put(world.InputAddress() + fire::InputNativeButtons, MovementButtons{});
+        Command next(38); world.Prepare(next); world.History(next);
+        Expect(recorderCalls == 2 && spreadSolves == 2 && shotMetadata.size() == 2,
+            "retained or manually taken-over publication cannot disable a later command");
+    }
+    for (bool historyPhase : {false, true}) {
+        world.Reset(); AimVisualizationSetSettings({true});
+        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+        SilentAimSetSettings(settings); SilentAimTestSpread(true);
+        builderKeepsAttackIndex = true;
+        Command missingIndex; world.Prepare(missingIndex); world.History(missingIndex);
+        Put(Address(missingIndex.command) + cmd::command::Attack1Index, -1);
+        Put(Address(missingIndex.command) + cmd::command::Presence, Command::OriginalPresence);
+        builderKeepsAttackIndex = false;
+        if (historyPhase) world.History(missingIndex); else world.Prepare(missingIndex);
+        Expect(recorderCalls == 1 && spreadSolves == 1 && checksumCalls == (historyPhase ? 1u : 0u) &&
+            Equal(missingIndex.Buttons(), missingIndex.originalButtons),
+            "unchanged owned pulse with missing index is removed; only post-history retirement requires immediate CRC repair");
+        world.Prepare(missingIndex);
+        Expect(recorderCalls == 1 && AimVisualizationCapture(GetTickCount64()).count == 1,
+            "retired missing-index command refreshes preview without reacquiring attack");
+    }
+    world.Reset();
+    auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+    SilentAimSetSettings(settings); SilentAimTestSpread(true);
+    builderKeepsAttackIndex = true;
+    Command failedChecksum; world.Prepare(failedChecksum); world.History(failedChecksum);
+    checksumAvailable = false; builderKeepsAttackIndex = false;
+    world.History(failedChecksum);
+    Expect(checksumCalls == 1 && std::strstr(SilentAimStatus(), "checksum unavailable; stopped") &&
+        Equal(failedChecksum.Buttons(), failedChecksum.originalButtons),
+        "real checksum restoration failure still stops aim after removing its owned automatic pulse");
+    AimVisualizationSetSettings({});
+}
+
+void SpreadRetryChecks(World& world) {
+    const auto enable = [&]() {
+        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+        SilentAimSetSettings(settings); SilentAimTestSpread(true);
+        builderKeepsAttackIndex = true;
+    };
+    const auto resetPrimary = [&](Command& command) {
+        Put(Address(command.command) + move::command::Buttons, command.originalButtons);
+        Put(Address(command.command) + cmd::command::Presence, Command::OriginalPresence);
+        Put(Address(command.command) + cmd::command::Attack1Index, -1);
+        Put(Address(command.command) + cmd::command::HistorySize, 0);
+        Put(Address(command.command) + cmd::command::HistoryCapacity, 0);
+        Put(Address(command.repeated) + cmd::repeated::Allocated, 0);
+    };
+    const auto nativeHistory = [&](Command& command) {
+        Put(Address(command.command) + cmd::command::HistorySize, 1);
+        Put(Address(command.command) + cmd::command::HistoryCapacity, 1);
+        Put(Address(command.repeated) + cmd::repeated::Allocated, 1);
+    };
+    for (bool historyPhase : {false, true}) for (bool decayed : {false, true}) {
+        world.Reset(); enable(); weapon.recoilIndex = 2;
+        Command retry(15481); world.Prepare(retry); world.History(retry);
+        const auto firstCorrection = retry.History();
+        resetPrimary(retry);
+        if (decayed) weapon.recoilIndex = 1.75f;
+        if (historyPhase) {
+            builderKeepsHistory = true; world.History(retry);
+            Expect(recorderCalls == 1 && spreadSolves == 1 && Equal(retry.History(), firstCorrection),
+                "post-history native reset withdraws unfired ownership without interpreting old corrected history");
+        }
+        // This base view differs from both the original input and correction.
+        // A retry must select from it; history is rebuilt by native code later.
+        Put(Address(retry.baseAngles) + cmd::angle::Pitch, AimAngles{0, 5, 0});
+        world.Prepare(retry);
+        Expect(recorderCalls == 2 && withdrawnCommands.size() == 1 &&
+            withdrawnCommands[0].sequence == 15481 && withdrawnCommands[0].weapon == weapon.handle &&
+            withdrawnCommands[0].source.controller == shotMetadata[0].source.controller &&
+            withdrawnCommands[0].source.pawn == shotMetadata[0].source.pawn && checksumCalls == 0 &&
+            (retry.Buttons().down & 1) && !std::strstr(SilentAimStatus(), "stopped"),
+            "unconsumed native reset immediately records a fresh native press with exact withdrawal keys; history_phase=" +
+                std::to_string(historyPhase) + " recoil_decay=" + std::to_string(decayed));
+        nativeHistory(retry); builderKeepsHistory = false; world.History(retry);
+        Expect(spreadSolves == 2 && shotMetadata.size() == 2 &&
+            Equal(retry.History(), AimSpreadCompensate(Desired(), {}, .15, -.08).command),
+            "retry publishes a fresh single-model correction without compounding the previous corrected history");
+    }
+    // Consumption may be observed from another command, then roll back before
+    // the completed sequence is revisited. Its guard must remain latched.
+    for (int consumed = 0; consumed < 3; ++consumed) {
+        world.Reset(); enable(); weapon.recoilIndex = 2;
+        Command original(15481); world.Prepare(original); world.History(original);
+        if (consumed != 1) --weapon.clip;
+        if (consumed != 0) weapon.recoilIndex += 1;
+        weapon.ready = false;
+        Command observer(15482); world.Prepare(observer);
+        weapon.clip = 30; weapon.recoilIndex = 2; weapon.ready = true;
+        resetPrimary(original); world.Prepare(original); world.Prepare(original);
+        Expect(recorderCalls == 1 && spreadSolves == 1 && withdrawnCommands.empty() &&
+            Equal(original.Buttons(), original.originalButtons) && !std::strstr(SilentAimStatus(), "stopped"),
+            "ammo/recoil consumption observed on another command stays latched across prediction rollback; signal=" + std::to_string(consumed));
+    }
+    for (bool revalidation : {false, true}) {
+        world.Reset(); enable(); weapon.recoilIndex = 2;
+        Command original(15481); world.Prepare(original); world.History(original);
+        Command observer(15482); world.Prepare(observer);
+        if (revalidation) { weaponReads = 0; modelReadMutation = 12; }
+        else { --weapon.clip; weapon.recoilIndex += 1; }
+        world.History(observer);
+        weapon.clip = 30; weapon.recoilIndex = 2; modelReadMutation = 0;
+        resetPrimary(original); world.Prepare(original); world.Prepare(original);
+        Expect(recorderCalls == 2 && withdrawnCommands.empty() &&
+            Equal(original.Buttons(), original.originalButtons),
+            "consumption first observed in another History or model revalidation survives rollback; revalidation=" + std::to_string(revalidation));
+    }
+    for (int blocked = 0; blocked < 3; ++blocked) {
+        world.Reset(); enable();
+        Command original(15481); world.Prepare(original); world.History(original);
+        const auto applied = original.History();
+        // Native resets only button masks: old index/history can remain live.
+        Put(Address(original.command) + move::command::Buttons, original.originalButtons);
+        if (blocked == 1) selectAvailable = false;
+        if (blocked == 2) weapon.ready = false;
+        world.Prepare(original);
+        builderKeepsHistory = true; world.History(original);
+        world.Prepare(original); world.History(original);
+        Expect(recorderCalls == 1 && spreadSolves == 1 && shotMetadata.size() == 1 &&
+            withdrawnCommands.size() == 1 && Equal(original.History(), applied) &&
+            Equal(original.Buttons(), original.originalButtons),
+            "failed replacement preserves the retry tombstone and never reinterprets a live old correction; blocker=" + std::to_string(blocked));
+        selectAvailable = true; weapon.ready = true;
+        resetPrimary(original); world.Prepare(original);
+        nativeHistory(original); builderKeepsHistory = false; world.History(original);
+        Expect(recorderCalls == 2 && spreadSolves == 2 && shotMetadata.size() == 2,
+            "retry tombstone permits a fresh request once native fields and eligibility permit acquisition");
+    }
+    world.Reset(); enable();
+    Command raw(15481); spreadRawAlternative = true; world.Prepare(raw); world.History(raw);
+    bool selectedClock = false;
+    for (const auto& message : telemetry)
+        selectedClock |= message.find("AIM_SPREAD corrected=1") == 0 &&
+            message.find("shot_tick=104 shot_fraction=0.250000") != std::string::npos &&
+            message.find("selected_clock=1 clamped_time=100/0.500000") != std::string::npos &&
+            message.find("shot_punch=(0.000000,0.000000,0.000000)") != std::string::npos;
+    Expect(selectedClock, "spread telemetry reports the selected clock and matching recoil while retaining native clamp diagnostics");
+}
+
+void NormalPublicationChecks(World& world) {
+    for (bool automatic : {false, true}) {
+        world.Reset();
+        auto settings = SilentAimGetSettings();
+        settings.enabled = true; settings.autofire = automatic; settings.removeSpread = false;
+        SilentAimSetSettings(settings);
+        builderKeepsAttackIndex = true;
+        Command shot;
+        if (automatic) world.Prepare(shot);
+        else {
+            auto buttons = shot.originalButtons; buttons.down |= 1;
+            Put(Address(shot.command) + move::command::Buttons, buttons);
+            Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+        }
+        world.History(shot);
+        const auto applied = shot.History();
+        const auto captured = shotMetadata;
+        const auto selectedBefore = selectionCalls;
+        --weapon.clip; weapon.recoilIndex += 1; weapon.aimPunch = {1, -1.04f, 0};
+        weapon.inaccuracy = .4f; weapon.ready = false;
+        builderKeepsHistory = true;
+        world.History(shot);
+        Expect(captured.size() == 1 && shotMetadata.size() == 1 && Equal(shot.History(), applied) &&
+            selectionCalls == selectedBefore,
+            "normal published shot retains first aim/metadata after recoil and accuracy advance; automatic=" + std::to_string(automatic));
+        builderKeepsHistory = false;
+        world.History(shot);
+        Expect(shotMetadata.size() == 1 && Equal(shot.History(), applied) &&
+            Equal(shotMetadata[0].aim, captured[0].aim) && shotMetadata[0].inaccuracy == captured[0].inaccuracy,
+            "normal native history rebuild restores first published view without replacing its saved cone; automatic=" + std::to_string(automatic));
+        if (automatic) {
+            const auto requestedBefore = recorderCalls;
+            world.Prepare(shot); world.History(shot);
+            Expect(recorderCalls == requestedBefore && shotMetadata.size() == 1 && !std::strstr(SilentAimStatus(), "stopped"),
+                "normal consumed publication cannot acquire another pulse on the same command");
+        }
+        // A new indexed command is a new decision even after the prior shot.
+        weapon.ready = true; weapon.inaccuracy = 0; weapon.aimPunch = {};
+        Command next(38);
+        if (automatic) world.Prepare(next);
+        else Put(world.InputAddress() + fire::InputPrimaryIndex, 0);
+        world.History(next);
+        Expect(shotMetadata.size() == 2 && shotMetadata.back().commandSequence == 38,
+            "normal publication retention does not block the next command; automatic=" + std::to_string(automatic));
+    }
+}
+
+void NativeHitchancePipelineChecks(World& world) {
+    world.Reset();
+    auto settings = SilentAimGetSettings(); settings.nativeHitchance = true;
+    settings.hitchance = 90; SilentAimSetSettings(settings); SilentAimTestSpread(true);
+    weapon.inaccuracy = .4f;
+    Command experiment;
+    world.Prepare(experiment);
+    Expect(recorderCalls == 1 && nativePatternCalls == 1,
+        "enabled experiment gates Autofire with native estimate rather than the differing baseline");
+    world.History(experiment);
+    Expect(shotMetadata.size() == 1 && shotMetadata[0].hitchance == 100 && !shotMetadata[0].spreadCorrected,
+        "publication refresh and shot metadata use the selected statistical experiment");
+    bool compared = false, identified = false;
+    for (const auto& line : telemetry) {
+        compared |= line.find("AIM_HITCHANCE_COMPARE ") == 0 && line.find("threshold_disagrees=1") != std::string::npos;
+        identified |= line.find("AIM_PUBLICATION ") == 0 && line.find("sequence=37 ") != std::string::npos &&
+            line.find("native_hitchance=1 ") != std::string::npos;
+    }
+    Expect(compared && identified, "experiment reports paired thresholds and a publication with exact command identity");
+
+    world.Reset(); settings = SilentAimGetSettings(); settings.nativeHitchance = true;
+    SilentAimSetSettings(settings); SilentAimTestSpread(true); nativePatternAvailable = false;
+    Command unavailable; world.Prepare(unavailable);
+    Expect(recorderCalls == 0 && shotMetadata.empty(), "unavailable native experiment cannot silently use baseline or publish Autofire");
+
+    world.Reset(); weapon.inaccuracy = .4f; Command baseline; world.Prepare(baseline);
+    Expect(nativePatternCalls == 0 && recorderCalls == 0, "default baseline neither invokes nor gates on native experiment");
+
+    world.Reset(); settings = SilentAimGetSettings(); settings.nativeHitchance = settings.removeSpread = true;
+    SilentAimSetSettings(settings); SilentAimTestSpread(true); Command corrected;
+    world.Prepare(corrected); world.History(corrected);
+    Expect(nativePatternCalls == 0 && spreadSolves == 1 && shotMetadata.size() == 1 && shotMetadata[0].spreadCorrected,
+        "Remove spread retains its existing indexed solver even with native preference saved");
+}
+
 int main() {
     World world;
     FreshShotChecks(world);
@@ -1756,6 +2230,11 @@ int main() {
     VisualizationChecks(world);
     SpreadPipelineChecks(world);
     SpreadJumpTransitionChecks(world);
+    SpreadPublicationChecks(world);
+    SpreadRebuildRecoveryChecks(world);
+    SpreadRetryChecks(world);
+    NormalPublicationChecks(world);
+    NativeHitchancePipelineChecks(world);
     SilentAimStop("pipeline checks complete");
     std::printf("Aim pipeline checks: %u, failures: %u\n", checks, failures);
     return failures ? 1 : 0;

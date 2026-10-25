@@ -90,7 +90,7 @@ struct Search {
         return Evaluate({static_cast<float>(commandPitch),
             static_cast<float>(Wrap(yaw-Wrap(input.punch.yaw))),0});
     }
-    bool Exact() const noexcept { return best.valid && best.error<=.0002; }
+    bool Satisfied() const noexcept { return best.valid && best.error<=input.stopResidualDegrees; }
     // A small interior margin survives float conversion and punch addition at
     // ordinary native angle magnitudes; Evaluate still resamples the real bin.
     static double InBin(double ideal,double sampled) noexcept {
@@ -100,12 +100,12 @@ struct Search {
         return std::clamp(equivalent,start+.0001,start+.4999);
     }
     void ImproveOffset(const Sample& source,double offsetX,double offsetY,unsigned variant=0) noexcept {
-        if (!source.valid || count>=limit || Exact()) return;
+        if (!source.valid || count>=limit || Satisfied()) return;
         const auto& punch=Punch(variant);
         const auto& effective=variant==0?source.effective:source.effectiveAlternate;
         const auto inverse=AimSpreadCompensate(input.desired,punch,offsetX,offsetY);
         if (inverse.valid) Evaluate(inverse.command);
-        if (Exact()) return;
+        if (Satisfied()) return;
         // Also inspect the inverse constrained to the source's actual seed
         // bins. If elevation is unreachable, its closest elevation is useful
         // as an approximate candidate, evaluated against the real callback.
@@ -127,7 +127,7 @@ struct Search {
             // legal boundary is still an actual sampled candidate.
             q=std::clamp(q,-89.0,89.0);
             Evaluate({static_cast<float>(q),static_cast<float>(Wrap(constrainedYaw-Wrap(punch.yaw))),0});
-            if (Exact() || count>=limit) return;
+            if (Satisfied() || count>=limit) return;
         }
     }
     void Improve(const Sample& source) noexcept {
@@ -177,8 +177,72 @@ struct Search {
             ImproveOffset(source,source.x[variant],source.y[variant]);
     }
 };
-struct PitchBin { double angle=0,cp=0,sp=0; };
-struct YawBin { double angle=0,cy=0,sy=0; };
+struct YawSpan { unsigned first=0,last=0; };
+struct PitchBin {
+    double angle=0,cp=0,sp=0;
+    std::array<YawSpan,2> spans{};
+    unsigned spanCount=0,count=0;
+};
+double YawAngle(unsigned index) noexcept { return -179.75+index*.5; }
+void EligibleYaws(PitchBin& pitch,Vector target,double threshold,double horizontal,double targetYaw) noexcept {
+    // For a fixed pitch, forward dot target is A*cos(yaw-center)+B.
+    // Solve its one circular interval directly, splitting it only at the yaw
+    // seam. This retains the full grid's original ascending index order.
+    const double a=std::abs(pitch.cp)*horizontal,b=-pitch.sp*target.z;
+    const auto eligible=[&](unsigned index) noexcept {
+        const double yaw=YawAngle(index)*rad;
+        return pitch.cp*(std::cos(yaw)*target.x+std::sin(yaw)*target.y)+b>=threshold;
+    };
+    if (a<=1e-15) {
+        // Exact polar directions have no meaningful yaw. The tiny native
+        // trig residue cannot change a non-boundary decision.
+        if (b-a>=threshold) { pitch.spans[0]={0,719}; pitch.spanCount=1; pitch.count=720; }
+        else if (b+a>=threshold) {
+            // Boundary-only degeneracy: preserve the original predicate.
+            for (unsigned first=0;first<720;) {
+                if (!eligible(first)) { ++first; continue; }
+                unsigned last=first; while (last+1<720 && eligible(last+1)) ++last;
+                if (pitch.spanCount<pitch.spans.size()) {
+                    pitch.spans[pitch.spanCount++]={first,last}; pitch.count+=last-first+1;
+                }
+                first=last+1;
+            }
+        }
+        return;
+    }
+    const double ratio=(threshold-b)/a;
+    if (ratio>1+1e-12) return;
+    if (ratio< -1-1e-12) { pitch.spans[0]={0,719}; pitch.spanCount=1; pitch.count=720; return; }
+    const double half=std::acos(std::clamp(ratio,-1.0,1.0))*deg;
+    const double center=Wrap(targetYaw+(pitch.cp<0?180.0:0.0));
+    std::array<YawSpan,3> spans{}; unsigned count=0;
+    for (int turn=-1;turn<=1;++turn) {
+        const double low=center-half+turn*360,high=center+half+turn*360;
+        // Include one extra grid point at each analytic edge, then apply the
+        // original dot predicate there. Floating trig and acos rounding must
+        // never silently add/remove a boundary center.
+        int first=std::max(0,static_cast<int>(std::floor((low+179.75)*2))-1);
+        int last=std::min(719,static_cast<int>(std::ceil((high+179.75)*2))+1);
+        while (first<=last && !eligible(static_cast<unsigned>(first))) ++first;
+        while (last>=first && !eligible(static_cast<unsigned>(last))) --last;
+        if (first<=last) spans[count++]={static_cast<unsigned>(first),static_cast<unsigned>(last)};
+    }
+    std::sort(spans.begin(),spans.begin()+count,[](YawSpan lhs,YawSpan rhs) { return lhs.first<rhs.first; });
+    for (unsigned i=0;i<count;++i) {
+        if (pitch.spanCount && spans[i].first<=pitch.spans[pitch.spanCount-1].last+1)
+            pitch.spans[pitch.spanCount-1].last=std::max(pitch.spans[pitch.spanCount-1].last,spans[i].last);
+        else if (pitch.spanCount<pitch.spans.size()) pitch.spans[pitch.spanCount++]=spans[i];
+    }
+    for (unsigned i=0;i<pitch.spanCount;++i) pitch.count+=pitch.spans[i].last-pitch.spans[i].first+1;
+}
+unsigned YawAtRank(const PitchBin& pitch,unsigned rank) noexcept {
+    for (unsigned i=0;i<pitch.spanCount;++i) {
+        const unsigned count=pitch.spans[i].last-pitch.spans[i].first+1;
+        if (rank<count) return pitch.spans[i].first+rank;
+        rank-=count;
+    }
+    return 0;
+}
 }
 
 AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
@@ -188,6 +252,7 @@ AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
     if (!callback || !Finite(input.desired) || !Finite(input.punch) || input.desired.roll!=0 ||
         (input.alternatePunchValid && !Finite(input.alternatePunch)) ||
         std::abs(input.desired.pitch)>90 || !std::isfinite(input.maxOffset) || input.maxOffset<0 ||
+        !std::isfinite(input.stopResidualDegrees) || input.stopResidualDegrees<0 || input.stopResidualDegrees>180 ||
         input.variants<1 || input.variants>2 || input.maxEvaluations<input.variants) return result;
     result.variants=input.variants;
     const auto baseline=AimSpreadCompensate(input.desired,input.punch,0,0);
@@ -201,14 +266,13 @@ AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
     }
     // Chase the measured seed changes first, without assuming that the inverse
     // preserves its source's angle bin. Stop cycles by requiring improvement.
-    for (unsigned i=0;i<8 && !search.Exact() && search.count<search.limit;++i) {
+    for (unsigned i=0;i<8 && !search.Satisfied() && search.count<search.limit;++i) {
         const auto before=search.best;
         search.Improve(before);
         if (search.best.error>=before.error) break;
     }
-    if (!search.Exact() && search.count<search.limit) {
+    if (!search.Satisfied() && search.count<search.limit) {
         std::array<PitchBin,720> pitches{};
-        std::array<YawBin,720> yaws{};
         unsigned pitchCount=0;
         for (unsigned i=0;i<720;++i) {
             const double p=-179.75+i*.5;
@@ -218,19 +282,16 @@ AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
             const double actual=Wrap(std::clamp(q,-89.0,89.0)+Wrap(input.punch.pitch));
             pitches[pitchCount++]={actual,std::cos(actual*rad),std::sin(actual*rad)};
         }
-        for (unsigned i=0;i<720;++i) {
-            const double y=-179.75+i*.5;
-            yaws[i]={y,std::cos(y*rad),std::sin(y*rad)};
-        }
         // The spread vector cannot rotate the forward ray farther than
         // atan(maxOffset). A bin's center can be up to sqrt(.5^2+.5^2)
         // degrees from an eligible angle; .75 conservatively includes edges.
         const double threshold=std::cos(std::min(180.0,std::atan(input.maxOffset)*deg+.75)*rad);
-        const auto eligible=[&](const PitchBin& p,const YawBin& y) noexcept {
-            return p.cp*(y.cy*search.target.x+y.sy*search.target.y)-p.sp*search.target.z>=threshold;
-        };
+        const double horizontal=std::hypot(search.target.x,search.target.y);
+        const double targetYaw=std::atan2(search.target.y,search.target.x)*deg;
         unsigned total=0;
-        for (unsigned p=0;p<pitchCount;++p) for (const auto& y:yaws) total+=eligible(pitches[p],y);
+        for (unsigned p=0;p<pitchCount;++p) {
+            EligibleYaws(pitches[p],search.target,threshold,horizontal,targetYaw); total+=pitches[p].count;
+        }
         // Dual sources often need only the two screening callbacks: their ray
         // separation already rules out improvement. Select enough centers to
         // use the remaining budget instead of reserving twenty calls per pair.
@@ -240,29 +301,28 @@ AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
         const unsigned samples=input.variants==2?
             std::min(total,(search.limit-search.count)/2):
             std::min(total,(search.limit-search.count+3)/4);
-        unsigned rank=0,selected=0;
-        for (unsigned p=0;p<pitchCount && selected<samples && !search.Exact();++p) {
-            for (const auto& y:yaws) {
-                if (!eligible(pitches[p],y)) continue;
-                const unsigned targetRank=samples>1?static_cast<unsigned>(
-                    static_cast<unsigned long long>(selected)*(total-1)/(samples-1)):total/2;
-                if (rank++!=targetRank) continue;
-                if (input.variants==2) centers[selected]=p*720+static_cast<unsigned>(&y-yaws.data());
-                else {
-                    const auto source=search.Effective(pitches[p].angle,y.angle);
-                    search.Improve(source);
-                }
-                ++selected;
-                if (selected>=samples || search.Exact() || search.count>=search.limit) break;
+        unsigned row=0,rowRank=0,selected=0;
+        for (;selected<samples && !search.Satisfied() && search.count<search.limit;++selected) {
+            const unsigned targetRank=samples>1?static_cast<unsigned>(
+                static_cast<unsigned long long>(selected)*(total-1)/(samples-1)):total/2;
+            while (row<pitchCount && targetRank>=rowRank+pitches[row].count) {
+                rowRank+=pitches[row].count; ++row;
+            }
+            if (row==pitchCount) break;
+            const unsigned yaw=YawAtRank(pitches[row],targetRank-rowRank);
+            if (input.variants==2) centers[selected]=row*720+yaw;
+            else {
+                const auto source=search.Effective(pitches[row].angle,YawAngle(yaw));
+                search.Improve(source);
             }
         }
         if (input.variants==2 && selected) {
             unsigned stride=std::max(1U,static_cast<unsigned>(selected*.6180339887498948));
             while (std::gcd(stride,selected)!=1) ++stride;
             unsigned index=0;
-            for (unsigned i=0;i<selected && !search.Exact() && search.limit-search.count>=2;++i) {
+            for (unsigned i=0;i<selected && !search.Satisfied() && search.limit-search.count>=2;++i) {
                 const auto center=centers[index];
-                const auto source=search.Effective(pitches[center/720].angle,yaws[center%720].angle);
+                const auto source=search.Effective(pitches[center/720].angle,YawAngle(center%720));
                 search.Improve(source);
                 index=(index+stride)%selected;
             }
@@ -282,7 +342,8 @@ AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
     }
     result.evaluations=search.count;
     result.valid=true;
-    result.reason=search.Exact()?"self-consistent spread compensation":"best sampled spread compensation";
+    result.reason=search.best.error<=.0002?"self-consistent spread compensation":
+        search.Satisfied()?"requested spread residual reached":"best sampled spread compensation";
     return result;
 }
 

@@ -27,6 +27,8 @@ const char* ShotLogConsoleMessage(const char* message, const ShotLogSettings& va
     }
     if (std::strncmp(body, "AIM_", 4)) return nullptr;
     if (!std::strncmp(body, "AIM_CONSOLE_", 12)) return body;
+    if (!std::strncmp(body, "AIM_SHOT cmd #", 14))
+        return value.verbose ? body : nullptr;
     if (!std::strncmp(body, "AIM_SHOT ", 9) || !std::strncmp(body, "AIM_HIT ", 8) || !std::strncmp(body, "AIM_SHOT_LOG_", 13))
         return value.enabled ? body : nullptr;
     return value.verbose ? body : nullptr;

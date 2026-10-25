@@ -247,12 +247,17 @@ bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const Anti
     const auto fail = [&](const char* why) noexcept { diagnose(why); patch = {}; return false; };
     const char* snapshotReason = "not_read";
     if (!Snapshot(command, patch, &snapshotReason)) return fail(snapshotReason);
+    bool primaryAction = false;
     if (movement) {
-        constexpr auto actions = anti_aim_offsets::Attack | anti_aim_offsets::Attack2 | anti_aim_offsets::Use;
+        constexpr auto actions = anti_aim_offsets::Use;
         int attack = -1;
-        if (((patch.originalButtons.down | patch.originalButtons.changed | patch.originalButtons.third) & actions) ||
-            !Read(command + so::command::Attack1Index, attack) || ((patch.commandPresence & 0x20) && attack >= 0))
-            return fail("movement_action_passthrough");
+        const auto buttons = patch.originalButtons.down | patch.originalButtons.changed | patch.originalButtons.third;
+        if (buttons & actions) return fail("movement_action_passthrough");
+        primaryAction = (buttons & anti_aim_offsets::Attack) != 0;
+        if (patch.commandPresence & 0x20) {
+            if (!Read(command + so::command::Attack1Index, attack)) return fail("movement_attack_index");
+            primaryAction |= attack >= 0;
+        }
         if (!std::isfinite(movement->yaw) || patch.originalView.pitch < -89 || patch.originalView.pitch > 89 ||
             patch.originalView.roll != 0) return fail("movement_view_basis");
         // The caller has already applied a digital fallback. Do not convert an
@@ -262,13 +267,18 @@ bool ApplyCommand(std::uintptr_t command, AntiAimCommandPatch& patch, const Anti
         for (int i = 0; i < patch.count; ++i) {
             const auto& step = patch.steps[static_cast<std::size_t>(i)];
             if ((step.original.presence & 1) && (step.original.button & actions)) return fail("movement_action_passthrough");
+            primaryAction |= (step.original.presence & 1) && (step.original.button & anti_aim_offsets::Attack);
         }
     }
     const auto options = AntiAimNormalizeSettings(settings);
     AimAngles targetView{};
     if (!AntiAimBuildAngles(patch.originalView, options, static_cast<std::uint32_t>(patch.sequence), targetView)) return fail("view_nonfinite");
+    // Primary fire retains its physical pitch and camera-facing movement
+    // representation even if a caller supplies enabled anti-aim settings.
+    // Native primary history and all attack/Jumpbug events remain untouched.
+    if (movement && primaryAction) targetView = patch.originalView;
     const auto digitalBasis = movement ? AntiAimChooseDigitalBasis(
-        movement->antiAim ? targetView.yaw : patch.originalView.yaw, movement->yaw) : AntiAimDigitalBasis{};
+        movement->antiAim && !primaryAction ? targetView.yaw : patch.originalView.yaw, movement->yaw) : AntiAimDigitalBasis{};
     patch.editedView = targetView;
     if (movement) {
         if (!digitalBasis.valid) return fail("movement_view_basis");

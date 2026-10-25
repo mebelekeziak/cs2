@@ -210,6 +210,46 @@ void Preservation() {
     }
 }
 void FailureAndRebuild() {
+    {
+        Fixture fixture;
+        Expect(fixture.Start() && SilentAimFinishAutofireHistory(fixture.patch),
+            "complete temporary input before retaining a published indexed request");
+        fixture.NativeBuilder();
+        const auto beforeCommand = fixture.command;
+        const auto beforeInput = fixture.input;
+        const auto beforePatch = fixture.patch;
+        Expect(SilentAimRestoreAutofireRebuild(At(fixture.input), At(fixture.command), fixture.patch,
+            &fixture.diagnostic, true) && fixture.patch.active && !fixture.diagnostic.commandRestored &&
+            !std::memcmp(&fixture.patch, &beforePatch, sizeof(beforePatch)) &&
+            fixture.command == beforeCommand && fixture.input == beforeInput &&
+            !std::strcmp(fixture.diagnostic.reason, "completed_primary_retained"),
+            "retain mode keeps an unchanged completed pulse without any input or command writes");
+    }
+    for (int changed = 0; changed < 4; ++changed) {
+        Fixture fixture;
+        Expect(fixture.Start() && SilentAimFinishAutofireHistory(fixture.patch),
+            "complete request before normal primary ownership transition");
+        auto buttons = Get<MovementButtons>(At(fixture.command) + movement_offsets::command::Buttons);
+        if (changed == 0) buttons.down ^= 1;
+        if (changed == 1) buttons.changed ^= 1;
+        if (changed == 2) buttons.third ^= 1;
+        Put(At(fixture.command) + movement_offsets::command::Buttons, buttons);
+        if (changed == 3) Put(At(fixture.input) + fire::InputNativeButtons, MovementButtons{1, 1, 0});
+        const auto beforeCommand = fixture.command;
+        const auto beforeInput = fixture.input;
+        Expect(SilentAimRestoreAutofireRebuild(At(fixture.input), At(fixture.command), fixture.patch,
+            &fixture.diagnostic, true) && !fixture.patch.active && !fixture.diagnostic.commandRestored &&
+            fixture.command == beforeCommand && fixture.input == beforeInput,
+            "retain mode abandons every changed primary component or physical takeover without editing native bytes");
+    }
+    {
+        Fixture fixture;
+        Expect(fixture.Start(), "pending source-index fixture before retain request");
+        Expect(SilentAimRestoreAutofireRebuild(At(fixture.input), At(fixture.command), fixture.patch,
+            &fixture.diagnostic, true) && !fixture.patch.active && fixture.diagnostic.commandRestored &&
+            Get<int>(At(fixture.input) + fire::InputPrimaryIndex) == -1,
+            "retain option cannot leave a pending temporary input index resident");
+    }
     for (int mode = 1; mode <= 2; ++mode) {
         Fixture fixture; producerMode = mode;
         const auto before = fixture.input;

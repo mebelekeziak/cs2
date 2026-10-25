@@ -6,6 +6,7 @@
 #include "movement_memory.h"
 #include "movement_offsets.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -71,22 +72,55 @@ bool ReadTimePunch(const AimSpreadContext& context, const AimWeaponSnapshot& wea
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return std::isfinite(punch.pitch) && std::isfinite(punch.yaw) && std::isfinite(punch.roll);
 }
-struct SampleContext { const AimSpreadContext& native; const AimSpreadSnapshot& shot; };
+struct CachedSample {
+    std::uint32_t pitch = 0, yaw = 0, seed = 0;
+    int tick = 0;
+    double x = 0, y = 0;
+    bool valid = false;
+};
+struct SampleContext {
+    const AimSpreadContext& native;
+    const AimSpreadSnapshot& shot;
+    // Values belong to this solve only. Native half-degree seed bins are
+    // constant, so refinements inside a bin need no repeated SHA/RNG work.
+    // Noncanonical angles bypass this cache instead of duplicating native
+    // normalization (especially its distinct +180/-180 endpoints).
+    std::array<CachedSample, 2048> cache{};
+    unsigned nativeSeedCalls = 0, nativeRandomStreams = 0, cacheHits = 0;
+};
 bool Sample(void* opaque, const AimAngles& effective, unsigned variant, double& x, double& y, std::uint32_t& seed) noexcept {
-    const auto& sample = *static_cast<SampleContext*>(opaque);
+    auto& sample = *static_cast<SampleContext*>(opaque);
     const auto& native = sample.native;
     const auto& shot = sample.shot;
-    if (!native.seed || !native.randomCtor || !native.randomFloat || variant >= shot.seedVariants || variant > 1) return false;
+    if (!native.seed || !native.randomCtor || !native.randomFloat || variant >= shot.seedVariants || variant > 1 ||
+        shot.selectedVariant > 1) return false;
+    const unsigned selected = shot.seedVariants == 1 ? shot.selectedVariant : variant;
+    const int tick = selected == 0 ? shot.time.tick : shot.alternateTime.tick;
+    CachedSample* slot = nullptr;
+    std::uint32_t pitch = 0, yaw = 0;
+    if (effective.pitch >= -180 && effective.pitch <= 180 && effective.yaw >= -180 && effective.yaw <= 180) {
+        pitch = std::bit_cast<std::uint32_t>(std::floor(effective.pitch * 2.0f) * .5f);
+        yaw = std::bit_cast<std::uint32_t>(std::floor(effective.yaw * 2.0f) * .5f);
+        std::uint32_t hash = pitch ^ std::rotl(yaw, 11) ^ (static_cast<std::uint32_t>(tick) * 0x9e3779b9u);
+        hash ^= hash >> 16; hash *= 0x85ebca6bu; hash ^= hash >> 13;
+        slot = &sample.cache[hash % sample.cache.size()];
+        if (slot->valid && slot->pitch == pitch && slot->yaw == yaw && slot->tick == tick) {
+            ++sample.cacheHits;
+            x = slot->x; y = slot->y; seed = slot->seed;
+            return true;
+        }
+    }
     // Native implementation owns 34 int32 words: seed, shuffle index, 32 slots.
     // It has no vtable or mutex. No borrowed engine random state is accessed.
     alignas(16) unsigned char stream[off::RandomStateSize]{};
     float radiusA = 0, angleA = 0, radiusB = 0, angleB = 0;
     constexpr float circle = 6.283185482025146484375f;
     __try {
-        // Both clocks are copied from verified native input. The search adds
-        // each variant's own copied punch before invoking this pure seed helper.
-        const int tick = variant == 0 ? shot.time.tick : shot.alternateTime.tick;
+        // The chosen clock and its recoil are copied from verified native
+        // input. Two-variant copied test models remain supported separately.
+        ++sample.nativeSeedCalls;
         seed = native.seed(nullptr, &effective, tick) + std::uint32_t{1};
+        ++sample.nativeRandomStreams;
         if (native.randomCtor(stream, std::bit_cast<int>(seed)) != stream) return false;
         radiusA = native.randomFloat(stream, 0, 1);
         angleA = native.randomFloat(stream, 0, circle);
@@ -111,7 +145,9 @@ bool Sample(void* opaque, const AimAngles& effective, unsigned variant, double& 
     const float a = radiusA * shot.weapon.inaccuracy, b = radiusB * shot.weapon.spread;
     x = std::cos(angleA) * a + std::cos(angleB) * b;
     y = std::sin(angleA) * a + std::sin(angleB) * b;
-    return std::isfinite(x) && std::isfinite(y);
+    if (!std::isfinite(x) || !std::isfinite(y)) return false;
+    if (slot) *slot = {pitch, yaw, seed, tick, x, y, true};
+    return true;
 }
 }
 
@@ -136,6 +172,9 @@ bool AimSpreadPrepare(std::uintptr_t client, AimSpreadContext& context) noexcept
         reinterpret_cast<AimSpreadRandomFloat>(tier0 + off::RandomFloat)};
     return true;
 }
+bool AimSpreadReadPattern(const AimSpreadContext& context, bool& pattern) noexcept {
+    return Current(context) && Pattern(context, pattern);
+}
 bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source, const AimWeaponSnapshot& weapon,
     const AimShot& shot, AimSpreadSnapshot& out) noexcept {
     out = {};
@@ -153,9 +192,10 @@ bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source, con
         Read(source.pawn + movement_offsets::pawn::Velocity, out.velocity) &&
         std::isfinite(out.velocity.x) && std::isfinite(out.velocity.y) && std::isfinite(out.velocity.z);
     if (!out.movementStateKnown) { out.movementFlags = 0; out.velocity = {}; }
-    // Only the Scout has log evidence of this clock ambiguity. Other supported
-    // weapons retain their existing single-tick compensation policy.
-    out.seedVariants = weapon.name && !std::strcmp(weapon.name, "C_WeaponSSG08") ? 2u : 1u;
+    // Deagle replays reproduce the same current/raw timing discrepancy as the
+    // Scout. All supported weapons share this indexed native shot-time path;
+    // a weapon-name exception cannot establish a different firing clock.
+    out.seedVariants = 1;
     std::uint32_t presence = 0;
     if (!out.entry || !Read(out.entry + silent_aim_offsets::history::Presence, presence) ||
         (presence & off::HistoryTimePresent) != off::HistoryTimePresent ||
@@ -168,8 +208,9 @@ bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source, con
     out.alternatePunch = out.punch;
     // The later user trial places raw indexed input 2-5 ticks ahead of this
     // callback's clock. Its observed rays fit that raw timestamp much better.
-    // Preserve the working local pair when raw input is at most one tick ahead.
-    if (out.seedVariants == 2 && out.converted.tick > out.time.tick + 1) {
+    // Keep the one-tick alternative for a one-tick lead. Larger leads retain
+    // raw indexed time with the already copied current-prediction recoil.
+    if (out.converted.tick > out.time.tick + 1) {
         if (out.converted.tick > std::numeric_limits<int>::max() - 4) {
             out.reason = "raw history time outside supported range"; return false;
         }
@@ -179,6 +220,9 @@ bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source, con
         // into future punch caches or a claim about authoritative server recoil.
         out.alternatePunch = weapon.aimPunch;
     }
+    // Compensate the one model chosen by indexed timing. Requiring a second,
+    // unselected random ray to hit postpones otherwise usable automatic shots.
+    out.selectedVariant = out.converted.tick > out.time.tick ? 1U : 0U;
     out.valid = true;
     if (!AimSpreadStillCurrent(context, source, out)) { out.valid = false; out.reason = "shot model changed"; return false; }
     out.reason = "indexed native shot model";
@@ -202,16 +246,29 @@ bool AimSpreadStillCurrent(const AimSpreadContext& context, const AimSource& sou
         !std::memcmp(&punch, &snapshot.punch, sizeof(punch));
 }
 AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext& context, const AimSpreadSnapshot& snapshot,
-    const AimAngles& desired) noexcept {
-    if (!snapshot.valid || !Current(context)) { AimSpreadSearchResult result{}; result.reason = "spread model unavailable"; return result; }
+    const AimAngles& desired, double stopResidualDegrees, unsigned maxEvaluations) noexcept {
+    if (!snapshot.valid || !Current(context) || snapshot.selectedVariant > 1) {
+        AimSpreadSearchResult result{}; result.reason = "spread model unavailable"; return result;
+    }
+    LARGE_INTEGER begin{}, end{}, frequency{};
+    QueryPerformanceCounter(&begin);
     SampleContext sample{context, snapshot};
     AimSpreadSearchInput input{};
-    input.desired = desired; input.punch = snapshot.punch;
+    input.desired = desired;
+    input.punch = snapshot.seedVariants == 1 && snapshot.selectedVariant == 1 ? snapshot.alternatePunch : snapshot.punch;
     input.maxOffset = static_cast<double>(snapshot.weapon.inaccuracy) + snapshot.weapon.spread;
     input.variants = snapshot.seedVariants;
-    input.alternatePunchValid = snapshot.rawClockAlternative;
+    input.alternatePunchValid = snapshot.seedVariants == 2 && snapshot.rawClockAlternative;
     input.alternatePunch = snapshot.alternatePunch;
-    return AimSearchSpread(input, &Sample, &sample);
+    input.stopResidualDegrees = stopResidualDegrees;
+    input.maxEvaluations = maxEvaluations;
+    auto result = AimSearchSpread(input, &Sample, &sample);
+    result.nativeSeedCalls = sample.nativeSeedCalls;
+    result.nativeRandomStreams = sample.nativeRandomStreams;
+    result.nativeCacheHits = sample.cacheHits;
+    if (QueryPerformanceCounter(&end) && QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0)
+        result.elapsedMicroseconds = 1000000.0 * (end.QuadPart - begin.QuadPart) / frequency.QuadPart;
+    return result;
 }
 #ifdef CS2_AIM_SPREAD_CHECKS
 void AimSpreadTestRuntime(bool enabled) noexcept { testRuntime = enabled; }

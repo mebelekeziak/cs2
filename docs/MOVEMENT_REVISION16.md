@@ -1,5 +1,11 @@
 # Anti aim with quantized movement — October 24, 2026
 
+Follow-up: [Remove spread revision 7](REMOVE_SPREAD_REVISION7.md) removes the
+attack-related movement eligibility restrictions described below. Held,
+indexed and timed fire retain ideal quantized steering and Jumpbug edges;
+primary fire still bypasses the anti-aim pattern. Use and invalid-payload
+guards remain. The rest of this document records revision 16's original state.
+
 Revision 16 composes the existing anti-aim settings with the working quantized
 autostrafer. The previous version, preserved in **f8f26f8**, chose its exact
 movement representation near the physical camera and therefore replaced

@@ -2,6 +2,55 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Miss investigation and native sampling — October 25, 2026
+
+Normal indexed shots now retain their first published aim and saved firing
+model through repeated native callbacks/rebuilds. Later recoil, accuracy and
+target-pose updates cannot replace that publication's diagnostic context.
+New copied publication identities distinguish duplicates from genuine retries;
+`AIM_PUBLICATION revision=8` links them to settled shot details. Impact-angle
+diagnostics also avoid a float-normalization error near parallel rays.
+
+Recent logs demonstrate both changed saved aims behind some outside-cone
+diagnoses and corrected rays crossing saved capsules without damage. Independent
+replay reproduces all 118 inspected corrected seeds. Current versus historical
+firing origin and client/server pose timing remain unresolved; this repair is
+not a claim that every miss is fixed. See [findings, repair and limits](docs/SHOT_MISSES_20261025.md).
+
+**Aim → Native RNG experiment** adds an optional statistical sampler using
+CS2's private native random stream, with paired baseline/native estimates and
+threshold diagnostics. It is **off by default**, saves in configs, and works
+with **Remove spread off**. The existing Halton estimator and indexed solver
+are preserved. It uses the verified copied spread formula and native RNG
+components; it does not invoke the full client helper that changes shared RNG
+and caches. No controlled native-versus-baseline hit-rate comparison has been made.
+See [native contract and comparison](docs/NATIVE_HITCHANCE_EXPERIMENT.md).
+
+The user subsequently reports substantially better behavior and essentially no
+random misses so far, with clean behavior both **with and without Native RNG
+experiment**. They also briefly tried Remove spread on/off. Native sampling
+is therefore not required for the reported improvement, which supports the
+publication/replay repair as the stronger explanation. Shot counts and rates
+were not measured; no sampler advantage has been established.
+
+Build/launch commands are unchanged. Restart CS2 normally, then use
+**Load Overlay.cmd** for the offline/private comparison. Start with the default
+sampler to assess the publication repair before toggling the experiment.
+Stopped code remains resident until normal process exit. The agent performed
+no live shot trial during implementation; the user observation is recorded above.
+
+Both x64 Release variants build without project compiler warnings and pass
+**68/68 CTest suites each**, including 488 integrated aim and 202 shot-tracker
+checks. All **33/33 installed-file compatibility checks** pass. The isolated
+native RNG comparison passes **37,098 assertions**. Both DLLs retain zero
+static TLS and delay imports. These checks do not establish improved live
+accuracy.
+
+October 24 follow-up: firing no longer restricts the quantized autostrafe
+transaction. Attack fields and Jumpbug timing remain intact; primary fire uses
+physical pitch and the nearest physical-facing movement representation while
+the anti-aim pattern yields. See [Autofire and movement repair](docs/REMOVE_SPREAD_REVISION7.md).
+
 ## Anti aim with movement — October 24, revision 16
 
 Autostrafe and Anti aim now compose their command angles when both are
@@ -164,6 +213,54 @@ python tools/check_compatibility.py
 ```
 
 ## Remove spread — October 23, 2026
+
+**Revision 7, October 24:** fixes unfired requests being permanently retired
+after native input rebuilds. Requests with no observed clip/recoil advance can
+retry immediately from the current base view; consumed shots remain guarded
+through prediction rollback. One selected indexed clock/recoil model replaces
+the requirement that both speculative rays hit. The same offline comparison's
+median solver time falls from 2.198 ms to 0.353 ms; live FPS and hit rate remain
+unmeasured. Unconfirmed command-only console lines now follow **Verbose**;
+native shot/hit messages remain. Autostrafe and Jumpbug events can coexist with
+firing through the shared quantized movement transaction.
+See [revision 7 evidence, tradeoffs and verification](docs/REMOVE_SPREAD_REVISION7.md).
+Restart CS2 normally, then use **Load Overlay.cmd** for the private/offline
+comparison. Live behavior has not yet been observed with this revision.
+Both x64 Release builds pass **67/67 CTest suites**, including 474 pipeline
+checks; **33/33 installed-file compatibility checks** pass. Both DLLs retain
+zero static TLS/delay imports.
+
+**Revision 6, October 24:** fixes revision 5's regression where a normal native
+command rebuild after a corrected publication permanently stopped all aim,
+including Autofire and target points. Completed requests now retire safely
+when native input replaces them; the point preview continues refreshing.
+Temporary model loss cannot reopen a completed sequence. Genuine restoration
+failures keep their existing stop behavior. The new regression tests reproduce
+the old failure and verify subsequent firing with Remove spread off and on.
+See [revision 6 evidence and repair](docs/REMOVE_SPREAD_REVISION6.md).
+Restart CS2 normally before **Load Overlay.cmd**: toggling the menu cannot
+replace a revision 5 DLL that has already stopped.
+Both public and diagnostic Release builds pass **67/67 CTest suites**, including
+452 pipeline and 89 ownership checks; **33/33 compatibility checks** pass.
+New live gameplay recovery remains unobserved.
+
+**Revision 5, October 24:** Deagle and the other supported indexed firearms now
+receive the same two-clock coverage as Scout. Captured Deagle misses expose a
+previously omitted raw-timestamp model. Repeated callbacks retain the original
+published correction and metadata instead of recalculating from post-shot
+accuracy. Unknown automatic rebuilds cancel the owned pulse.
+
+Revision 5 also skips unused statistical cone sampling, reuses identical
+native seed bins within a solve, and stops once both predicted rays are safely
+inside the target. Automatic attempts have a 4096-sample maximum; manual
+compensation retains 8192. The offline adapter benchmark's p95 falls from about
+6.0 ms at 8192 to 3.1 ms at 4096. A smaller search can defer Autofire; both
+final rays must still pass the capsule checks. These are offline measurements,
+with live FPS and hit rate pending. See [revision 5 evidence, tradeoff and
+verification](docs/REMOVE_SPREAD_REVISION5.md). Restart CS2 normally before
+**Load Overlay.cmd** if an older DLL is resident.
+Both public and diagnostic x64 Release builds pass **67/67 CTest suites**;
+all **33/33 installed-file compatibility checks** pass.
 
 **Revision 4, October 24:** a new user log demonstrates a grounded accuracy
 snapshot being used for a shot after the same command jumps. With Remove

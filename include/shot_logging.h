@@ -8,6 +8,9 @@ void ShotLoggingActivate() noexcept;
 void ShotLoggingPump() noexcept;
 // Metadata contains copied values only; the runtime assigns its lifecycle.
 void ShotLoggingCapture(const ShotLogMetadata& metadata) noexcept;
+// Command owner: withdraw only an unconsumed publication for the current actor.
+void ShotLoggingWithdrawCommand(const ShotLogSource& source, int sequence,
+    std::uint32_t weaponHandle) noexcept;
 void ShotLoggingStop(const char* reason) noexcept;
 // Render owner: settles/drains (including after Stop) outside tracker locks.
 void ShotLoggingFlushTelemetry() noexcept;

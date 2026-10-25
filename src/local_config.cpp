@@ -68,6 +68,7 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     visit("aim.min_damage", s.aim.minDamage);
     FIELD(aim, autowall);
     visit("aim.remove_spread", s.aim.removeSpread);
+    visit("aim.native_hitchance", s.aim.nativeHitchance);
     visit("aim.visualize", s.aimVisualization.enabled);
     for (std::size_t i = 0; i < std::size(s.aimVisualization.color); ++i)
         visit(std::string("aim.visualize_color.") + std::to_string(i), s.aimVisualization.color[i]);

@@ -968,12 +968,14 @@ int main() {
     Expect(!SilentAimGetSettings().removeSpread, "remove spread toggles off while silent aim remains disabled");
     ClickControl("##AimHitchance", 0.9f);
     ClickControl("##AimSamples", 0.9f);
+    ClickControl("Native RNG experiment");
     ClickControl("##AimMinDamage", 0.9f);
     ClickControl("Quickstop");
     ClickHitgroup("Head");
     Expect(!SilentAimGetSettings().autofire && SilentAimGetSettings().hitchance == 50 && SilentAimGetSettings().samples == 256 &&
            !SilentAimGetSettings().quickstop && SilentAimGetSettings().minDamage == 1 &&
            !SilentAimGetSettings().removeSpread &&
+           !SilentAimGetSettings().nativeHitchance &&
            SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest),
            "disabled aim master blocks autofire, quickstop, damage, hitchance and hitgroup edits");
     ClickControl("##AimFov", 0.8f);
@@ -985,8 +987,22 @@ int main() {
     ClickControl("Remove spread");
     Expect(SilentAimGetSettings().removeSpread && !SilentAimGetSettings().autofire,
         "remove spread can be enabled for manual fire without autofire");
+    ClickControl("Native RNG experiment");
+    Expect(!SilentAimGetSettings().nativeHitchance,
+        "remove spread disables statistical native sampler edits");
     ClickControl("Remove spread");
     Expect(!SilentAimGetSettings().removeSpread, "remove spread toggles off with real mouse input");
+    ClickControl("Native RNG experiment");
+    Expect(SilentAimGetSettings().nativeHitchance && !SilentAimGetSettings().autofire && !SilentAimGetSettings().removeSpread,
+        "native hitchance experiment enables independently of autofire and remove spread");
+    ClickControl("Remove spread");
+    ClickControl("Native RNG experiment");
+    Expect(SilentAimGetSettings().nativeHitchance && SilentAimGetSettings().removeSpread,
+        "remove spread preserves the selected native sampler preference while blocking edits");
+    ClickControl("Remove spread");
+    ClickControl("Native RNG experiment");
+    Expect(!SilentAimGetSettings().nativeHitchance && !SilentAimGetSettings().removeSpread,
+        "native sampler returns to the preserved baseline without changing remove spread");
     ClickControl("##AimFov", 0.99f);
     Expect(SilentAimGetSettings().fov == 180, "silent aim FOV slider reaches 180 degrees");
     Expect(SilentAimGetSettings().hitgroups == AimHitgroupBit(AimHitgroup::Chest), "hitgroup selection starts with chest only");

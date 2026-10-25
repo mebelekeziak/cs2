@@ -1,6 +1,7 @@
 #include "aim_spread_search.h"
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 #include <limits>
 
 namespace {
@@ -29,6 +30,13 @@ bool RandomBins(void* opaque,const AimAngles& effective,double& x,double& y,std:
 bool Constant(void* opaque,const AimAngles&,double& x,double& y,std::uint32_t& seed) noexcept {
     auto& c=*static_cast<Context*>(opaque); ++c.calls;
     x=c.radius*.6; y=-c.radius*.8; seed=123; return true;
+}
+bool Continuous(void* opaque,const AimAngles& effective,double& x,double& y,std::uint32_t& seed) noexcept {
+    auto& c=*static_cast<Context*>(opaque); ++c.calls;
+    x=c.radius*.6*std::sin(effective.pitch*17+effective.yaw*11);
+    y=c.radius*.6*std::cos(effective.pitch*7-effective.yaw*23);
+    seed=Hash(static_cast<std::uint32_t>((std::sin(effective.pitch)+1)*1000000));
+    return true;
 }
 struct Vector { double x,y,z; };
 Vector Shot(const AimAngles& a,double x,double y) {
@@ -345,6 +353,46 @@ int main() {
     Expect(result.effectiveAlternate.pitch==result.effective.pitch &&
         result.effectiveAlternate.yaw==result.effective.yaw && result.effectiveAlternate.roll==result.effective.roll,
         "disabled alternate punch retains the default shared-punch behavior");
+    input={}; input.variants=2; input.maxOffset=.02;
+    VariantContext strictTolerance{}; strictTolerance.radius=.02; strictTolerance.constant=true;
+    const auto strict=AimSearchSpread(input,VariantBins,&strictTolerance);
+    input.stopResidualDegrees=.75;
+    VariantContext looseTolerance{}; looseTolerance.radius=.02; looseTolerance.constant=true;
+    const auto loose=AimSearchSpread(input,VariantBins,&looseTolerance);
+    CheckVariants(input,loose,looseTolerance);
+    Expect(loose.evaluations>2 && loose.evaluations<strict.evaluations && loose.residualDegrees<=.75 &&
+        loose.primaryResidualDegrees<=.75 && loose.alternateResidualDegrees<=.75,
+        "looser target tolerance exits only after both actual rays satisfy it");
+    input.stopResidualDegrees=2;
+    VariantContext baselineTolerance{}; baselineTolerance.radius=.02; baselineTolerance.constant=true;
+    const auto acceptedBaseline=AimSearchSpread(input,VariantBins,&baselineTolerance);
+    Expect(acceptedBaseline.valid && acceptedBaseline.evaluations==2 && acceptedBaseline.residualDegrees>1,
+        "caller tolerance can accept fully sampled ordinary-command baseline without grid work");
+    input={}; input.desired={4,179.9f,0}; input.punch={2,5,11};input.maxOffset=.1;
+    Context defaultStop{.1},explicitStop{.1};
+    const auto defaultResult=AimSearchSpread(input,RandomBins,&defaultStop);
+    input.stopResidualDegrees=.0002;
+    const auto explicitResult=AimSearchSpread(input,RandomBins,&explicitStop);
+    Expect(defaultResult.command.pitch==explicitResult.command.pitch &&
+        defaultResult.command.yaw==explicitResult.command.yaw && defaultResult.seed==explicitResult.seed &&
+        defaultResult.evaluations==explicitResult.evaluations,
+        "default stop tolerance retains the original center-search result and budget");
+    for (const auto direction:{AimAngles{-88.9f,-179.99f,0},AimAngles{0,179.99f,0},AimAngles{88.9f,91,0}}) {
+        input={};input.desired=direction;input.maxOffset=.05;
+        Context continuous{.05};result=AimSearchSpread(input,Continuous,&continuous);
+        CheckResult(input,result,Continuous,continuous);
+        Expect(result.evaluations==continuous.calls,
+            "arbitrary callback varying inside a seed bin is resampled for each candidate");
+    }
+    input={}; input.maxOffset=.1;
+    Context invalidTolerance{.1};
+    for (double tolerance:{-1.0,180.01,std::numeric_limits<double>::infinity(),
+            std::numeric_limits<double>::quiet_NaN()}) {
+        input.stopResidualDegrees=tolerance;
+        Expect(!AimSearchSpread(input,RandomBins,&invalidTolerance).valid,
+            "invalid residual tolerance rejects search");
+    }
+    Expect(invalidTolerance.calls==0,"invalid residual tolerance cannot invoke callbacks");
     std::printf("aim spread search: %d checks, %d failures\n",checks,failures);
     return failures?1:0;
 }

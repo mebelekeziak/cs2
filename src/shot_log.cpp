@@ -13,7 +13,7 @@ constexpr unsigned CandidateCapacity = ShotLogPendingCapacity * 2;
 enum class EventKind : unsigned { Fire = 1, Impact, Hurt };
 struct Pending { bool used = false; ShotLogRecord record{}; };
 struct Metadata {
-    bool used = false, acknowledged = false, reported = false;
+    bool used = false, acknowledged = false, reported = false, withdrawn = false;
     std::uint64_t publishedMs = 0;
     ShotLogMetadata value{};
 };
@@ -112,7 +112,7 @@ bool Acknowledges(const ShotLogMetadata& metadata, std::uint64_t fireMs, const c
         metadata.receiptMs - fireMs <= ShotLogReorderWindowMs;
 }
 void CompleteAttempt(Metadata& sample, ShotLogCloseReason close) noexcept {
-    if (!sample.used || !sample.value.attackPublished || sample.acknowledged || sample.reported) return;
+    if (!sample.used || !sample.value.attackPublished || sample.acknowledged || sample.reported || sample.withdrawn) return;
     ShotLogRecord record{};
     record.kind = ShotLogRecordKind::CommandAttempt;
     record.source = sample.value.source; record.fireMs = sample.publishedMs; record.settledMs = state.now;
@@ -240,10 +240,15 @@ void Geometry(ShotLogRecord& record, const AimVector& impact, const AimVector& a
     if (!segmentHit && rayHit) ++record.shortImpacts;
     const float miss = AimRayCapsuleMissDistance(metadata.eye, direction, metadata.range, metadata.capsule);
     if (miss >= 0 && (record.missDistance < 0 || miss < record.missDistance)) record.missDistance = miss;
-    const double cosine = (static_cast<double>(direction.x) * aimDirection.x +
-        static_cast<double>(direction.y) * aimDirection.y + static_cast<double>(direction.z) * aimDirection.z) / distance;
+    const double dot = static_cast<double>(direction.x) * aimDirection.x +
+        static_cast<double>(direction.y) * aimDirection.y + static_cast<double>(direction.z) * aimDirection.z;
+    const double crossX = static_cast<double>(direction.y) * aimDirection.z - static_cast<double>(direction.z) * aimDirection.y;
+    const double crossY = static_cast<double>(direction.z) * aimDirection.x - static_cast<double>(direction.x) * aimDirection.z;
+    const double crossZ = static_cast<double>(direction.x) * aimDirection.y - static_cast<double>(direction.y) * aimDirection.x;
     constexpr double degrees = 57.29577951308232;
-    const float angle = static_cast<float>(std::acos(std::clamp(cosine, -1.0, 1.0)) * degrees);
+    // The copied float aim vector is not exactly unit length. atan2 is stable
+    // near parallel rays and does not turn that rounding into ~0.01 deg error.
+    const float angle = static_cast<float>(std::atan2(std::hypot(crossX, crossY, crossZ), dot) * degrees);
     record.impactAngle = std::max(record.impactAngle, angle);
     if (!metadata.spreadCorrected && !rayHit && !segmentHit && metadata.chanceValid && metadata.spread + metadata.inaccuracy > 0 &&
         angle <= record.spreadCone + 0.01f) ++record.spreadMissImpacts;
@@ -462,7 +467,7 @@ void ShotLogSetEnabled(bool enabled, std::uint64_t nowMs) noexcept {
         for (const auto& effect : state.effects)
             if (effect.used && effect.kind == EventKind::Hurt && !effect.reported) ++state.counters.abandonedDisabled;
         for (const auto& sample : state.metadata) if (sample.used && sample.value.attackPublished &&
-            !sample.acknowledged && !sample.reported) ++state.counters.abandonedDisabled;
+            !sample.acknowledged && !sample.reported && !sample.withdrawn) ++state.counters.abandonedDisabled;
         state.counters.abandonedDisabled += state.completedCount;
         state.completedCount = state.completedHead = 0;
     }
@@ -480,6 +485,11 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
     for (auto& sample : state.metadata) if (sample.used &&
         sample.value.commandSequence == metadata.commandSequence && sample.value.weaponHandle == metadata.weaponHandle) {
         if (sample.value.receiptMs > metadata.receiptMs) return;
+        // Duplicate captures of one publication cannot replace its original
+        // firing model. A new publication identity can reuse this sequence
+        // after native timing/settings changes or an explicit retry.
+        if (sample.value.attackPublished && sample.value.publicationId && metadata.publicationId &&
+            metadata.publicationId <= sample.value.publicationId) return;
         destination = &sample; break;
     }
     if (!destination) {
@@ -488,7 +498,16 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
         *destination = {};
     }
     const bool previouslyPublished = destination->used && destination->value.attackPublished;
-    if (!previouslyPublished && metadata.attackPublished) destination->publishedMs = metadata.receiptMs;
+    const bool freshPublication = destination->used && metadata.attackPublished &&
+        (destination->withdrawn || (destination->value.publicationId && metadata.publicationId &&
+            destination->value.publicationId != metadata.publicationId));
+    if ((!previouslyPublished || freshPublication) && metadata.attackPublished) destination->publishedMs = metadata.receiptMs;
+    if (freshPublication) {
+        destination->withdrawn = false;
+        destination->reported = false;
+        // Native fire remains authoritative if it arrived after withdrawal.
+        // Reusing the command must never erase that acknowledgement.
+    }
     destination->used = true; destination->value = metadata;
     destination->value.weapon[47] = destination->value.targetName[63] = 0;
     auto& value = destination->value;
@@ -506,6 +525,18 @@ void ShotLogAddMetadata(const ShotLogMetadata& metadata) noexcept {
         destination->acknowledged = true;
     for (const auto& retired : state.retired) if (retired.used && Acknowledges(value, retired.fireMs, retired.weapon))
         destination->acknowledged = true;
+}
+void ShotLogWithdrawCommand(const ShotLogSource& source, int sequence,
+    std::uint32_t weaponHandle, std::uint64_t nowMs) noexcept {
+    if (!Accept(source)) return;
+    state.now = std::max(state.now, nowMs);
+    for (auto& sample : state.metadata) if (sample.used && sample.value.commandSequence == sequence &&
+        sample.value.weaponHandle == weaponHandle && sample.value.attackPublished &&
+        !sample.acknowledged && !sample.reported && !sample.withdrawn) {
+        sample.withdrawn = true;
+        ++state.counters.withdrawnCommands;
+        break;
+    }
 }
 std::uint64_t ShotLogOnFire(const ShotLogFire& event) noexcept {
     if (!Accept(event.source)) return 0;

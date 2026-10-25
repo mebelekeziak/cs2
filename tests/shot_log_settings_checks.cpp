@@ -15,12 +15,20 @@ void Routing() {
     constexpr const char* hit="AIM_HIT #12 Test Player: head, 114 health damage";
     constexpr const char* status="AIM_SHOT_LOG_STATUS awaiting native fire events";
     constexpr const char* technical="AIM_DIAGNOSTICS callbacks=150 samples=256";
+    constexpr const char* interrupted="AIM_SHOT cmd #15481 UNCONFIRMED interrupted | weapon ssg08 | source changed before settlement";
+    constexpr const char* unregistered="AIM_SHOT cmd #15482 UNCONFIRMED unregistered shot | weapon deagle";
+    constexpr const char* prefixedAttempt="[move_tid=1234 created_ms=987654321] AIM_SHOT cmd #15483 UNCONFIRMED interrupted";
     constexpr const char* console="AIM_CONSOLE_UNAVAILABLE engine console getter unavailable";
     for(const bool enabled:{false,true}) for(const bool verbose:{false,true}) {
         const ShotLogSettings settings{enabled,verbose};
         for(const auto* body:{shot,hit,status})
             Expect(ShotLogConsoleMessage(body,settings)==(enabled?body:nullptr),"human shot, hit and logger status follow only Shot logs toggle");
         Expect(ShotLogConsoleMessage(technical,settings)==(verbose?technical:nullptr),"technical aim diagnostics follow only Verbose toggle");
+        for(const auto* body:{interrupted,unregistered})
+            Expect(ShotLogConsoleMessage(body,settings)==(verbose?body:nullptr),
+                "command attempts without native fire follow only Verbose toggle");
+        Expect(ShotLogConsoleMessage(prefixedAttempt,settings)==(verbose?std::strstr(prefixedAttempt,"AIM_SHOT"):nullptr),
+            "telemetry-prefixed command attempts retain verbose routing after prefix removal");
         Expect(ShotLogConsoleMessage(console,settings)==console,"console availability status remains visible independently of optional logging");
         Expect(!ShotLogConsoleMessage("MOVEMENT callbacks=12",settings) &&
             !ShotLogConsoleMessage("[other] AIM_HIT #12",settings) && !ShotLogConsoleMessage("",settings) &&
@@ -36,6 +44,17 @@ void Routing() {
     Expect(!ShotLogConsoleMessage(verboseRecord,{true,false}) &&
         verboseBody && !std::strcmp(verboseBody,"AIM_DIAGNOSTICS callbacks=2"),
         "prefix stripping preserves independent technical routing");
+    constexpr const char* prefixedNative="[move_tid=42 created_ms=100] AIM_SHOT #13 UNCONFIRMED interrupted | weapon ssg08";
+    constexpr const char* prefixedHit="[move_tid=42 created_ms=100] AIM_HIT #13 Test Player: head, 114 health damage";
+    for(const bool enabled:{false,true}) for(const bool verbose:{false,true}) {
+        for(const auto* nativeRecord:{prefixedNative,prefixedHit})
+            Expect(ShotLogConsoleMessage(nativeRecord,{enabled,verbose})==(enabled?std::strstr(nativeRecord,"AIM_"):nullptr),
+                "native outcomes including unconfirmed native shots retain normal routing after prefix removal");
+    }
+    bool allNativeShotsVisible=true;
+    for(unsigned i=0;i<256;++i)
+        allNativeShotsVisible=allNativeShotsVisible && ShotLogConsoleMessage(shot,{true,false})==shot;
+    Expect(allNativeShotsVisible,"genuine rapid-fire results are never rate limited by command-attempt filtering");
     for(const auto* malformed:{
         "[move_tid=1] AIM_SHOT #1", "[move_tid= created_ms=2] AIM_SHOT #1",
         "[move_tid=x created_ms=2] AIM_SHOT #1", "[move_tid=-1 created_ms=2] AIM_SHOT #1",

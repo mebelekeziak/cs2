@@ -14,6 +14,7 @@ struct AimSpreadSearchInput {
     unsigned variants = 1;
     bool alternatePunchValid = false;
     AimAngles alternatePunch{};
+    double stopResidualDegrees = .0002;
 };
 struct AimSpreadSearchResult {
     AimAngles command{}, effective{}, predicted{};
@@ -27,6 +28,8 @@ struct AimSpreadSearchResult {
     unsigned evaluations = 0;
     bool valid = false;
     const char* reason = "not evaluated";
+    unsigned nativeSeedCalls = 0, nativeRandomStreams = 0, nativeCacheHits = 0;
+    double elapsedMicroseconds = 0;
 };
 
 // Bounded copied-value search. The callback must sample the actual native shot
@@ -42,6 +45,9 @@ struct AimSpreadSearchResult {
 // describe variant one. residualDegrees is the maximum of their actual errors.
 // With alternatePunchValid, variant one uses alternatePunch for its native
 // float addition and direction basis; otherwise both variants use punch.
+// stopResidualDegrees may stop a fully sampled candidate inside a caller's
+// geometric tolerance. It does not certify target intersection; callers must
+// still test each returned ray against their actual target geometry.
 AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,
     AimSpreadSample sample, void* context) noexcept;
 AimSpreadSearchResult AimSearchSpread(const AimSpreadSearchInput& input,

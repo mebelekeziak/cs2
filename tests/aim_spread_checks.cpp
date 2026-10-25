@@ -4,6 +4,7 @@
 #include "cs2_offsets.h"
 #include "silent_aim_offsets.h"
 #include "movement_offsets.h"
+#include "aim_spread_native_reference.h"
 #include <Windows.h>
 #include <array>
 #include <bit>
@@ -34,7 +35,8 @@ struct Mock {
     int expectedAlternateTick = -1;
     int badReturn = 0, lastSeedTick = -1;
     std::uint32_t seed = 128;
-    bool arguments = true, weaponCurrent = true;
+    std::uint32_t streamSeed = 129;
+    bool arguments = true, weaponCurrent = true, referenceRandom = false;
     std::array<float, 4> draws{.25f, .125f, .75f, .625f};
     std::array<float, 4> highs{};
 } mock;
@@ -78,7 +80,9 @@ std::uint32_t Seed(void* unused, const AimAngles* angles, int tick) {
     if (tick == mock.observedPunchTime.tick) mock.sampledTicks |= 1;
     else if (tick == (mock.expectedAlternateTick >= 0 ? mock.expectedAlternateTick : mock.observedPunchTime.tick + 1)) mock.sampledTicks |= 2;
     else mock.arguments = false;
-    return mock.seed;
+    const auto result = mock.referenceRandom ? spread_replay_reference::Seed(*angles, tick) - 1u : mock.seed;
+    mock.streamSeed = result + 1u;
+    return result;
 }
 void* RandomCtor(void* owned, int seed) {
     ++mock.ctorCalls;
@@ -86,7 +90,7 @@ void* RandomCtor(void* owned, int seed) {
     mock.arguments &= owned && address % 16 == 0 &&
         !(address >= client && address < client + cs2_offsets::ClientImageSize) &&
         owned != engineRandom.data() && owned != punchService.data() && owned != entry.data() &&
-        std::bit_cast<std::uint32_t>(seed) == mock.seed + std::uint32_t{1};
+        std::bit_cast<std::uint32_t>(seed) == mock.streamSeed;
     PrivateStream state{streamMagic, std::bit_cast<std::uint32_t>(seed), 0};
     std::memcpy(owned, &state, sizeof(state));
     return owned;
@@ -95,10 +99,15 @@ float RandomFloat(void* owned, float low, float high) {
     ++mock.floatCalls;
     auto state = Get<PrivateStream>(owned, 0);
     mock.arguments &= state.magic == streamMagic && state.draws < 4 && low == 0 &&
-        state.seed == mock.seed + std::uint32_t{1};
+        state.seed == mock.streamSeed;
     if (state.draws >= 4) return std::numeric_limits<float>::quiet_NaN();
     mock.highs[state.draws] = high;
-    const float value = mock.draws[state.draws++] * high;
+    float value = mock.draws[state.draws] * high;
+    if (mock.referenceRandom) {
+        spread_replay_reference::Random random(state.seed);
+        for (unsigned i = 0; i <= state.draws; ++i) value = random.Float(mock.highs[i]);
+    }
+    ++state.draws;
     std::memcpy(owned, &state, sizeof(state));
     return value;
 }
@@ -128,7 +137,8 @@ void ReadAndClamp() {
     Check(snapshot.movementStateKnown && snapshot.movementFlags == 1 && snapshot.velocity.x == 120 &&
         snapshot.velocity.y == -30 && snapshot.velocity.z == 0, "callback movement diagnostics copy verified flags and velocity");
     Check(snapshot.entry == Address(entry.data()) && snapshot.historyTick == 90 && snapshot.historyFraction == .25f &&
-        snapshot.scene == 2 && Same(snapshot.time, {97, .25f}) && Same(snapshot.now, {100, .6f}),
+        snapshot.scene == 2 && Same(snapshot.time, {97, .25f}) && Same(snapshot.now, {100, .6f}) &&
+        snapshot.seedVariants == 1 && snapshot.selectedVariant == 0,
         "selected history entry uses native tick conversion and preserves canonical fraction");
     Check(mock.arguments && mock.weaponCalls >= 2 && mock.convertCalls == 2 && mock.timeCalls == 2 && mock.punchCalls == 2 &&
         Same(mock.observedPunchTime, snapshot.time) && !std::memcmp(&snapshot.punch, &mock.punch, sizeof(mock.punch)),
@@ -142,7 +152,9 @@ void ReadAndClamp() {
         Reset(); mock.historyTick = value.tick;
         Put(entry.data(), off::HistoryTick, value.tick); Put(entry.data(), off::HistoryFraction, value.fraction);
         Check(AimSpreadRead(context, source, weapon, shot, snapshot) && Same(snapshot.time, value.expected) &&
-            Same(mock.observedPunchTime, value.expected), "four-tick bounds compare both tick and fraction before shot punch");
+            Same(mock.observedPunchTime, value.expected) && snapshot.seedVariants == 1 &&
+            snapshot.selectedVariant == (value.tick + mock.tickOffset > value.expected.tick ? 1U : 0U),
+            "four-tick diagnostic clamp is preserved and indexed tick lead selects one firing model");
     }
     Reset();
     Put(reinterpret_cast<void*>(source.pawn), movement_offsets::pawn::Velocity,
@@ -236,9 +248,10 @@ void SolveKnownDraws() {
         Check(solved.valid && solved.residualDegrees < .0002f &&
             std::abs(solved.command.pitch - expectedPitch) < .00002 && std::abs(solved.command.yaw - expectedYaw) < .00002,
             "native samples and special shaping produce the independently calculated compensated command");
-        Check(mock.arguments && mock.seedCalls == static_cast<int>(solved.evaluations) &&
+        Check(mock.arguments && static_cast<unsigned>(mock.seedCalls) == solved.nativeSeedCalls &&
+            solved.nativeSeedCalls + solved.nativeCacheHits == solved.evaluations &&
             mock.ctorCalls == mock.seedCalls && mock.floatCalls == 4 * mock.seedCalls && mock.lastSeedTick == snapshot.time.tick &&
-            solved.seed == mock.seed + std::uint32_t{1}, "each candidate seeds a separate owned stream using native effective-angle/tick seed plus one");
+            solved.seed == mock.seed + std::uint32_t{1}, "each uncached bin seeds an owned stream using native effective-angle/tick seed plus one");
         Check(mock.highs[0] == 1 && mock.highs[1] == circle && mock.highs[2] == (mode == 1 ? circle : 1) &&
             mock.highs[3] == (mode == 1 ? 1 : circle), "native pattern flag selects the correct radius/angle pair ordering");
         Check(engineRandom == beforeEngine && entry == beforeEntry && punchService == beforePunch,
@@ -256,12 +269,12 @@ void SolveKnownDraws() {
     }
     Reset(); mock.punch = {}; weapon.name = "C_WeaponSSG08";
     AimSpreadSnapshot scout{};
-    Check(AimSpreadRead(context, source, weapon, shot, scout) && scout.seedVariants == 2 &&
-        Same(scout.converted, {97, .25f}), "Scout retains raw converted time and enables the two evidenced clock variants");
+    Check(AimSpreadRead(context, source, weapon, shot, scout) && scout.seedVariants == 1 && scout.selectedVariant == 0 &&
+        Same(scout.converted, {97, .25f}), "Scout retains raw converted time and selects current model when indexed time is not ahead");
     const auto robust = AimSpreadSolve(context, scout, {});
-    Check(robust.valid && robust.variants == 2 && mock.sampledTicks == 3 && mock.arguments &&
-        mock.lastSeedTick == scout.time.tick + 1 && robust.evaluations <= 8192,
-        "Scout samples original and next integer tick with copied punch and isolated streams within one shared budget");
+    Check(robust.valid && robust.variants == 1 && mock.sampledTicks == 1 && mock.arguments &&
+        mock.lastSeedTick == scout.time.tick && robust.evaluations <= 8192,
+        "Scout samples only the chosen current clock without waiting for an unselected next-tick ray");
     ++mock.tickOffset;
     Check(!AimSpreadStillCurrent(context, source, scout), "changed scene conversion invalidates copied unclamped timing");
     for (int lead : {1, 3, 5}) {
@@ -271,19 +284,110 @@ void SolveKnownDraws() {
         AimSpreadSnapshot raw{};
         Check(AimSpreadRead(context, source, weapon, shot, raw), "Scout timing model accepts independently captured indexed time");
         const bool useRaw = lead > 1;
-        Check(raw.rawClockAlternative == useRaw && raw.alternateTime.tick == mock.now.tick + lead &&
+        Check(raw.seedVariants == 1 && raw.selectedVariant == 1 && raw.rawClockAlternative == useRaw &&
+            raw.alternateTime.tick == mock.now.tick + lead &&
             raw.alternateTime.fraction == (useRaw ? .25f : mock.now.fraction) &&
             (useRaw ? raw.alternatePunch.pitch == 0 : raw.alternatePunch.pitch == mock.punch.pitch),
-            "late raw timestamp replaces the next-tick alternative with copied current recoil; one-tick lead retains old policy");
+            "one-tick lead selects next tick with native recoil and larger leads select raw tick with copied current recoil");
         mock.expectedAlternateTick = raw.alternateTime.tick;
         const int punchCalls = mock.punchCalls, timeCalls = mock.timeCalls;
         const auto rawSolved = AimSpreadSolve(context, raw, {});
-        Check(rawSolved.valid && rawSolved.variants == 2 && mock.sampledTicks == 3 && mock.arguments &&
+        Check(rawSolved.valid && rawSolved.variants == 1 && mock.sampledTicks == 2 && mock.arguments &&
+            mock.lastSeedTick == raw.alternateTime.tick &&
             mock.punchCalls == punchCalls && mock.timeCalls == timeCalls,
-            "raw-clock search uses both selected integer ticks and performs no future native punch/time queries");
-        Check(useRaw ? std::abs(rawSolved.effective.pitch - rawSolved.effectiveAlternate.pitch - mock.punch.pitch) < .00001f :
-            std::abs(rawSolved.effective.pitch - rawSolved.effectiveAlternate.pitch) < .00001f,
-            "alternate effective angle uses its own copied recoil basis");
+            "selected-clock search samples only its indexed tick and performs no additional native punch/time queries");
+        const AimAngles selectedEffective{rawSolved.command.pitch + raw.alternatePunch.pitch,
+            rawSolved.command.yaw + raw.alternatePunch.yaw, raw.alternatePunch.roll};
+        Check(rawSolved.effective.pitch == selectedEffective.pitch && rawSolved.effective.yaw == selectedEffective.yaw &&
+            rawSolved.effective.roll == selectedEffective.roll,
+            "selected alternative uses its own copied recoil with native float addition");
+        Check(AimSpreadStillCurrent(context, source, raw), "selected alternative keeps original native clamp valid for freshness checks");
+    }
+    for (const auto& table : weaponOff::Tables) for (int lead : {-2, 0, 1, 3, 5}) {
+        Reset(); weapon.name = table.name; weapon.aimPunch = {};
+        mock.historyTick = mock.now.tick + lead - mock.tickOffset;
+        Put(entry.data(), off::HistoryTick, mock.historyTick);
+        AimSpreadSnapshot firearm{};
+        Check(AimSpreadRead(context, source, weapon, shot, firearm) && firearm.seedVariants == 1 &&
+            firearm.selectedVariant == (lead > 0 ? 1U : 0U) && firearm.rawClockAlternative == (lead > 1),
+            "every supported indexed firearm chooses one current, next or raw timing model from the indexed tick");
+        mock.expectedAlternateTick = firearm.alternateTime.tick;
+        const auto selected = AimSpreadSolve(context, firearm, {}, 0, 4096);
+        Check(selected.valid && selected.variants == 1 && selected.evaluations <= 4096 &&
+            mock.sampledTicks == (lead > 0 ? 2U : 1U) && mock.arguments,
+            "each supported firearm evaluates only the chosen clock within the production command budget");
+    }
+    Reset(); mock.punch = {};
+    AimSpreadSnapshot cached{};
+    Check(AimSpreadRead(context, source, weapon, shot, cached), "cache fixture has a verified copied model");
+    const auto cachedSolve = AimSpreadSolve(context, cached, {12.345f, -95.12f, 0}, 0);
+    Check(cachedSolve.valid && cachedSolve.nativeCacheHits > 0 &&
+        cachedSolve.nativeSeedCalls + cachedSolve.nativeCacheHits == cachedSolve.evaluations &&
+        cachedSolve.nativeSeedCalls == static_cast<unsigned>(mock.seedCalls) &&
+        cachedSolve.nativeRandomStreams == static_cast<unsigned>(mock.ctorCalls),
+        "within-bin refinements reuse native samples with independently counted calls");
+    const auto previousCalls = mock.seedCalls;
+    const auto freshSolve = AimSpreadSolve(context, cached, {12.345f, -95.12f, 0}, 0);
+    Check(freshSolve.valid && freshSolve.nativeSeedCalls == cachedSolve.nativeSeedCalls &&
+        mock.seedCalls - previousCalls == static_cast<int>(freshSolve.nativeSeedCalls) &&
+        freshSolve.seed == cachedSolve.seed && freshSolve.command.pitch == cachedSolve.command.pitch &&
+        freshSolve.command.yaw == cachedSolve.command.yaw,
+        "native sample cache is discarded between solves and retains deterministic results");
+    cached.selectedVariant = 2;
+    const auto callsBeforeInvalid = mock.seedCalls;
+    Check(!AimSpreadSolve(context, cached, {}).valid && mock.seedCalls == callsBeforeInvalid,
+        "invalid selected timing model cannot invoke native seed or random callbacks");
+}
+void CacheBoundaryChecks() {
+    namespace reference = spread_replay_reference;
+    const AimAngles cases[]{{12.345f, 179.99f, 0}, {-12.345f, -179.99f, 0},
+        {.49999997f, .5f, 0}, {-.5f, -.49999997f, 0}, {0, 180, 0}, {0, -180, 0}};
+    for (const auto& desired : cases) for (unsigned variantCount : {1U, 2U}) {
+        Reset(); mock.referenceRandom = true; mock.punch = {};
+        weapon.inaccuracy = .2f; weapon.spread = .002f;
+        Put(patternStorage.data(), weaponOff::CvarValue, std::uint8_t{1});
+        AimSpreadSnapshot model{};
+        Check(AimSpreadRead(context, source, weapon, shot, model), "boundary fixture supplies copied shot state");
+        model.seedVariants = variantCount;
+        const auto result = AimSpreadSolve(context, model, desired, 0);
+        Check(result.valid && mock.arguments && result.nativeSeedCalls + result.nativeCacheHits == result.evaluations,
+            "cached search uses native stream contracts around positive/negative seed boundaries and yaw seam");
+        std::uint32_t seed = 0, alternateSeed = 0;
+        const auto ray = reference::ModelRay(result.effective, model.time.tick, weapon.inaccuracy, weapon.spread, &seed);
+        const auto alternate = reference::ModelRay(result.effectiveAlternate, model.alternateTime.tick,
+            weapon.inaccuracy, weapon.spread, &alternateSeed);
+        Check(seed == result.seed && (variantCount == 1 || alternateSeed == result.alternateSeed) &&
+            reference::Error(ray, reference::Ray(result.predicted)) < .00003 &&
+            (variantCount == 1 || reference::Error(alternate, reference::Ray(result.alternatePredicted)) < .00003),
+            "independent SHA/RNG reconstruct final cache results across half-degree boundaries and distinct yaw endpoints");
+    }
+}
+void SelectedClockReferenceChecks() {
+    namespace reference = spread_replay_reference;
+    for (int lead : {-2, 0, 1, 3, 5}) {
+        Reset(); mock.referenceRandom = true; mock.punch = {};
+        weapon.aimPunch = {.15f, -76.99999237060547f, 0};
+        weapon.inaccuracy = .2f; weapon.spread = .002f;
+        mock.historyTick = mock.now.tick + lead - mock.tickOffset;
+        Put(entry.data(), off::HistoryTick, mock.historyTick);
+        Put(patternStorage.data(), weaponOff::CvarValue, std::uint8_t{1});
+        AimSpreadSnapshot model{};
+        Check(AimSpreadRead(context, source, weapon, shot, model), "selected reference fixture retains both copied clocks");
+        mock.expectedAlternateTick = model.alternateTime.tick;
+        const auto result = AimSpreadSolve(context, model, {12.345f, 179.99f, 0}, 0, 4096);
+        const auto& punch = model.selectedVariant == 1 ? model.alternatePunch : model.punch;
+        const int tick = model.selectedVariant == 1 ? model.alternateTime.tick : model.time.tick;
+        const auto effective = reference::Effective(result.command, punch);
+        std::uint32_t seed = 0;
+        const auto ray = reference::ModelRay(effective, tick, weapon.inaccuracy, weapon.spread, &seed);
+        Check(result.valid && result.variants == 1 && result.evaluations <= 4096 && seed == result.seed &&
+            effective.pitch == result.effective.pitch && effective.yaw == result.effective.yaw &&
+            std::abs(reference::Error(ray, reference::Ray({12.345f, 179.99f, 0})) - result.residualDegrees) < .00003 &&
+            reference::Error(ray, reference::Ray(result.predicted)) < .00003,
+            "chosen current/next/raw clock independently reproduces rounded effective angles, final seed, ray and residual");
+        Check(mock.arguments && mock.sampledTicks == (lead > 0 ? 2U : 1U) &&
+            result.nativeSeedCalls + result.nativeCacheHits == result.evaluations,
+            "bounded cached selected-model solve never samples the unselected clock");
     }
 }
 }
@@ -298,7 +402,7 @@ int main() {
     memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, cs2_offsets::ClientImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
     if (!memory) return 2;
     client = Address(memory); AimSpreadTestRuntime(true);
-    ReadAndClamp(); RejectAndInvalidate(); SolveKnownDraws();
+    ReadAndClamp(); RejectAndInvalidate(); SolveKnownDraws(); CacheBoundaryChecks(); SelectedClockReferenceChecks();
     AimSpreadTestRuntime(false); VirtualFree(memory, 0, MEM_RELEASE);
     std::printf("aim_spread_checks: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;

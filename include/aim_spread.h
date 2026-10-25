@@ -32,6 +32,9 @@ struct AimSpreadSnapshot {
     int historyTick = 0, scene = -1;
     int commandSequence = 0, historyIndex = -1, controllerTick = -1;
     unsigned seedVariants = 1;
+    // Single-model solves route callback variant zero to this retained clock
+    // and its matching recoil. Explicit two-model copied solves use both.
+    unsigned selectedVariant = 0;
     bool rawClockAlternative = false;
     float historyFraction = 0;
     bool pattern = false, valid = false;
@@ -40,16 +43,22 @@ struct AimSpreadSnapshot {
 // Initialization outside DllMain. Calls below belong to the native command owner.
 // Only indexed single-projectile primary shots are modeled. Native SHA-1 and a
 // private null-mutex random stream never seed or advance the engine's RNG.
-// Scout sampling covers two copied clock/recoil models. A raw indexed timestamp
-// more than one tick ahead uses current predicted recoil for the alternative;
-// this does not determine the eventual authoritative shot time or server seed.
+// Supported firearms select one copied indexed clock/recoil model. Indexed time
+// ahead of the clamped native time selects the retained alternative; a lead of
+// more than one tick uses raw indexed time and copied current recoil. This is a
+// client model choice, not an authoritative server shot time or seed.
 bool AimSpreadPrepare(std::uintptr_t client, AimSpreadContext& context) noexcept;
+// Copy the verified distribution-mode cvar on the command owner, without RNG.
+bool AimSpreadReadPattern(const AimSpreadContext& context, bool& pattern) noexcept;
 bool AimSpreadRead(const AimSpreadContext& context, const AimSource& source,
     const AimWeaponSnapshot& weapon, const AimShot& shot, AimSpreadSnapshot& out) noexcept;
 bool AimSpreadStillCurrent(const AimSpreadContext& context, const AimSource& source,
     const AimSpreadSnapshot& snapshot) noexcept;
+// Optional copied-target tolerance and per-attempt work bound. A reduced budget
+// can defer automatic fire; callers must still verify each returned ray.
 AimSpreadSearchResult AimSpreadSolve(const AimSpreadContext& context,
-    const AimSpreadSnapshot& snapshot, const AimAngles& desired) noexcept;
+    const AimSpreadSnapshot& snapshot, const AimAngles& desired,
+    double stopResidualDegrees = .0002, unsigned maxEvaluations = 8192) noexcept;
 #ifdef CS2_AIM_SPREAD_CHECKS
 void AimSpreadTestRuntime(bool enabled) noexcept;
 #endif
