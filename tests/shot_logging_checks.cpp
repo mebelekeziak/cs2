@@ -388,7 +388,7 @@ void TestPublicationAndImpactEvidenceOutput() {
     auto newer = Metadata(1047, 45); newer.attackPublished = true; newer.publicationId = 12;
     ShotLoggingCapture(old); ShotLoggingCapture(newer);
     Deliver(Fire(1062)); Deliver(Impact(1070)); FlushAt(1373);
-    Expect(Has("AIM_SHOT #1 MISS unknown: several possible aim commands") &&
+    Expect(Has("AIM_SHOT #1 MISS unknown: aim context ambiguous | 2 saved commands; miss cause unavailable") &&
         Has("metadata=0 ambiguous_metadata=1") && Has("metadata_candidates=2 metadata_candidates_overflow=0"),
         "delayed native fire reports competing publications instead of diagnosing the newer command's cone");
     Expect(Count("AIM_SHOT_CONTEXT_CANDIDATE ") == 2 &&

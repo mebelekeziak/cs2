@@ -1,3 +1,47 @@
+# Native replay and ordinary takeoff guard — October 25, 2026
+
+Latest user reports `several possible aim commands` dominates annoying misses.
+Completed R8 log snapshot: logs/research/multiple_commands_20261025/r8-26460/
+overlay-26460-134373972778562546.log, 35097002 bytes, SHA256
+ae00cc7fa30bc7dfc7b890e8c8f37676227f17c3df306968be1f6bd7cd1bd62a.
+Adjacent analyze.py/results.json/replay.py/replay_results.json preserve joins
+and independent SHA1/ran1 replay. No game process was running at inspection.
+No client/server launch, attachment, injection or session interaction occurred.
+
+16 ambiguous no-damage records:14 Scout/2 Deagle; each has2pubs/1captured
+nativecommand.15older/1newer. All14Scout native rays fit impacts<.000006deg;
+11actualsegments cross that publication's savedcapsule. Observer is client
+prediction with rejections possible, not authoritative server attribution.
+Do not turn sole captured witness, latest/oldest or impact fit into server ID.
+Runtime remains conservative; label now `aim context ambiguous`, count and
+`miss cause unavailable`, actualdamage/outcomes unchanged.
+
+170comparableScout records124ordinary/46corrected all native replay<.009deg
+(correctedmax<.00009). Actualnativefinalaccuracy explains two ordinary misses:
+event91seq4857 published.00382876/native.06945238 HC100->reestimate16.50;
+event250seq24129 .02029658->.06227221 HC70.14->27.11. Threeotheroutsidecone
+cases fit native cone from nativeorigin; origin shifts1.10/2.43/1.14u.
+23/33ordinary reconstructed no-damage actualsegments stillcrosssavedcapsule;
+2/19corrected do. Pose/history/damagepath remains unresolved, no completefix.
+
+Concretecodegap repaired: WriteDecision's groundedjump guard ran only under
+removeSpread. Now guards allownedautomaticshots incl bothordinarysamplers.
+Held/tapped/latejump deferspulse, exactinputrestoration, freshnextairborne
+HC gates normally; nofixedwait/manualfiregate. Twoobservedaccuracyrises fit
+premovement sampling but exactjumpcause notproven; R8 lacked finalflags.
+Observerrev3 nowcopies optional flags/velocity atactualaccuracyreturn from
+verifiedmovement offsets; invalidoptionalstate doesn'tdropaccuracy or mutate.
+
+BothRelease builds pass71/71CTest each, no projectwarnings; pipeline533,
+observer124,tracker229,adapter140.36/36compat logs/compatibility/
+multiple-commands-20261025/. BothDLLzeroTLS/delayimports. Payloadmanifest
+logs/multiple-commands-payload-contract.json. PublicSHA256
+8dc1e8bb1cb6bc8ca19d2e03cf03197a00caaf405a8770e49cdd7adce55b5edf;
+diagnostic745fe69d20f2913ebdc0a3d4edfc181ddfe95935114284058cd77f1f1439349e.
+Bothnormalbuildoutputs updated. Normalrestart/LoadOverlay.cmd/loggingon for
+nextoffline/private trial; no new livehit-rate confirmation. Tracked report
+docs/SHOT_MISSES_NATIVE_REPLAY_20261025.md. Earlier freeze/results historical.
+
 # Remove spread revision 8 — selected-time punch, October 25, 2026
 
 FINAL R8: both normal build outputs updated after user confirmed testfinished.

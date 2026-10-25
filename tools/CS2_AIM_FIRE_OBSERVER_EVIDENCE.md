@@ -1,5 +1,17 @@
 # Native client shot-construction observer
 
+Revision 3 adds optional copied local flags/velocity at the actual accuracy
+getter return. It reuses `movement_offsets::pawn::Flags` (0x3F4) and `Velocity`
+(0x3F8), independently checked by the movement compatibility component.
+The existing before/after native source checks still govern capture; movement
+read failure/nonfinite velocity clears only this optional observation. Native
+return bits, calls, arguments and accuracy evidence remain intact. No extra
+engine query, hook, offset or gameplay gate is introduced. Both getters copy
+these fields for comparison; they are not a decomposition of inaccuracy.
+The observer fixture passes 124 checks including exact copied movement,
+unknown movement and unchanged native results/gameplay bytes. See
+[the completed native replay](../docs/SHOT_MISSES_NATIVE_REPLAY_20261025.md).
+
 Revision 2 also observes the actual ordinary-fire spread and inaccuracy
 getter returns after native construction. It never calls a getter to create
 a diagnostic, and neither construction nor these values establish server fire.

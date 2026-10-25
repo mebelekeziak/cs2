@@ -6,6 +6,7 @@
 #include "cs2_offsets.h"
 #include "shot_log_settings.h"
 #include "movement_memory.h"
+#include "movement_offsets.h"
 #include <MinHook.h>
 #include <intrin.h>
 #include <array>
@@ -224,6 +225,10 @@ void CaptureAccuracy(void* weapon, const Source& before, bool wants, bool valid,
     sample.component = component; sample.valueBits = std::bit_cast<std::uint32_t>(value);
     sample.value = std::bit_cast<float>(sample.valueBits);
     sample.firstOutputProvided = firstOutput; sample.secondOutputProvided = secondOutput;
+    sample.movementStateKnown = Read(before.pawn + movement_offsets::pawn::Flags, sample.movementFlags) &&
+        Read(before.pawn + movement_offsets::pawn::Velocity, sample.velocity) &&
+        std::isfinite(sample.velocity.x) && std::isfinite(sample.velocity.y) && std::isfinite(sample.velocity.z);
+    if (!sample.movementStateKnown) { sample.movementFlags = 0; sample.velocity = {}; }
     AcquireSRWLockExclusive(&queueLock);
     if (active.load(std::memory_order_acquire) && ShotLogGetSettings().enabled) {
         if (accuracyCount < QueueCapacity) {
@@ -327,13 +332,14 @@ void AimFireObserverFlushTelemetry() noexcept {
     }
     AimNativeAccuracyObservation accuracy{};
     for (unsigned count = 0; count < QueueCapacity && PollAccuracy(accuracy); ++count) {
-        char text[640]{};
+        char text[896]{};
         const bool finite = (accuracy.valueBits & 0x7f800000u) != 0x7f800000u;
         std::snprintf(text, sizeof(text),
-            "AIM_NATIVE_ACCURACY receipt_ms=%llu controller=0x%08x pawn=0x%08x weapon=0x%08x sequence=%d component=%s value=%.9g value_bits=0x%08x value_finite=%u first_output_provided=%u second_output_provided=%u attack_selector_known=0 attack_selector=-1; native_client_input=1 server_fire=0 observer_only=1",
+            "AIM_NATIVE_ACCURACY receipt_ms=%llu controller=0x%08x pawn=0x%08x weapon=0x%08x sequence=%d component=%s value=%.9g value_bits=0x%08x value_finite=%u first_output_provided=%u second_output_provided=%u revision=3 movement_known=%u flags=0x%x velocity=(%.9g,%.9g,%.9g) attack_selector_known=0 attack_selector=-1; native_client_input=1 server_fire=0 observer_only=1",
             static_cast<unsigned long long>(accuracy.receiptMs), accuracy.controller, accuracy.pawn, accuracy.weapon, accuracy.sequence,
             accuracy.component == AimNativeAccuracyComponent::Spread ? "spread" : "inaccuracy", accuracy.value, accuracy.valueBits,
-            finite, accuracy.firstOutputProvided, accuracy.secondOutputProvided);
+            finite, accuracy.firstOutputProvided, accuracy.secondOutputProvided,
+            accuracy.movementStateKnown, accuracy.movementFlags, accuracy.velocity.x, accuracy.velocity.y, accuracy.velocity.z);
         if (ShotLogGetSettings().enabled) logger(text);
     }
     const auto now = GetTickCount64();

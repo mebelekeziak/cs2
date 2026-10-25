@@ -34,6 +34,11 @@ struct AimNativeAccuracyObservation {
     float value = 0;
     std::uint32_t valueBits = 0;
     bool firstOutputProvided = false, secondOutputProvided = false;
+    // Optional copied state at the actual getter return. Failure to copy it
+    // leaves the original native value/provenance available and never gates fire.
+    bool movementStateKnown = false;
+    std::uint32_t movementFlags = 0;
+    AimVector velocity{};
 };
 // Prepare/activate outside DllMain. The hook only observes actual native calls;
 // no builder/getter is invoked to manufacture a diagnostic. Gameplay is never

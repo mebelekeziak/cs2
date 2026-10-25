@@ -270,6 +270,8 @@ void AccuracyBasic() {
     Reset(); Invoke();
     Check(accuracyMock.spreadCalls == 0 && accuracyMock.inaccuracyCalls == 0,
         "builder observation never invokes extra accuracy getters");
+    Put(Address(pawn) + movement_offsets::pawn::Flags, std::uint32_t{0x10081});
+    Put(Address(pawn) + movement_offsets::pawn::Velocity, AimVector{30, -45, 0});
     const auto pawnBefore = pawn, weaponBefore = weapon;
     const auto controllerBefore = controller;
     const auto commandBefore = command;
@@ -286,6 +288,9 @@ void AccuracyBasic() {
             sample.valueBits == bits && std::bit_cast<std::uint32_t>(sample.value) == bits &&
             !sample.firstOutputProvided && !sample.secondOutputProvided,
             "component, native float bits and actual optional argument presence are retained");
+        Check(sample.movementStateKnown && sample.movementFlags == 0x10081 &&
+            sample.velocity.x == 30 && sample.velocity.y == -45 && sample.velocity.z == 0,
+            "movement at the actual accuracy return is copied independently from publication state");
     }
     Check(accuracyMock.spreadCalls == 1 && accuracyMock.inaccuracyCalls == 1 && accuracyMock.forward,
         "spread and inaccuracy arguments forwarded exactly once without manufactured samples");
@@ -300,9 +305,17 @@ void AccuracyBasic() {
         "optional inaccuracy pointers and their native writes/return remain unmodified");
     Check(AimFireObserverTestPollAccuracy(sample) && sample.firstOutputProvided && sample.secondOutputProvided,
         "pointer presence is observable without reading optional output storage");
+    Reset(); Put(Address(pawn) + movement_offsets::pawn::Velocity,
+        AimVector{std::numeric_limits<float>::quiet_NaN(), 20, 30});
+    const auto unavailableMovementValue = AccuracyCall(true);
+    Check(AimFireObserverTestPollAccuracy(sample) && !sample.movementStateKnown && sample.movementFlags == 0 &&
+        sample.velocity.x == 0 && sample.velocity.y == 0 && sample.velocity.z == 0 &&
+        std::bit_cast<std::uint32_t>(unavailableMovementValue) == accuracyMock.inaccuracyBits,
+        "unavailable optional movement never discards the actual accuracy sample or changes the native return");
     Reset(); AccuracyCall(false); AccuracyCall(true); AimFireObserverFlushTelemetry();
     Check(telemetry.find("AIM_NATIVE_ACCURACY ") != std::string::npos && telemetry.find("component=spread ") != std::string::npos &&
         telemetry.find("component=inaccuracy ") != std::string::npos && telemetry.find("sequence=123 ") != std::string::npos &&
+        telemetry.find("revision=3 movement_known=1 flags=0x0 velocity=(0,0,0)") != std::string::npos &&
         telemetry.find("attack_selector_known=0 attack_selector=-1; native_client_input=1 server_fire=0 observer_only=1") != std::string::npos,
         "accuracy telemetry explicitly states client input evidence and unknown attack selector");
     for (const auto bits : {0u, 0x80000000u, 0x00000001u, 0x3f123456u, 0xbf123456u, 0x7f800000u, 0x7fc12345u}) {

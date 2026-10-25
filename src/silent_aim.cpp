@@ -835,7 +835,7 @@ void ReportSpread(const AimSpreadSnapshot& model, const AimSpreadSearchResult& c
     ++spreadCorrected; spreadReason = correction.reason;
     TraceSpread(model, correction, true);
 }
-bool SpreadMovementStable(Decision& decision, std::uintptr_t command) noexcept {
+bool ShotMovementStable(Decision& decision, std::uintptr_t command) noexcept {
     namespace movement = movement_offsets;
     std::uint32_t flags = 0;
     MovementButtons buttons{};
@@ -862,18 +862,26 @@ bool SpreadMovementStable(Decision& decision, std::uintptr_t command) noexcept {
     }
     if (readable && (!(flags & movement::OnGround) || !jump)) return true;
     decision.reason = readable ? "grounded jump transition: awaiting stable shot accuracy" :
-        "jump intent unavailable: automatic spread model unavailable";
+        "jump intent unavailable: automatic shot model unavailable";
     int sequence = 0;
     Read(command + movement::command::Sequence, sequence);
     char message[640]{};
     std::snprintf(message, sizeof(message),
-        "AIM_SPREAD_TRANSITION revision=4 sequence=%d automatic_defer=1 readable=%u flags=0x%x jump_intent=%u buttons=0x%llx/0x%llx/0x%llx subticks=%d/%d allocated=%d inaccuracy=%.7f spread=%.7f reason=\"%s\"; copied accuracy precedes native movement",
+        "AIM_SHOT_TRANSITION revision=1 sequence=%d automatic_defer=1 readable=%u flags=0x%x jump_intent=%u buttons=0x%llx/0x%llx/0x%llx subticks=%d/%d allocated=%d inaccuracy=%.7f spread=%.7f reason=\"%s\" remove_spread=%u native_hitchance=%u; copied accuracy precedes native movement",
         sequence, readable, flags, jump, buttons.down, buttons.changed, buttons.third, size, capacity, allocated,
-        decision.weapon.inaccuracy, decision.weapon.spread, decision.reason);
+        decision.weapon.inaccuracy, decision.weapon.spread, decision.reason,
+        decision.settings.removeSpread, decision.settings.nativeHitchance);
     MovementTelemetryPush(message);
     return false;
 }
 bool WriteDecision(Decision& decision, const AimShot& shot, bool automatic) noexcept {
+    // Both statistical hitchance and indexed compensation use accuracy copied
+    // before native movement. A queued takeoff invalidates either model. Keep
+    // manual fire ownership, and retry our automatic pulse from fresh state.
+    if (automatic && !ShotMovementStable(decision, shot.command)) {
+        if (decision.settings.removeSpread) { ++spreadSkipped; spreadReason = decision.reason; }
+        return false;
+    }
     if (!decision.settings.removeSpread) {
         if (!SilentAimWriteShot(shot, decision.commandAngles)) return false;
         // Normal aim has the same indexed-command lifetime as compensation.
@@ -882,11 +890,6 @@ bool WriteDecision(Decision& decision, const AimShot& shot, bool automatic) noex
         StoreSpreadPublication(decision.source, decision.weapon, decision.settings, shot, decision.commandAngles, automatic,
             {0, decision.target.local.controllerHandle, decision.target.local.pawnHandle});
         return true;
-    }
-    // Native movement can take off after this history callback and change the
-    // cone. Defer only our automatic pulse; manual input keeps its ownership.
-    if (automatic && !SpreadMovementStable(decision, shot.command)) {
-        ++spreadSkipped; spreadReason = decision.reason; return false;
     }
     const auto current = [&]() noexcept {
         if (automatic || decision.volume.valid) return Current(decision);

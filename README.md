@@ -2,6 +2,29 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Native replay and ordinary takeoff guard — October 25
+
+The completed revision-8 capture reproduces all 170 comparable Scout impact
+directions within 0.009 degrees using actual native firing inputs. Two ordinary
+shots use much higher final inaccuracy than their published hitchance models.
+The automatic takeoff guard previously ran only with Remove spread enabled;
+it now protects ordinary autofire with either sampler too. Queued takeoff
+defers the owned pulse until a fresh command can satisfy its firing model.
+
+`Several possible aim commands` describes uncertain command association,
+rather than an established miss cause. The display now says `aim context
+ambiguous` with its candidate count and `miss cause unavailable`. Actual
+damage/outcomes are unchanged. Many reconstructed no-damage segments still
+cross saved client capsules; target-pose/damage timing remains unresolved.
+See [native replay, the repair and its limits](docs/SHOT_MISSES_NATIVE_REPLAY_20261025.md).
+
+Both Release variants pass **71/71 suites each** and all **36/36** installed-file
+checks pass. Pipeline/observer/tracker checks pass **533/124/229** assertions.
+Native accuracy diagnostics now also copy optional movement at the getter
+return. Use the existing normal restart and **Load Overlay.cmd** workflow
+with Shot logging enabled for the next offline/private comparison. No live
+improvement from this guard is verified yet.
+
 ## Remove spread selected-time punch — revision 8, October 25
 
 The new native capture shows the selected clock matches all 15 observed

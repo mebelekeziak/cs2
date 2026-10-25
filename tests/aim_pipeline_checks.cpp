@@ -1593,12 +1593,13 @@ void FreshShotChecks(World& world) {
 }
 
 void SpreadJumpTransitionChecks(World& world) {
-    const auto enable = [&]() {
-        auto settings = SilentAimGetSettings(); settings.removeSpread = true;
+    const auto enable = [&](bool corrected = true, bool native = false) {
+        auto settings = SilentAimGetSettings(); settings.removeSpread = corrected; settings.nativeHitchance = native;
         SilentAimSetSettings(settings); SilentAimTestSpread(true);
     };
+    for (int mode : {0, 1, 2})
     for (int intent = 0; intent < 3; ++intent) {
-        world.Reset(); enable();
+        world.Reset(); enable(mode == 2, mode == 1);
         Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
         Command jump;
         if (intent == 1) jump.JumpTap();
@@ -1622,13 +1623,14 @@ void SpreadJumpTransitionChecks(World& world) {
         if (intent == 2) expectedButtons.down |= move::Jump;
         Expect(checksumCalls == 1 && Equal(jump.Buttons(), expectedButtons) && jump.Index() == -1 &&
             Equal(jump.History(), Command::PhysicalView) && spreadSolves == 0 && spreadReads == 0 && shotMetadata.empty(),
-            "grounded held/tapped/late jump cancels only owned autofire before spread solving; case=" + std::to_string(intent));
+            "grounded held/tapped/late jump cancels only owned autofire before any publication; mode=" +
+                std::to_string(mode) + " case=" + std::to_string(intent));
         Expect(jump.base == nativeBase && jump.subticks == nativePointers &&
             !std::memcmp(jump.steps.data(), nativeSteps.data(), sizeof(nativeSteps)),
             "jump deferral preserves native movement values and press/release history exactly");
         bool diagnostic = false;
         for (const auto& message : telemetry) diagnostic |=
-            message.find("AIM_SPREAD_TRANSITION revision=4 ") != std::string::npos &&
+            message.find("AIM_SHOT_TRANSITION revision=1 ") != std::string::npos &&
             message.find("automatic_defer=1 readable=1 flags=0x1 jump_intent=1") != std::string::npos &&
             message.find("inaccuracy=0.0000000") != std::string::npos &&
             message.find("grounded jump transition: awaiting stable shot accuracy") != std::string::npos;
@@ -1640,7 +1642,7 @@ void SpreadJumpTransitionChecks(World& world) {
         Put(Address(airborne.command) + move::command::Buttons, airborne.originalButtons);
         airborne.JumpTap();
         world.Prepare(airborne); world.History(airborne);
-        Expect(spreadSolves == 1 && shotMetadata.size() == 1 && checksumCalls == 1 &&
+        Expect(spreadSolves == (mode == 2 ? 1u : 0u) && shotMetadata.size() == 1 && checksumCalls == 1 &&
             (airborne.Buttons().down & (move::Jump | 1)) == (move::Jump | 1),
             "following stable airborne command can publish with jump held and has no sticky deferral");
     }
@@ -1676,12 +1678,22 @@ void SpreadJumpTransitionChecks(World& world) {
     ordinary.originalButtons.down |= move::Jump;
     Put(Address(ordinary.command) + move::command::Buttons, ordinary.originalButtons);
     world.Prepare(ordinary); world.History(ordinary);
-    Expect(spreadSolves == 0 && checksumCalls == 0 && shotMetadata.size() == 1 &&
-        (ordinary.Buttons().down & (move::Jump | 1)) == (move::Jump | 1),
-        "remove spread off preserves existing grounded-jump autofire behavior");
+    Expect(spreadSolves == 0 && checksumCalls == 1 && shotMetadata.empty() &&
+        Equal(ordinary.Buttons(), ordinary.originalButtons),
+        "ordinary hitchance no longer publishes grounded accuracy across a queued takeoff");
+    Put(Address(world.pawn) + move::pawn::Flags, std::uint32_t{0});
+    weapon.inaccuracy = .5f;
+    Command inaccurateAirborne(38); world.Prepare(inaccurateAirborne); world.History(inaccurateAirborne);
+    Expect(recorderCalls == 1 && shotMetadata.empty() && !(inaccurateAirborne.Buttons().down & 1),
+        "the next airborne command uses its fresh low hitchance instead of inheriting the grounded approval");
+    weapon.inaccuracy = 0;
+    Command accurateAgain(39); world.Prepare(accurateAgain); world.History(accurateAgain);
+    Expect(recorderCalls == 2 && shotMetadata.size() == 1 && (accurateAgain.Buttons().down & 1),
+        "ordinary autofire resumes from a new valid accuracy sample without a fixed timing delay");
 
+    for (int mode : {0, 1, 2})
     for (int invalid = 0; invalid < 6; ++invalid) {
-        world.Reset(); enable();
+        world.Reset(); enable(mode == 2, mode == 1);
         Put(Address(world.pawn) + move::pawn::Flags, move::OnGround);
         Command malformed; malformed.JumpTap();
         if (invalid == 0) Put(Address(malformed.base) + move::base::SubtickSize, -1);
@@ -1695,7 +1707,7 @@ void SpreadJumpTransitionChecks(World& world) {
         world.Prepare(malformed); world.History(malformed);
         bool unavailable = false;
         for (const auto& message : telemetry) unavailable |=
-            message.find("jump intent unavailable: automatic spread model unavailable") != std::string::npos;
+            message.find("jump intent unavailable: automatic shot model unavailable") != std::string::npos;
         Expect(checksumCalls == 1 && shotMetadata.empty() && spreadSolves == 0 &&
             Equal(malformed.Buttons(), malformed.originalButtons) && malformed.base == nativeBase &&
             !std::memcmp(malformed.steps.data(), nativeSteps.data(), sizeof(nativeSteps)) && unavailable,

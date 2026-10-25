@@ -750,7 +750,7 @@ const char* ShotLogDiagnosticText(ShotLogDiagnostic diagnostic) noexcept {
     case ShotLogDiagnostic::Stopped: return "stopped before settlement";
     case ShotLogDiagnostic::Capacity: return "tracking capacity reached";
     case ShotLogDiagnostic::NoMetadata: return "no aim context";
-    case ShotLogDiagnostic::OverlappingMetadata: return "several possible aim commands";
+    case ShotLogDiagnostic::OverlappingMetadata: return "aim context ambiguous";
     case ShotLogDiagnostic::NoCapsule: return "target capsule unavailable";
     case ShotLogDiagnostic::InvalidAim: return "aim ray unavailable";
     case ShotLogDiagnostic::AimMissedCapsule: return "aim ray missed saved capsule";
@@ -820,6 +820,8 @@ bool ShotLogFormat(const ShotLogRecord& record, char* output, std::size_t capaci
         text.Add("%s %s", record.outcome == ShotLogOutcome::Miss ? "MISS" : "UNCONFIRMED", ShotLogReasonText(record.reason));
         if (record.reason == ShotLogReason::Unknown) text.Add(": %s", ShotLogDiagnosticText(record.diagnostic));
     }
+    if (record.diagnostic == ShotLogDiagnostic::OverlappingMetadata)
+        text.Add(" | %u saved commands; miss cause unavailable", record.metadataCandidateCount);
     char normalized[48]{}, weapon[64]{};
     Normalize(record.weapon, normalized); Name(normalized, weapon);
     text.Add(" | weapon %s", weapon);

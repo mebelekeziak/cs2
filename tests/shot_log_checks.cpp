@@ -187,6 +187,10 @@ void PublicationEvidenceChecks() {
         records[0].metadataCandidates[1].publicationId == 12 && records[0].metadataCandidates[1].commandSequence == 104 &&
         records[0].metadataCandidates[1].receiptMs == 1047 && !records[0].metadataCandidateOverflow,
         "ambiguous publication evidence retains both immutable identities, sequences and receipt times");
+    const auto ambiguousText = Format(records[0]);
+    Expect(ambiguousText.find("MISS unknown: aim context ambiguous | 2 saved commands; miss cause unavailable") != std::string::npos &&
+        ambiguousText.find("multiple shots") == std::string::npos,
+        "the display identifies uncertain command association without presenting it as the physical cause of a miss");
     Expect(records.size() == 1 && records[0].impactEvidenceCount == 1 &&
         records[0].impactEvidence[0].receiptMs == 1070 && records[0].impactEvidence[0].position.x == 200 &&
         records[0].geometryImpacts == 0 && records[0].trajectory == ShotLogTrajectory::Unknown,
