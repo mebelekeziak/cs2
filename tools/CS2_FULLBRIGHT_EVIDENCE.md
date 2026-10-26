@@ -1,112 +1,61 @@
-# Native fullbright render-context parameter
+# Native Fullbright view mode
 
-## User trial — October 25
+Investigated October 25–26, 2026 for the Windows AMD64 CS2 client, 1.41.9.2 / client 2000935 / Steam build 26144732. Existing D3D11 callbacks are observed in project logs. This investigation reads installed files only; no game files or cvar values/flags are changed, no client/server is launched, and successful live Fullbright appearance is not yet claimed.
 
-The user reports no visible change when toggling Fullbright. Session
-`logs/overlay-19080-134374152043395173.log` records the real D3D11 callback
-and thousands of modified native Fullbright inputs, so hook execution alone
-does not establish effective rendering. The downstream native capability and
-render-mode path remain under investigation. Custom skyboxes are independently
-confirmed working after their ownership repair.
+## User trial and root cause
 
-Investigated October 25, 2026, for the Windows AMD64 CS2 **client**,
-1.41.9.2 / client 2000935 / Steam build 26144732. Read-only installed path:
-`C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\engine2.dll`.
-SHA-256 `e8533af07adc3426eac95391cb70804a0a27f8391c03d36f1cfa06f50d901d29`,
-PE timestamp `0x6ADA3418`, image size `0xA15000`. This extends the existing
-D3D11 overlay without another graphics dependency. No process was opened or
-client/server launched during this investigation; no new runtime/API observation
-or visible appearance is claimed. The client-specific producer and render-mode
-consumer also require the same installation's `game/csgo/bin/win64/client.dll`,
-SHA-256 `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5`,
-timestamp `0x6ADA7340`, image size `0x29A0000`.
+The user reported no visible effect despite thousands of modified Fullbright inputs in `logs/overlay-19080-134374152043395173.log`. The original implementation intercepted native `mat_fullbright` integer producers, key `0xC6767B23`, in engine2/client. Those producers run, but they precede a separate native capability gate.
 
-## Independently decoded native contract
+Client selector `0x1202FE0..0x12038C5` queries `Engine2/RenderingPipeline/ToolsVisModes`. Its cached capability is tested at `0x12035D3`; zero branches at `0x12035D5` to `0x1203773`, bypassing the Fullbright input read at `0x12035E6`. With no other visualization request it returns the default descriptor at `0x120367D`. Hook execution at the producers therefore did not imply effective Fullbright rendering. The capability storage is not modified by the repair.
 
-The registration at `0x19E64` resolves the exact `mat_fullbright` string at
-`0x623F28`; the following RCX LEA at `0x19E6B` selects wrapper `0x9BAFB0`.
-The native context builder loads that wrapper's storage pointer (`+8`) at
-`0x24331E`, reads its **32-bit integer** at `+0x58` at `0x243333` and saves it
-to `RBP+0x1158`. A native debug branch can replace that local with 1. The
-local is loaded into R8D at `0x24340C`; EDX receives key `0xC6767B23` at
-`0x243413`; RCX receives the current context's integer collection at
-`0x243418`; the direct call at `0x24341B` targets `0x2485A0`, returning to
-`0x243420`. These are independent native registration and consumer operands,
-not addresses taken from an internet offset list.
+## Coherent native selector boundary
 
-The complete `0x2485A0..0x2487BA` helper copies RCX to RBX, EDX to ESI and
-R8D to EDI. It compares the uint32 key against the collection's inline groups,
-walks its overflow nodes when needed, then writes the integer value. When
-there is no vacant slot, it allocates a native 0x70-byte overflow node through
-the allocator, initializes and links it, then inserts the same key/value.
-There are no engine render, job dispatch or wait calls in this helper. Native
-callers ignore its return registers; the wrapper uses a void result.
+Selector ABI: `RCX=source render context`, `RDX=CSceneView owner`, `R8=view information`; RAX returns a pointer to a native static rendering descriptor. The only admitted caller is client call `0x12090A4`, return `0x12090A9`, inside initializer `0x1208EA0..0x120944F`. Its argument window starts at `0x1209094`: R8 comes from current output+8, RDX from output[0], RCX from the current source context. The original selector must run once before the short override/normalization boundary; its full body may dispatch native rendering work and must not execute under the feature writer lock.
 
-The client has its own render-context writer; overriding only the engine
-producer would leave this important path unhandled. Client registration
-`0x10883A` names the same `mat_fullbright` and selects wrapper `0x25CC3C8`.
-The value-read at `0xE5AFC8` resolves its storage pointer `+8`, reads int
-`+0x58` at `0xE5AFEE`, stores `RBP+0x1700`, then loads R8D from that local
-at `0xE5B0CC`. The same key is loaded at `0xE5B0DA`, followed by a call
-at `0xE5B0DF` to client integer writer `0x16A9D0` (return `0xE5B0E4`).
-The auxiliary producer `0x7996FA..0x799718` reads another independently named
-`mat_fullbright` wrapper, `0x24C0A98`, selected by registration `0x92CDA`,
-and calls the same writer. Other explicit fixed-mode client writers are
-forwarded unchanged.
+Native descriptor addresses are independently linked from both selector references and static constructors:
 
-The complete client writer spans `0x16A9D0..0x16ABDE` across native unwind
-fragments. It has the same RCX context, EDX key and R8D integer ABI. The
-overflow path calls allocator thunk `0xC32810` (native allocator slot +8)
-and pure three-vector zero initializer `0x15A360`; neither introduces a
-render or job wait. It preserves native allocation and collection ownership.
+| Native descriptor | Client RVA | Token | Constructor span |
+| --- | --- | --- | --- |
+| CsgoForward | `0x2258030` | `0xBD79F698` | `0x128620..0x128742` |
+| ToolsVis | `0x2258060` | `0xD102BCAD` | `0x128FF0..0x1290F4` |
 
-The native client render-mode consumer independently queries key `0xC6767B23`
-at `0x12035E6` and saves the returned integer in ESI. Nonzero enters the
-native tool-mode parameter branch. At `0x12037AD`, ESI becomes the native
-output integer under key `0x50E7F81D`; other rendering toggles retain their
-own native calculations. That consumer retains the engine's
-`Engine2/RenderingPipeline/ToolsVisModes` capability branch, identified by its
-literal string reference at `0x12035BD`. The implementation changes the
-same cvar-backed render input that reaches this native consumer rather than
-inventing a separate shader switch. This does not establish appearance on
-every shader/material, and native capability checks still apply.
+The constructors initialize descriptor+8 from their exact strings and store the lowercased Murmur2 token, seed `0x31415926`, at descriptor[0]. The verifier recomputes both tokens and decodes constructor stores and selector LEAs. Other native specialized descriptors must retain their original result.
 
-Full disassembly was saved under `logs/research/fullbright_20261025/` for the
-registration, integer setters, client render-mode consumer and producer scopes.
-`verify_fullbright.py` freezes their complete code hashes and exact installed module hashes, decodes the cvar
-name/wrapper/value chain and setter target/key, and compares all runtime header
-constants and byte arrays to the installed operands. Runtime prepare verifies
-AMD64 identities and both setters, producers, value-read and registration windows.
+The selector obtains its destination context through owner virtual slot `+0x1A8` at `0x120300B`. Independently recovered scenesystem RTTI `.?AVCSceneView@@` identifies primary vtable `0x5F2178`; that slot resolves to scenesystem `0x11CD70`. Its complete eight-byte body is `48 8D 81 60 51 00 00 C3`: `lea rax,[rcx+0x5160]; ret`. It has no side effects, allocation, dispatch, or wait. Compatible derived owners are usable only when their resolved slot targets this verified accessor; sharing an object member offset is insufficient evidence.
 
-## Mutation, ownership and teardown
+The native ToolsVis branch uses `destination+0x110` as integer collection, calls client SetInt `0x16A9D0` at `0x12037AD` with key `0x50E7F81D` (`g_nToolsVisMode`), and returns the ToolsVis descriptor. That setter has ABI `void(collection, uint32 key, int value)`, preserves native ownership, and contains only key lookup/update and native overflow allocation. Its frozen complete span `0x16A9D0..0x16ABDE` contains no engine/render-job wait.
 
-The detour forwards the original collection, key and integer unchanged except
-for the three exact return address/key pairs with `fullbrightEnabled` enabled. That
-case passes 1, the native `mat_fullbright 1` render-context value, to the native
-setter. It executes on the native producer's own thread. It does not cache a
-context or entity pointer, change cvar values/flags, submit console commands,
-edit game files or alter lighting settings. The feature is independent of the
-other lighting controls.
+Immediately after selector return, the native initializer copies descriptor[0] to current output+`0x190` at `0x1209120`. It reads the same integer collection at `0x120912B`, with EDX=`0x50E7F81D` and R8D=0 (explicit native fallback at `0x120911D`), then stores the result at output+`0x1A8` at `0x1209133`. The override must publish the matching ToolsVis descriptor and integer1 together. Setting only the upstream input or only a final getter does not establish the matching shader variant and shader parameter.
 
-The next native context uses the current native value when disabled. Stop
-disarms before taking the setter barrier and waits for any modified setter
-already executing. Previously submitted GPU frames can finish; future contexts
-forward native values. There is no persistent source mutation to restore.
-Hooks, trampolines and the DLL remain resident until normal process exit;
-stopped does not mean physically unloaded.
+## Shader proof from this installation
 
-`world_fullbright_checks` substitutes only the native setter boundary and
-checks exact collection/key/value forwarding, unrelated call sites, independent
-lighting controls, reset/disable, repeated frames, stopped reactivation and
-draining an in-flight modified writer. These are static and standalone checks,
-not proof of live fullbright appearance. The native exposure/tonemap system
-and map/material-specific behavior remain in effect.
+Original installed shader bytecode was decoded in `logs/research/fullbright-fix-20261025/shader_probe.py`; reproducible output is `verified-shader-summary.json`. All 24 decoded native ToolsVis dynamic pixel-shader variants compare `g_nToolsVisMode` against 1 and choose a textured fixed-light path. Mode 2 instead returns half albedo.
 
-The initial engine-only isolated MSVC 19.42 x64 Release fixture built without
-project warnings and passed **1,034 checks**; the expanded client-writer
-fixture is included in the parent integration build. The installed-file verifier passes. Temporary
-header changes to both timestamps, both caller returns, auxiliary caller,
-client setter, parameter key and setter fingerprint all reject (**8/8**);
-results are retained in
-`logs/research/fullbright_20261025/negative.json`. Integrated DLL builds and
-the combined compatibility run are reported by the parent integration.
+- `generic_pc_50_ps.vcs`, SHA-256 `d3496f6b90df7f1fd70640d6c9c28345d3e2914f32a3fc715bf7ff43676cdc6f`: ToolsVis static ID4, bytecode group3, eight dynamic variants, constant at CB0[2].x.
+- `csgo_lightmappedgeneric_pc_50_ps.vcs`, SHA-256 `c45b654fb7d7cc53dd48827c8f3428bc0797c6a322a6de6bd87bb04fd4b3773d`: ToolsVis static ID6145, group145, 16 dynamic variants, constant at CB0[3].w.
+
+The ordinary variants lack this constant. This supports choosing both the native ToolsVis rendering descriptor and integer1; it does not establish coverage or appearance for every material or shader.
+
+## Context lifetime, disable and stop
+
+CSceneView constructor scenesystem `0x11CED0` calls context constructor `0x4C4E0` at `0x11D2A0`; copy constructor `0x11EBE0` initializes a fresh inline context through the same helper at `0x11F1CD`. Destructor `0x11D5A0` calls context destructor `0x4C7E0` at `0x11DB7F`; that helper clears the integer headers and frees overflow nodes. These facts establish allocation/ownership but do not prove an existing owner resets its context before every selector call.
+
+The initializer's own output object is fresh stack storage: its sole direct caller, client `0x11DBF60`, constructs it using `0x11CF9A0` before call `0x11DC025`. Its CSceneView owner is nevertheless an existing entry argument. No unconditional integer-map clear was found in the initializer before the selector. The repair must not rely on per-frame context reset or cache a prior owner pointer.
+
+After the feature has first applied, every current native-default view is normalized to the native fallback0 when disabled or stopped, by the same verified native SetInt on that callback's current owner. An enabled native-default/ToolsVis view receives mode1 plus ToolsVis descriptor. Off/stopped native ToolsVis and specialized descriptors preserve native behavior. The normalization handles reused contexts without retaining stale owner pointers or changing global capabilities/cvars.
+
+Stop disarms the enabled override, then drains the short native parameter writer/publication section. Original native rendering is outside this lock. Forwarding selector callbacks and their native-default normalization remain resident so a later view can clear an earlier1 even after stop. This is stopped and resident, not physically unloaded or detached. A submitted view may finish using its admitted mode; teardown must not split its descriptor and integer publication.
+
+## Frozen compatibility evidence
+
+`python tools/verify_fullbright.py` pins the complete installed AMD64 module hashes, checks all runtime fingerprints, independently decodes selector call/return, native descriptor names/stores/tokens, native output key/setter, integer collection and default fallback, and recovers the scene accessor through RTTI/vtable. It freezes complete selector, initializer, descriptor constructor, accessor and setter code scopes. Historical producer verification remains to reproduce why the first attempt could execute without changing visible rendering.
+
+Installed modules under `C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game`:
+
+| Module | SHA-256 | PE timestamp | Image size |
+| --- | --- | --- | --- |
+| bin/win64/engine2.dll | `e8533af07adc3426eac95391cb70804a0a27f8391c03d36f1cfa06f50d901d29` | `0x6ADA3418` | `0xA15000` |
+| csgo/bin/win64/client.dll | `ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5` | `0x6ADA7340` | `0x29A0000` |
+| bin/win64/scenesystem.dll | `0f17ccdc083290a496e6ac13e4fe54413077ad2b83b7dfd281749cffd2733d9b` | `0x6ADA337D` | `0x978000` |
+
+The installed-file verifier passes. All 16 negative header mutations reject (selector/caller, descriptor/tokens, scene accessor/slot/member, key/default/setter/identity, and all four runtime fingerprints); rejection output is retained in `logs/research/fullbright-consumer-20261025/negative-selector.json`. This is static evidence; parent integration reports builds, standalone fixture results and any subsequent live user trial separately.

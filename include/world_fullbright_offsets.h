@@ -1,9 +1,39 @@
 #pragma once
 #include <cstdint>
 
-// Named mat_fullbright producer, installed AMD64 engine2.dll 1.41.9.2.
+// Native view mode selector, installed AMD64 CS2 1.41.9.2.
 // See tools/verify_fullbright.py and tools/CS2_FULLBRIGHT_EVIDENCE.md.
 namespace world_fullbright_offsets {
+inline constexpr std::uintptr_t Selector = 0x1202FE0;
+inline constexpr std::uintptr_t SelectorCaller = 0x1209094;
+inline constexpr std::uintptr_t SelectorReturn = 0x12090A9;
+inline constexpr std::uintptr_t ToolsDescriptor = 0x2258060;
+inline constexpr std::uintptr_t DefaultDescriptor = 0x2258030;
+inline constexpr std::uint32_t ToolsToken = 0xD102BCAD;
+inline constexpr std::uint32_t DefaultToken = 0xBD79F698;
+inline constexpr std::uintptr_t SceneViewVtable = 0x5F2178;
+inline constexpr std::uintptr_t SceneContextAccessor = 0x11CD70;
+inline constexpr std::uintptr_t SceneContextAccessorSlot = 0x1A8;
+inline constexpr std::uintptr_t SceneContext = 0x5160;
+inline constexpr std::uintptr_t IntegerCollection = 0x110;
+inline constexpr std::uint32_t ToolsModeKey = 0x50E7F81D;
+inline constexpr std::uint32_t ToolsModeValue = 0x1;
+inline constexpr std::uint32_t NativeDefaultMode = 0x0;
+inline constexpr std::uint32_t SceneTimestamp = 0x6ADA337D;
+inline constexpr std::uint32_t SceneImageSize = 0x978000;
+inline constexpr std::uintptr_t ContextSetter = 0x16A9D0;
+inline constexpr unsigned char SelectorBytes[]{
+    0x40,0x55,0x53,0x56,0x57,0x41,0x55,0x41,0x56,0x48,0x8d,0x6c,0x24,0xe8,
+    0x48,0x81,0xec,0x18,0x01,0x00,0x00,0x48,0x8b,0x02};
+inline constexpr unsigned char SelectorCallerBytes[]{
+    0x4c,0x8b,0x43,0x08,0x48,0x8b,0x13,0x48,0x8b,0x0e,0x88,0x83,0xaf,0x01,
+    0x00,0x00,0xe8,0x37,0x9f,0xff,0xff};
+inline constexpr unsigned char SceneContextAccessorBytes[]{0x48,0x8d,0x81,0x60,0x51,0x00,0x00,0xc3};
+inline constexpr unsigned char ContextSetterBytes[]{
+    0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x20,
+    0x66,0x0f,0x6e,0xca,0x41,0x8b,0xf0,0x66,0x0f,0x70,0xc9,0x00};
+// Historical producer evidence is retained to verify why the first attempt
+// could execute without enabling the native ToolsVis material mode.
 inline constexpr std::uint32_t Timestamp = 0x6ADA3418;
 inline constexpr std::uint32_t ImageSize = 0xA15000;
 inline constexpr std::uintptr_t Setter = 0x2485A0;

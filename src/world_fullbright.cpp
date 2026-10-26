@@ -10,96 +10,156 @@
 
 namespace {
 namespace off = world_fullbright_offsets;
-using SetterFn = void (*)(void*, std::uint32_t, int);
-SetterFn original = nullptr;
-SetterFn originalClient = nullptr;
-std::uintptr_t engine = 0, client = 0;
+using SelectFn = std::uintptr_t (*)(void*, void*, void*);
+using SetFn = void (*)(void*, std::uint32_t, int);
+SelectFn original = nullptr;
+SetFn setInteger = nullptr;
+std::uintptr_t client = 0, scene = 0;
 WorldFullbrightLogCallback logger = nullptr;
-std::atomic<bool> enabled{false};
-std::atomic<const char*> status{"fullbright not initialized"};
 SRWLOCK mutationLock = SRWLOCK_INIT;
+std::atomic<bool> enabled{false}, everApplied{false};
 bool stopped = false;
-std::atomic<unsigned long long> calls{0}, modified{0};
-std::atomic<DWORD> owner{0};
-unsigned long long reportedCalls = 0, reportedModified = 0;
+std::atomic<const char*> status{"fullbright not initialized"};
+std::atomic<unsigned long long> calls{0}, modified{0}, restored{0}, rejected{0};
+std::atomic<DWORD> ownerThread{0};
+unsigned long long reportedCalls = 0, reportedModified = 0, reportedRestored = 0, reportedRejected = 0;
 ULONGLONG reportTime = 0;
-
+#ifdef CS2_WORLD_FULLBRIGHT_CHECKS
+bool testing = false;
+std::uintptr_t testDefault = 0, testTools = 0;
+#endif
 bool Read(std::uintptr_t address, void* output, std::size_t size) noexcept {
     if (!output || address < 0x10000 || address > 0x00007fffffffffffULL - size) return false;
     __try { std::memcpy(output, reinterpret_cast<const void*>(address), size); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+template<class T> bool Read(std::uintptr_t address, T& output) noexcept { return Read(address, &output, sizeof(output)); }
 template<std::size_t N> bool Match(std::uintptr_t address, const unsigned char (&expected)[N]) noexcept {
     unsigned char observed[N]{};
     return Read(address, observed, N) && !std::memcmp(observed, expected, N);
 }
-void Set(void* context, std::uint32_t key, int value, std::uintptr_t caller, bool clientCall = false) noexcept {
-    const auto native = clientCall ? originalClient : original;
-    const bool expectedCaller = clientCall ? caller == client + off::ClientSetterReturn || caller == client + off::ClientAuxReturn :
-        caller == engine + off::SetterReturn;
-    if (!enabled.load(std::memory_order_acquire) || key != off::FullbrightKey || !expectedCaller) {
-        native(context, key, value); return;
-    }
-    calls.fetch_add(1, std::memory_order_relaxed);
-    AcquireSRWLockExclusive(&mutationLock);
-    const bool apply = enabled.load(std::memory_order_acquire) && !stopped && WorldGetSettings().fullbrightEnabled;
-    if (!apply) {
-        if (!stopped) status.store("fullbright disabled", std::memory_order_release);
-        ReleaseSRWLockExclusive(&mutationLock);
-        native(context, key, value); return;
-    }
-    // The inspected helper only edits the caller's integer context collection
-    // (and may allocate an overflow node). No render/job call occurs under this
-    // stop barrier. Never change the shared cvar, its flags or source entities.
-    native(context, key, 1);
-    modified.fetch_add(1, std::memory_order_relaxed);
-    owner.store(GetCurrentThreadId(), std::memory_order_relaxed);
-    status.store("native fullbright render parameter active", std::memory_order_release);
-    ReleaseSRWLockExclusive(&mutationLock);
-}
-__declspec(noinline) void HookSet(void* context, std::uint32_t key, int value) noexcept {
-    Set(context, key, value, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
-}
-__declspec(noinline) void HookSetClient(void* context, std::uint32_t key, int value) noexcept {
-    Set(context, key, value, reinterpret_cast<std::uintptr_t>(_ReturnAddress()), true);
-}
-bool ValidImage(std::uintptr_t base, std::uint32_t timestamp, std::uint32_t imageSize) noexcept {
+bool Image(std::uintptr_t base, std::uint32_t timestamp, std::uint32_t imageSize) noexcept {
     IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
-    return Read(base, &dos, sizeof(dos)) && dos.e_magic == IMAGE_DOS_SIGNATURE && dos.e_lfanew > 0 &&
-        dos.e_lfanew < 0x100000 && Read(base + dos.e_lfanew, &nt, sizeof(nt)) && nt.Signature == IMAGE_NT_SIGNATURE &&
+    return Read(base, dos) && dos.e_magic == IMAGE_DOS_SIGNATURE && dos.e_lfanew > 0 &&
+        dos.e_lfanew < 0x100000 && Read(base + dos.e_lfanew, nt) && nt.Signature == IMAGE_NT_SIGNATURE &&
         nt.FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 && nt.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
         nt.FileHeader.TimeDateStamp == timestamp && nt.OptionalHeader.SizeOfImage == imageSize;
+}
+bool Current() noexcept {
+#ifdef CS2_WORLD_FULLBRIGHT_CHECKS
+    if (testing) return true;
+#endif
+    return reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll")) == client &&
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"scenesystem.dll")) == scene;
+}
+std::uintptr_t DefaultDescriptor() noexcept {
+#ifdef CS2_WORLD_FULLBRIGHT_CHECKS
+    if (testing) return testDefault;
+#endif
+    return client + off::DefaultDescriptor;
+}
+std::uintptr_t ToolsDescriptor() noexcept {
+#ifdef CS2_WORLD_FULLBRIGHT_CHECKS
+    if (testing) return testTools;
+#endif
+    return client + off::ToolsDescriptor;
+}
+bool DescriptorsReady() noexcept {
+    std::uint32_t normal = 0, tools = 0;
+    return Read(DefaultDescriptor(), normal) && normal == off::DefaultToken &&
+        Read(ToolsDescriptor(), tools) && tools == off::ToolsToken;
+}
+bool Collection(void* owner, void*& collection) noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(owner);
+    std::uintptr_t table = 0, accessor = 0;
+    if (address < 0x10000 || address > 0x00007fffffffffffULL - off::SceneContext - off::IntegerCollection ||
+        !Read(address, table) || !Read(table + off::SceneContextAccessorSlot, accessor) ||
+        accessor != scene + off::SceneContextAccessor) return false;
+    // The exact native virtual method is LEA RAX,[RCX+SceneContext]; RET.
+    // Compatible native subclasses sharing that method keep the same layout.
+    collection = reinterpret_cast<void*>(address + off::SceneContext + off::IntegerCollection);
+    return true;
+}
+bool Write(void* collection, int mode) noexcept {
+    __try { setInteger(collection, off::ToolsModeKey, mode); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+std::uintptr_t Select(void* source, void* owner, void* viewport, std::uintptr_t caller) noexcept {
+    // Native work may dispatch/wait for jobs. Never hold our barrier over it.
+    const auto native = original(source, owner, viewport);
+    if (caller != client + off::SelectorReturn) return native;
+    calls.fetch_add(1, std::memory_order_relaxed);
+    if (!enabled.load(std::memory_order_acquire) && !everApplied.load(std::memory_order_acquire)) return native;
+    if (!Current() || (native != DefaultDescriptor() && native != ToolsDescriptor())) return native;
+    void* collection = nullptr;
+    if (!DescriptorsReady() || !Collection(owner, collection)) {
+        rejected.fetch_add(1, std::memory_order_relaxed);
+        if (enabled.load(std::memory_order_acquire)) status.store("fullbright view contract rejected", std::memory_order_release);
+        return native;
+    }
+    AcquireSRWLockExclusive(&mutationLock);
+    const bool apply = enabled.load(std::memory_order_acquire) && !stopped && WorldGetSettings().fullbrightEnabled;
+    auto result = native;
+    if (apply) {
+        // Select BOTH the material variant and its GPU-visible integer from
+        // this same callback snapshot. No capability/cvar/global-mode writes.
+        if (Write(collection, off::ToolsModeValue)) {
+            everApplied.store(true, std::memory_order_release);
+            result = ToolsDescriptor();
+            modified.fetch_add(1, std::memory_order_relaxed);
+            ownerThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
+            status.store("fullbright ToolsVis view and lighting mode active", std::memory_order_release);
+        } else {
+            rejected.fetch_add(1, std::memory_order_relaxed);
+            status.store("fullbright parameter write failed; native descriptor retained", std::memory_order_release);
+        }
+    } else if (everApplied.load(std::memory_order_acquire) && native == DefaultDescriptor()) {
+        // CSceneView may reuse its inline context. Native default selection
+        // skips this key when ToolsVisModes is unavailable. Normalize its
+        // documented default 0 on the CURRENT owner, including after stop;
+        // never retain a scene pointer or assume the map was cleared.
+        if (Write(collection, off::NativeDefaultMode)) {
+            restored.fetch_add(1, std::memory_order_relaxed);
+            if (!stopped) status.store("fullbright disabled; native default view restored", std::memory_order_release);
+        } else {
+            rejected.fetch_add(1, std::memory_order_relaxed);
+            status.store(stopped ? "fullbright stopped and resident; native-default restoration failed" :
+                "fullbright disabled; native-default restoration failed", std::memory_order_release);
+        }
+    } else if (!stopped) status.store("fullbright disabled", std::memory_order_release);
+    ReleaseSRWLockExclusive(&mutationLock);
+    return result;
+}
+__declspec(noinline) std::uintptr_t HookSelect(void* source, void* owner, void* viewport) noexcept {
+    return Select(source, owner, viewport, reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
 }
 }
 
 bool WorldFullbrightPrepare(WorldFullbrightLogCallback callback) noexcept {
     logger = callback;
-    engine = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"engine2.dll"));
     client = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll"));
-    if (!ValidImage(engine, off::Timestamp, off::ImageSize) || !ValidImage(client, off::ClientTimestamp, off::ClientImageSize) ||
-        !Match(engine + off::Setter, off::SetterBytes) ||
-        !Match(engine + off::Producer, off::ProducerBytes) || !Match(engine + off::CvarRead, off::CvarReadBytes) ||
-        !Match(engine + off::Registration, off::RegistrationBytes) || !Match(client + off::ClientSetter, off::ClientSetterBytes) ||
-        !Match(client + off::ClientProducer, off::ClientProducerBytes) || !Match(client + off::ClientCvarRead, off::ClientCvarReadBytes) ||
-        !Match(client + off::ClientRegistration, off::ClientRegistrationBytes) ||
-        !Match(client + off::ClientAuxProducer, off::ClientAuxProducerBytes) ||
-        !Match(client + off::ClientAuxRegistration, off::ClientAuxRegistrationBytes)) {
-        status.store("fullbright build verification failed", std::memory_order_release); return false;
+    scene = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"scenesystem.dll"));
+    std::uintptr_t accessor = 0;
+    if (!Image(client, off::ClientTimestamp, off::ClientImageSize) || !Image(scene, off::SceneTimestamp, off::SceneImageSize) ||
+        !Match(client + off::Selector, off::SelectorBytes) || !Match(client + off::SelectorCaller, off::SelectorCallerBytes) ||
+        !Match(client + off::ContextSetter, off::ContextSetterBytes) ||
+        !Match(scene + off::SceneContextAccessor, off::SceneContextAccessorBytes) ||
+        !Read(scene + off::SceneViewVtable + off::SceneContextAccessorSlot, accessor) || accessor != scene + off::SceneContextAccessor) {
+        status.store("fullbright view build verification failed", std::memory_order_release); return false;
     }
-    auto* target = reinterpret_cast<void*>(engine + off::Setter);
-    auto* clientTarget = reinterpret_cast<void*>(client + off::ClientSetter);
-    if (MH_CreateHook(target, reinterpret_cast<void*>(&HookSet), reinterpret_cast<void**>(&original)) != MH_OK ||
-        !original || MH_CreateHook(clientTarget, reinterpret_cast<void*>(&HookSetClient), reinterpret_cast<void**>(&originalClient)) != MH_OK ||
-        !originalClient || MH_QueueEnableHook(target) != MH_OK || MH_QueueEnableHook(clientTarget) != MH_OK) {
-        status.store("fullbright hook preparation failed", std::memory_order_release); return false;
+    setInteger = reinterpret_cast<SetFn>(client + off::ContextSetter);
+    auto* target = reinterpret_cast<void*>(client + off::Selector);
+    if (MH_CreateHook(target, reinterpret_cast<void*>(&HookSelect), reinterpret_cast<void**>(&original)) != MH_OK ||
+        !original || MH_QueueEnableHook(target) != MH_OK) {
+        status.store("fullbright view hook preparation failed", std::memory_order_release); return false;
     }
-    status.store("awaiting native fullbright render parameter", std::memory_order_release);
-    if (logger) logger("WORLD_FULLBRIGHT_BUILD_VERIFIED engine SetInt=0x2485A0 caller=0x243420 client SetInt=0x16A9D0 callers=0xE5B0E4/0x799718 key=0xC6767B23 mat_fullbright=1; native render contexts only, no cvar writes");
+    status.store("awaiting native rendering view selection", std::memory_order_release);
+    if (logger) logger("WORLD_FULLBRIGHT_BUILD_VERIFIED revision=2 native view selector; paired ToolsVis descriptor and g_nToolsVisMode=1; native-default mode=0 restoration on current owner, no capability/cvar writes");
     return true;
 }
 void WorldFullbrightActivate() noexcept {
     AcquireSRWLockExclusive(&mutationLock);
-    if (!stopped && original && originalClient) enabled.store(true, std::memory_order_release);
+    if (!stopped && original && setInteger) enabled.store(true, std::memory_order_release);
     ReleaseSRWLockExclusive(&mutationLock);
 }
 void WorldFullbrightStop(const char* reason) noexcept {
@@ -107,11 +167,11 @@ void WorldFullbrightStop(const char* reason) noexcept {
     AcquireSRWLockExclusive(&mutationLock);
     stopped = true;
     enabled.store(false, std::memory_order_release);
-    status.store("fullbright stopped and resident; future contexts use native values", std::memory_order_release);
+    status.store("fullbright stopped and resident; future default views normalize native mode", std::memory_order_release);
     ReleaseSRWLockExclusive(&mutationLock);
     if (logger) {
         char message[384]{};
-        std::snprintf(message, sizeof(message), "WORLD_FULLBRIGHT_STOPPED_RESIDENT reason=%s; parameter writes drained, pending native frames may finish; forwarding hook retained, no physical unload", reason ? reason : "stop");
+        std::snprintf(message, sizeof(message), "WORLD_FULLBRIGHT_STOPPED_RESIDENT reason=%s; admitted writes drained; pending views may finish; forwarding/default normalization callback retained, no physical unload", reason ? reason : "stop");
         logger(message);
     }
 }
@@ -121,20 +181,23 @@ void WorldFullbrightFlushTelemetry() noexcept {
     const auto now = GetTickCount64();
     if (reportTime && now - reportTime < 2000) return;
     reportTime = now;
-    const auto c = calls.load(std::memory_order_relaxed), m = modified.load(std::memory_order_relaxed);
-    if (c == reportedCalls && m == reportedModified) return;
-    reportedCalls = c; reportedModified = m;
-    char message[384]{};
-    std::snprintf(message, sizeof(message), "WORLD_FULLBRIGHT contexts=%llu modified=%llu last_owner=%lu status=%s; callback activity does not prove visible output", c, m, owner.load(std::memory_order_relaxed), WorldFullbrightStatus());
+    const auto c = calls.load(), m = modified.load(), r = restored.load(), x = rejected.load();
+    if (c == reportedCalls && m == reportedModified && r == reportedRestored && x == reportedRejected) return;
+    reportedCalls = c; reportedModified = m; reportedRestored = r; reportedRejected = x;
+    char message[448]{};
+    std::snprintf(message, sizeof(message), "WORLD_FULLBRIGHT revision=2 views=%llu modified=%llu native_default_restores=%llu rejected=%llu last_owner=%lu status=%s; paired view selection does not establish visible output", c, m, r, x, ownerThread.load(), WorldFullbrightStatus());
     logger(message);
 }
 #ifdef CS2_WORLD_FULLBRIGHT_CHECKS
-void WorldFullbrightTestConfigure(std::uintptr_t base, WorldFullbrightTestSetter setter) noexcept {
+void WorldFullbrightTestConfigure(std::uintptr_t clientBase, std::uintptr_t sceneBase,
+    std::uintptr_t normal, std::uintptr_t tools, WorldFullbrightTestSelector selector, WorldFullbrightTestWriter writer) noexcept {
     AcquireSRWLockExclusive(&mutationLock);
-    engine = client = base; original = originalClient = setter; stopped = false;
+    testing = true; client = clientBase; scene = sceneBase; testDefault = normal; testTools = tools;
+    original = selector; setInteger = writer; stopped = false; everApplied.store(false);
     enabled.store(true, std::memory_order_release);
     ReleaseSRWLockExclusive(&mutationLock);
 }
-void WorldFullbrightTestSet(void* context, std::uint32_t key, int value, std::uintptr_t caller) noexcept { Set(context, key, value, caller); }
-void WorldFullbrightTestSetClient(void* context, std::uint32_t key, int value, std::uintptr_t caller) noexcept { Set(context, key, value, caller, true); }
+std::uintptr_t WorldFullbrightTestSelect(void* source, void* owner, void* viewport, std::uintptr_t caller) noexcept {
+    return Select(source, owner, viewport, caller);
+}
 #endif

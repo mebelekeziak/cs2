@@ -9,8 +9,9 @@ const char* WorldFullbrightStatus() noexcept;
 void WorldFullbrightFlushTelemetry() noexcept;
 
 #ifdef CS2_WORLD_FULLBRIGHT_CHECKS
-using WorldFullbrightTestSetter = void (*)(void*, std::uint32_t, int);
-void WorldFullbrightTestConfigure(std::uintptr_t base, WorldFullbrightTestSetter setter) noexcept;
-void WorldFullbrightTestSet(void* context, std::uint32_t key, int value, std::uintptr_t caller) noexcept;
-void WorldFullbrightTestSetClient(void* context, std::uint32_t key, int value, std::uintptr_t caller) noexcept;
+using WorldFullbrightTestSelector = std::uintptr_t (*)(void*, void*, void*);
+using WorldFullbrightTestWriter = void (*)(void*, std::uint32_t, int);
+void WorldFullbrightTestConfigure(std::uintptr_t clientBase, std::uintptr_t sceneBase,
+    std::uintptr_t normal, std::uintptr_t tools, WorldFullbrightTestSelector selector, WorldFullbrightTestWriter writer) noexcept;
+std::uintptr_t WorldFullbrightTestSelect(void* source, void* owner, void* viewport, std::uintptr_t caller) noexcept;
 #endif

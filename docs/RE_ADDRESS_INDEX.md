@@ -6,7 +6,9 @@ Version date: October 22, 2026, 14:13:16. All **36/36** installed-file checks pa
 including jumpbug, indexed spread, native cosmetics, knife animations and the installed skin catalog.
 The October 25 skybox/Fullbright extension adds two component checks, bringing
 the combined bundle to **38**. These are exact-build constants. The user
-confirms custom skyboxes work; Fullbright currently has no visible effect.
+confirms custom skyboxes work; the Fullbright input-only implementation had no
+visible effect. October 26 replaces it with paired native view selection;
+post-repair live appearance remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
 
@@ -25,8 +27,11 @@ New native cosmetics: [skybox offsets](../include/world_skybox_offsets.h),
 Skybox loading adds the installed `filesystem_stdio.dll` dependency; its primary
 table is `0x1B0CA0`, AddSearchPath slot `+0xF8` resolves `0x53BF0` with six native
 arguments. Existing named-resource and KV3 contracts retain their owners.
-Fullbright uses engine setter `0x2485A0` at return `0x243420` and client setter
-`0x16A9D0` at returns `0xE5B0E4`/`0x799718`, key `0xC6767B23`, value `1`.
+Fullbright now hooks client selector `0x1202FE0` at return `0x12090A9`, pairs
+the native ToolsVis descriptor `0x2258060` with key `0x50E7F81D`, value `1`,
+and normalizes native-default views to `0` after use. The scene context accessor
+`0x11CD70` returns owner `+0x5160`; integer collection `+0x110` uses native
+client setter `0x16A9D0`. Earlier cvar-input setter hooks are retired.
 Both features change current rendering inputs and retain stopped code/resources
 until process exit. No persistent Cvar or shared sky-scene mutations are used.
 
