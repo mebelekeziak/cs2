@@ -1,4 +1,4 @@
-"""Verify the installed native Fullbright view selector and context contract.
+"""Verify the installed native Fullbright source recipe and context contract.
 
 File-only: does not launch/open the client or change installed files.
 """
@@ -101,7 +101,80 @@ def verify_selector(args, source, constant, client, client_base):
             "parameter": "g_nToolsVisMode", "key": hex(values["ToolsModeKey"]),
             "enabled_value": 1, "native_default_fallback": 0,
             "scene_sha256": EXPECTED_SCENE, "persistent_context_reset_proved": False,
-            "off_stop_policy": "normalize current native-default view to0 after first override; retain forwarding normalizer"}
+            "status": "historical failed override; retained for investigation only"}
+
+
+def verify_source_recipe(source, constant, client):
+    """Decode the native mat_fullbright=1 producer, not a debug-mode override."""
+    for label, begin, end, digest in [
+        ("complete_source_owner", 0xE599E0, 0xE5B4AB, "3d6b80e81fa915c2bcd531116433b8d3254f3208b78f595ec1ba9489eb8ba5c4"),
+        ("float4_setter", 0x16AE00, 0x16B00D, "74ee1d38ef2bcb7bc24ed18db7724a00b93d24c31a3965b329918e555de10dc9"),
+        ("ambient_source_to_view", 0x1218720, 0x1218AC6, "8ce1d36f6de4d86899de1974eca5af81a97fa212c109e2dadb16674c07e74198"),
+    ]:
+        if hashlib.sha256(client[begin:end]).hexdigest() != digest:
+            raise SystemExit(f"Changed {label} instruction scope")
+    u32 = lambda at: struct.unpack_from("<I", client, at)[0]
+    rip = lambda at, offset, size: at + size + struct.unpack_from("<i", client, at + offset)[0]
+    call = lambda at: rip(at, 1, 5)
+    ambient, direct, indirect = (mode_token(name) for name in
+                                  (b"AmbientColor", b"DirectLighting", b"IndirectLighting"))
+    if (ambient, direct, indirect, mode_token(b"ToolsVisMode")) != (0xFF90C40E, 0x1F900C45, 0xDB409112, 0xC6767B23):
+        raise SystemExit("Native source key name hashes differ")
+    if u32(0xE5AFE4) != ambient or u32(0xE5B08E) != ambient or \
+            u32(0xE5B01C) != direct or u32(0xE5B0AF) != direct or \
+            u32(0xE5B062) != indirect or u32(0xE5B0BC) != indirect:
+        raise SystemExit("Native source recipe/reset keys differ")
+    values = {
+        "SourceRootToIntegers": u32(0xE5B0D6) - u32(0xE5B09B),
+        "SourceFloat4Setter": call(0xE5B09F), "SourceRecipe": 0xE5B080,
+        "SourceReset": 0xE5AFD4, "SourceLightingReset": 0xE5B007,
+        "AmbientKey": ambient, "DirectKey": direct, "IndirectKey": indirect,
+    }
+    for label, value in values.items():
+        if constant(label) != value:
+            raise SystemExit(f"{label}: header differs from independently decoded installed operand")
+    for label, site, size in [("SourceFloat4SetterBytes", values["SourceFloat4Setter"], 27),
+                              ("SourceRecipeBytes", values["SourceRecipe"], 0x4C),
+                              ("SourceResetBytes", values["SourceReset"], 0x28),
+                              ("SourceLightingResetBytes", values["SourceLightingReset"], 0x3C)]:
+        match = re.search(r"\b" + label + r"\[\]\s*\{([^}]+)\}", source)
+        expected = bytes(int(v, 16) for v in re.findall(r"0x([0-9a-fA-F]{2})", match.group(1))) if match else b""
+        if len(expected) != size or client[site:site + size] != expected:
+            raise SystemExit(f"{label}: complete runtime fingerprint differs from installed file")
+    white = rip(0xE5B080, 4, 8)
+    default = rip(0xE5AFD4, 4, 8)
+    if struct.unpack_from("<4f", client, white) != (1., 1., 1., 1.) or \
+            struct.unpack_from("<4f", client, default) != (0., 0., 0., 1.):
+        raise SystemExit("Native fullbright/default ambient float4 constants differ")
+    if client[0xE5B002:0xE5B007] != bytes.fromhex("83e9017479") or \
+            client[0xE5A9D8:0xE5A9DA] != bytes.fromhex("33ff") or \
+            client[0xE5B0A4:0xE5B0A7] != bytes.fromhex("4533c0") or \
+            client[0xE5B0B8:0xE5B0BB] != bytes.fromhex("448bc7"):
+        raise SystemExit("Native fullbright1 branch or zero lighting values differ")
+    if call(0xE5AFF7) != values["SourceFloat4Setter"] or \
+            any(call(at) != constant("ClientSetter") for at in (0xE5B02A, 0xE5B04B, 0xE5B06E, 0xE5B0B3, 0xE5B0C7, 0xE5B0DF)):
+        raise SystemExit("Source reset/recipe setter ABI targets differ")
+    if client[0xE5B022:0xE5B02A] != bytes.fromhex("40387858410f95c0") or \
+            client[0xE5B039:0xE5B041] != bytes.fromhex("40387858410f95c0"):
+        raise SystemExit("Ordinary direct/indirect native cvar initialization differs")
+    # The same stack root is cleared, initialized and destroyed within one
+    # native call. These operands are frozen inside complete_source_owner.
+    if u32(0xE5A4E6) != 0x5B0 or u32(0xE5A4EE) != 0x1F8 or \
+            u32(0xE5A7E9) != 0x5B0 or u32(0xE5B47A) != 0x5B0 or \
+            call(0xE5A7ED) != 0x15AC60 or call(0xE5B47E) != 0x15BE40:
+        raise SystemExit("Source stack context construction/destruction differs")
+    if rip(0x1218755, 4, 8) != 0x1D30A80 or \
+            struct.unpack_from("<4I", client, 0x1D30A80) != (ambient,) * 4 or \
+            u32(0x121882F) != 0x8310AEF1 or call(0x1218836) != values["SourceFloat4Setter"] or \
+            call(0x12092BA) != 0x1218720:
+        raise SystemExit("Native source ambient to view shader context bridge differs")
+    return {"hook": hex(constant("ClientSetter")), "admitted_return": hex(constant("ClientSetterReturn")),
+            "marker_key": "ToolsVisMode / 0xc6767b23", "marker_value": "forward unchanged",
+            "source_root": "current integer collection - 0x110; native stack RBP+0x5b0",
+            "ambient": {"key": hex(ambient), "enabled": [1, 1, 1, 1], "native_reset": [0, 0, 0, 1]},
+            "direct": {"key": hex(direct), "enabled": 0}, "indirect": {"key": hex(indirect), "enabled": 0},
+            "preexisting_keys": True, "native_selector_preserved": True,
+            "disable_stop": "forward native freshly initialized source; no cached view or sticky output normalization"}
 
 
 def main():
@@ -200,13 +273,14 @@ def main():
         expected = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{2})", match.group(1)))
         if not expected or client_image[site:site + len(expected)] != expected:
             raise SystemExit(f"{label}: runtime fingerprint differs from installed file")
+    source_contract = verify_source_recipe(source, constant, client_image)
     selector_contract = verify_selector(args, source, constant, client_image, client_base)
     print(json.dumps({"path": str(path), "sha256": digest, "named_cvar": "mat_fullbright",
                       "wrapper": hex(wrapper), "setter": hex(setter), "caller_return": "0x243420",
                       "client_setter": "0x16a9d0", "client_callers": ["0xe5b0e4", "0x799718"],
                       "client_render_mode_consumer": "0x12035e6 -> 0x12037ad",
-                      "key": hex(key), "override_value": 1, "persistent_cvar_writes": False,
-                      "view_selector_contract": selector_contract, "live_observation": False}, indent=2))
+                      "key": hex(key), "marker_value_forwarded_unchanged": True, "persistent_cvar_writes": False,
+                      "source_recipe_contract": source_contract, "historical_selector_contract": selector_contract, "live_observation": False}, indent=2))
 
 
 if __name__ == "__main__":

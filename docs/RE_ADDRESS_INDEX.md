@@ -7,8 +7,9 @@ including jumpbug, indexed spread, native cosmetics, knife animations and the in
 The October 25 skybox/Fullbright extension adds two component checks, bringing
 the combined bundle to **38**. These are exact-build constants. The user
 confirms custom skyboxes work; the Fullbright input-only implementation had no
-visible effect. October 26 replaces it with paired native view selection;
-post-repair live appearance remains unobserved.
+visible effect, and forced ToolsVis then produced black world geometry.
+October 26 revision 3 uses the complete native ambient/direct/indirect source
+recipe and preserves rendering selection; its live appearance remains unobserved.
 See the [update record](CS2_UPDATE_26144732.md) and [update guide](CS2_UPDATE_GUIDE.md).
 The [previous index](RE_ADDRESS_INDEX_26087496.md) is explicitly historical.
 
@@ -27,11 +28,14 @@ New native cosmetics: [skybox offsets](../include/world_skybox_offsets.h),
 Skybox loading adds the installed `filesystem_stdio.dll` dependency; its primary
 table is `0x1B0CA0`, AddSearchPath slot `+0xF8` resolves `0x53BF0` with six native
 arguments. Existing named-resource and KV3 contracts retain their owners.
-Fullbright now hooks client selector `0x1202FE0` at return `0x12090A9`, pairs
-the native ToolsVis descriptor `0x2258060` with key `0x50E7F81D`, value `1`,
-and normalizes native-default views to `0` after use. The scene context accessor
-`0x11CD70` returns owner `+0x5160`; integer collection `+0x110` uses native
-client setter `0x16A9D0`. Earlier cvar-input setter hooks are retired.
+Fullbright hooks client SetInt `0x16A9D0` only at return `0xE5B0E4` with
+marker key `0xC6767B23`. The current stack source root is integer receiver
+minus `0x110`. Native float4 setter `0x16AE00` writes AmbientColor
+`0xFF90C40E` = `(1,1,1,1)`; the integer setter writes DirectLighting
+`0x1F900C45` = `0` and IndirectLighting `0xDB409112` = `0`. The native marker
+value and renderer selector remain unchanged. Each native producer visit
+resets these source keys before the callback. Historical ToolsVis selector
+constants remain research evidence only.
 Both features change current rendering inputs and retain stopped code/resources
 until process exit. No persistent Cvar or shared sky-scene mutations are used.
 

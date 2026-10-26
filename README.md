@@ -2,38 +2,38 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
-## Fullbright rendering-path repair — October 26, 2026
+## Fullbright black-world repair — October 26, 2026
 
 The user confirms custom skyboxes work; that checkpoint is **21cde09**.
-The original Fullbright toggle changed native inputs thousands of times without
-a visible effect. CS2's capability-filtered consumer discarded those inputs,
-and ordinary material variants do not consume the ToolsVis lighting integer.
+The first Fullbright implementation had no visible effect. Revision 2
+(**40c1e16**) forced ToolsVis rendering and produced black world geometry in
+the user's trial, with the sky and HUD still visible.
 
-**Lighting → Fullbright** now pairs CS2's existing **ToolsVis** material mode
-with native lighting mode **1**, preserving textures with native fixed lighting.
-Both are selected together on the current view's owner callback. The original
-selector runs first; specialized native views retain their own modes. Native
-capability caches, cvars and installed files are not changed. Settings/configs
-and **Reset lighting** remain unchanged.
+**Lighting → Fullbright** now applies the installed native `mat_fullbright=1`
+lighting recipe: white ambient light, DirectLighting=0 and IndirectLighting=0.
+It updates the current producer's local source through the verified native
+float4 and integer setters. The renderer selector and its original marker
+value remain unchanged. The toggle remains independent of the other lighting
+controls, saves through **Configs**, and clears through **Reset lighting**.
 
-Views may reuse their parameter storage. After Fullbright has been used,
-turning it off restores mode **0** on subsequent native-default views; native
-ToolsVis and specialized modes retain their own values. Cooperative Stop drains
-admitted writes and retains the forwarding/default-restoration callback until
-process exit. Pending views may finish. No scene pointer is cached, and stopped
-and resident is not physically unloaded.
+Every native producer visit initializes these lighting inputs before the
+callback. Turning Fullbright off therefore forwards fresh native values on
+subsequent visits. No source or scene pointer is retained. Cooperative Stop
+drains admitted source writes; pending render tasks may finish. Forwarding
+callbacks remain resident until process exit. Stopped and resident is not
+physically unloaded.
 
 Restart CS2 normally, use **Load Overlay.cmd**, then compare Fullbright on/off
-in the existing offline/private environment. This repair is implemented and
-tested against the installed native contracts; its post-repair in-game
-appearance has not yet been observed. See the
-[native and shader evidence](tools/CS2_FULLBRIGHT_EVIDENCE.md).
+in the existing offline/private environment. The revised source recipe is
+implemented and checked against the installed native contracts; its repaired
+in-game appearance has not yet been observed. See the
+[native evidence](tools/CS2_FULLBRIGHT_EVIDENCE.md).
 
-Both x64 Release variants build without project compiler warnings and pass
-**75/75 CTest suites each**. The replacement Fullbright fixture passes **57
-checks**, covering reused contexts, native modes, failed writes and stop
-barriers. All **38/38 installed-file checks** pass; all 16 altered Fullbright
-headers reject. Both DLLs retain zero static TLS and delay imports.
+Both x64 Release variants build and pass **75/75 CTest suites each**. The
+replacement Fullbright fixture passes **54 checks**, covering source ownership,
+ABI receivers, exact native marker preservation, disable/reset, writer failure
+and cooperative stop. All **38/38 installed-file checks** pass; all 19 altered
+Fullbright headers reject. Both DLLs retain zero static TLS and delay imports.
 
 ## Custom skyboxes and Fullbright — October 25, 2026
 
@@ -62,7 +62,7 @@ controls remain independent. Replacement applies to the visible 2D sky;
 map-authored 3D skyline geometry and baked lighting remain separate.
 
 The initial **Lighting → Fullbright** implementation had no visible effect in
-the user's trial; the October 26 repair above replaces that input-only path.
+the user's trial; the October 26 repair above replaces the incomplete lighting override.
 Its toggle remains independent of the other lighting controls. Both new
 options save and load through **Configs**; older presets leave them disabled.
 
@@ -107,7 +107,7 @@ above come from the user's offline/private comparison.
 
 Both x64 Release variants build without project compiler warnings and pass
 **75/75 CTest suites each**. All **38/38 installed-file component checks** pass.
-Both payloads retain zero static TLS and delay-import directories. The native
+Both payloads retain zero static TLS and delay-import directories.
 The original Fullbright fixture passed **1,092 checks** and the repaired sky suite passes
 **202 checks**, including zero-reference creation and strict draw ownership.
 Software D3D11 World/Lighting menu
