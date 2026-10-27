@@ -2,6 +2,86 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Grenade trajectory prediction — October 26, 2026
+
+Open **Visuals → Grenades → Grenade prediction** for a preview while a local
+grenade is primed, then retain its full forecast through the actual throw.
+Paths show the expected flight,
+impact/bounce markers and a final circle containing the grenade's icon. HE,
+flash, smoke, decoy, Molotov and incendiary have distinct icons. **Enemy thrown
+grenades** independently predicts already spawned enemy projectiles; holding
+or priming an enemy grenade never creates a preview. Both switches start off.
+Each has its own RGBA color; trajectory width is shared. All choices save in
+**Configs**, and **Reset grenades** restores defaults.
+
+The client uses the installed native throw query for launch position, velocity
+and strength, then performs bounded swept-hull simulation on the native frame
+owner. Enemy prediction starts at the copied projectile position and native
+velocity query, preserving elapsed spawn age. World-group clock bits, including
+`0xFFFFFFFF`, are passed unchanged to the native clock. Native thrower/owner
+association and full entity handles distinguish enemies from local or teammate projectiles. Drawing uses
+copied values; player ESP can remain disabled. Missing sources, death, changed
+local identities, stale publication, disabled controls and cooperative stop
+discard predictions. Each thrown path is retained by its exact projectile
+handle, even after switching weapons or passing its estimated fuse time. It
+clears on actual detonation, smoke deployment or projectile retirement at fire
+ignition. It does not wait for smoke or fire effects to finish. An incomplete
+or failed simulation never displays a landing icon.
+
+This is an estimate against current client collision geometry. Future player
+movement, breakables, special dynamic collision callbacks and exact server
+think scheduling can change the result. Timed grenades show their detonation
+point, which can be airborne; smoke and decoy show their predicted rest point.
+The client detonation-time field has no verified producer and is not used as
+a server deadline.
+Native contracts and limitations are recorded in
+[grenade prediction evidence](tools/CS2_GRENADE_PREDICTION_EVIDENCE.md).
+
+Build and launch commands are unchanged: restart CS2 normally and use
+**Load Overlay.cmd** for an offline/private comparison. No live client/server
+trial was performed by the agent for this addition. The user confirms that
+local prediction looks good and reports intermittent retention after later
+throws. Revision 3 repairs that after-throw handoff; its live result still
+needs an offline/private comparison. Stopped callbacks remain resident until
+normal process exit; stopped and resident is not physically unloaded.
+
+Software D3D11 trajectory/icon preview without launching CS2:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\grenade-prediction-preview.bmp 26 0 1000 600
+```
+
+The follow-up repairs two native acquisition defects: world-group IDs were
+incorrectly treated as signed screen slots, and absolute velocity was read
+without the native cache refresh. Complete projectile discovery now runs
+independently of tracing time, and unfinished predictions share the tracing
+budget fairly. Completed paths need no repeated simulation.
+`GRENADE_PREDICTION revision=3` logs acquisition rejection/defer counts every two seconds while
+active, so a remaining enemy-input failure can be distinguished from rendering.
+Storage is bounded to 64 projectiles with at most 4,096 copied nodes each.
+
+**Repeated-throw retention repair (revision 3):** every distinct native throw
+occurrence rearms the saved path, including quick throws on the same weapon
+handle without a sampled pin-held frame. Committed forecasts stop being
+rewritten during release. Handoff uses full projectile identity and its first
+observed frame, before optional scene/spawn/clock inputs; it does not expire
+merely because discovery takes over a second. Identity receipt is recorded
+before ownership becomes available, so an older grenade cannot take a newer
+throw's saved path. Clock adjustments do not erase an otherwise live retained
+trajectory. The existing trajectory calculation is unchanged. Each completed
+handoff produces a `GRENADE_PATH_TRANSFER revision=3` record. The six-millisecond
+trace budget now uses a precise performance-counter clock; it no longer jumps
+at the coarser tick-count clock boundaries.
+
+Both x64 Release builds pass **79/79 CTest suites each**. Prediction fixtures
+pass **296 checks** (45 simulation, 63 identity/retention, 159 runtime lifecycle,
+29 drawing), including twenty consecutive throws without resetting the runtime.
+The runtime fixture passes five consecutive runs with a deterministic tracing
+clock. All **39/39** installed-file checks pass; the existing **59** altered-header
+rejections still apply. Both DLLs retain zero static TLS and delay imports.
+These checks verify the implementation; the revised in-game retention still
+needs the user's offline/private comparison.
+
 ## Fullbright black-world repair — October 26, 2026
 
 The user confirms custom skyboxes work; that checkpoint is **21cde09**.

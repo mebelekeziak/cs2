@@ -861,6 +861,19 @@ void DrawPublicMenu() {
                     grenadesChanged |= slider("Aura width", "##GrenadeAuraWidth", grenades.auraWidth, 1, 6, "%.1f px");
                     ImGui::EndDisabled();
                     ImGui::TextWrapped("Borders appear after smoke deploys or a molotov ignites.");
+                    ImGui::Separator();
+                    grenadesChanged |= FeatureCheckbox("Grenade prediction", grenades.prediction);
+                    ImGui::BeginDisabled(!grenades.prediction);
+                    grenadesChanged |= color("Prediction color", "##GrenadePredictionColor", grenades.predictionColor);
+                    ImGui::EndDisabled();
+                    grenadesChanged |= FeatureCheckbox("Enemy thrown grenades", grenades.enemyPrediction);
+                    ImGui::BeginDisabled(!grenades.enemyPrediction);
+                    grenadesChanged |= color("Enemy prediction color", "##EnemyGrenadePredictionColor", grenades.enemyPredictionColor);
+                    ImGui::EndDisabled();
+                    ImGui::BeginDisabled(!grenades.prediction && !grenades.enemyPrediction);
+                    grenadesChanged |= slider("Trajectory width", "##GrenadePredictionWidth", grenades.predictionWidth, 1, 6, "%.1f px");
+                    ImGui::EndDisabled();
+                    ImGui::TextWrapped("Shows trajectory, bounces and the grenade icon. Enemy paths appear after throwing. Thrown paths stay until detonation or deployment.");
                     if (grenadesChanged) GrenadeSetSettings(grenades);
                     if (ImGui::Button("Reset grenades", { -1, 0 })) GrenadeResetSettings();
                 }

@@ -16,9 +16,15 @@ GrenadeSettings GrenadeSanitizeSettings(const GrenadeSettings& settings) noexcep
             ? std::clamp(result.smokeColor[channel], 0.0f, 1.0f) : defaults.smokeColor[channel];
         result.molotovColor[channel] = std::isfinite(result.molotovColor[channel])
             ? std::clamp(result.molotovColor[channel], 0.0f, 1.0f) : defaults.molotovColor[channel];
+        result.predictionColor[channel] = std::isfinite(result.predictionColor[channel])
+            ? std::clamp(result.predictionColor[channel], 0.0f, 1.0f) : defaults.predictionColor[channel];
+        result.enemyPredictionColor[channel] = std::isfinite(result.enemyPredictionColor[channel])
+            ? std::clamp(result.enemyPredictionColor[channel], 0.0f, 1.0f) : defaults.enemyPredictionColor[channel];
     }
     result.auraWidth = std::isfinite(result.auraWidth)
         ? std::clamp(result.auraWidth, 1.0f, 6.0f) : defaults.auraWidth;
+    result.predictionWidth = std::isfinite(result.predictionWidth)
+        ? std::clamp(result.predictionWidth, 1.0f, 6.0f) : defaults.predictionWidth;
     return result;
 }
 

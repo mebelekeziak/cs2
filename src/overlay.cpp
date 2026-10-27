@@ -24,6 +24,7 @@
 #include "esp_draw.h"
 #include "player_reader.h"
 #include "grenade_visuals.h"
+#include "grenade_prediction_runtime.h"
 #include "grenade_effects.h"
 #include "movement.h"
 #include "silent_aim.h"
@@ -290,6 +291,7 @@ void CleanupOnRenderThread(const char* reason) {
     SkinChangerStop(reason);
     GrenadeEffectsStop();
     GrenadeVisualsStop();
+    GrenadePredictionStop();
     WorldSkyStop(reason);
     WorldFullbrightStop(reason);
     WorldMaterialsStop(reason);
@@ -580,6 +582,7 @@ void DrawFrame(IDXGISwapChain* chain) {
     const auto espStats = EspDraw(players, io.DisplaySize.x, io.DisplaySize.y);
     const int espVertices = espList->VtxBuffer.Size - beforeEsp;
     GrenadeVisualsDraw(players.worldToClip, players.matrixValid, io.DisplaySize.x, io.DisplaySize.y);
+    GrenadePredictionRender(players.worldToClip, players.matrixValid, io.DisplaySize.x, io.DisplaySize.y);
     if (foreground) {
         const auto tracerNow = GetTickCount64();
         BulletTracerDraw(BulletTracerCapture(tracerNow), players, io.DisplaySize.x, io.DisplaySize.y,
@@ -619,6 +622,7 @@ void DrawFrame(IDXGISwapChain* chain) {
             aimSettings.removeSpread ? " (bypassed by Remove spread)" : "");
         ImGui::Text("Grenade removal: %s", GrenadeEffectsStatus());
         ImGui::Text("Grenade borders: %s", GrenadeVisualsStatus());
+        ImGui::Text("Grenade prediction: %s", GrenadePredictionStatus());
         ImGui::Text("Sky: %s", WorldSkyStatus());
         ImGui::Text("Fullbright: %s", WorldFullbrightStatus());
         ImGui::Text("World surfaces: %s", WorldMaterialsStatus());
@@ -738,6 +742,7 @@ HRESULT STDMETHODCALLTYPE HookPresent(IDXGISwapChain* chain, UINT syncInterval, 
             SkinChangerStop("stopped before selecting render chain");
             GrenadeEffectsStop();
             GrenadeVisualsStop();
+        GrenadePredictionStop();
             WorldSkyStop("stopped before selecting render chain");
             WorldFullbrightStop("stopped before selecting render chain");
             WorldMaterialsStop("stopped before selecting render chain");
@@ -845,6 +850,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     const bool skinsPrepared = SkinChangerPrepare(&EspLog);
     const bool grenadeEffectsPrepared = GrenadeEffectsPrepare(&EspLog);
     const bool grenadeVisualsPrepared = GrenadeVisualsPrepare(&EspLog);
+    const bool grenadePredictionPrepared = GrenadePredictionPrepare(&EspLog);
     const bool skyPrepared = WorldSkyPrepare(&EspLog);
     const bool fullbrightPrepared = WorldFullbrightPrepare(&EspLog);
     const bool materialsPrepared = WorldMaterialsPrepare(&EspLog);
@@ -875,6 +881,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
         SkinChangerStop("partial hook activation failure");
         GrenadeEffectsStop();
         GrenadeVisualsStop();
+        GrenadePredictionStop();
         WorldSkyStop("partial hook activation failure");
         WorldFullbrightStop("partial hook activation failure");
         WorldMaterialsStop("partial hook activation failure");
@@ -903,6 +910,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayStart(const wchar_t* absolu
     if (skinsPrepared) SkinChangerActivate();
     if (grenadeEffectsPrepared) GrenadeEffectsActivate();
     if (grenadeVisualsPrepared) GrenadeVisualsActivate();
+    if (grenadePredictionPrepared) GrenadePredictionActivate();
     if (skyPrepared) WorldSkyActivate();
     if (fullbrightPrepared) WorldFullbrightActivate();
     if (materialsPrepared) WorldMaterialsActivate();
@@ -933,6 +941,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI OverlayRequestStop(void*) {
     SkinChangerStop("explicit overlay stop request");
     GrenadeEffectsStop();
     GrenadeVisualsStop();
+    GrenadePredictionStop();
     WorldSkyStop("explicit overlay stop request");
     WorldFullbrightStop("explicit overlay stop request");
     WorldMaterialsStop("explicit overlay stop request");

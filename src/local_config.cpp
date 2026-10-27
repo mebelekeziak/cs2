@@ -100,6 +100,8 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(grenades, removeSmoke); FIELD(grenades, removeFlash);
     FIELD(grenades, smokeAura); FIELD(grenades, molotovAura);
     COLOR(grenades, smokeColor); COLOR(grenades, molotovColor); FIELD(grenades, auraWidth);
+    FIELD(grenades, prediction); FIELD(grenades, enemyPrediction);
+    COLOR(grenades, predictionColor); COLOR(grenades, enemyPredictionColor); FIELD(grenades, predictionWidth);
     FIELD(skins, enabled);
     const auto itemFields = [&](const std::string& prefix, SkinItemSettings& item) {
         visit(prefix + ".enabled", item.enabled);

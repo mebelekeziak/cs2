@@ -402,6 +402,34 @@ client.dll, engine2.dll, host.dll, resourcesystem.dll and tier0.dll; stage-8 bar
 | `BlockingLoad` | `0x16B20` |
 | `PurgeResourceName` | `0x53D60` |
 
+## Grenade prediction
+
+Header: [grenade_prediction_offsets.h](../include/grenade_prediction_offsets.h);
+verifier: [inspect_grenade_prediction.py](../tools/inspect_grenade_prediction.py);
+[evidence](../tools/CS2_GRENADE_PREDICTION_EVIDENCE.md). Client frame owner,
+native launch query and current projectile copies; server files establish the
+physics recipe without starting a server. Shared shape/trace primitives retain
+their existing third-person verifier. All addresses below are client RVAs.
+
+| Symbol | Current value |
+| --- | --- |
+| `Launch` | `0x7C7940` |
+| `GetAbsVelocity` | `0x219AC0` |
+| `IdentityWorldGroup` | `0x38` |
+| `Held / PinPulled / ThrowTime` | `0x1F22 / 0x1F23 / 0x1F28` |
+| `ProjectileSpawnTime` | `0x12E8` |
+| `Thrower / Owner` | `0x1290 / 0x520` |
+| `AbsVelocity / ActualGravityScale / Elasticity` | `0x3F8 / 0x564 / 0x53C` |
+| `MolotovFuse / MolotovMaxSlope` | `0x24C9180 / 0x24C9190` |
+
+Flight uses a two-unit hull, collision layer 16 and mask `0x200003001`.
+Launch-origin probing uses the native query's separate layer-4 / 2.02-unit
+recipe. No client detonation-time producer is established; prediction uses
+kind timers and the native spawn clock. Pass world-group bits unchanged,
+including `0xFFFFFFFF`; refresh absolute velocity through the native query.
+Held enemies never provide input. Completed paths persist until actual
+detonation/deployment or full-handle retirement, independently of trace budget.
+
 ## Grenade area snapshots
 
 Header: [grenade_area_offsets.h](../include/grenade_area_offsets.h); verifier: [inspect_grenade_areas.py](../tools/inspect_grenade_areas.py); [evidence](../tools/CS2_GRENADE_AREAS_EVIDENCE.md).

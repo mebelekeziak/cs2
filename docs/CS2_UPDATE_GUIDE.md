@@ -26,7 +26,7 @@ python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Cou
 ```
 
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all thirty-eight frozen verifiers independently, so
+rewrite offsets. It runs all thirty-nine frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -36,10 +36,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Thirty-six component JSON files: exact command, exit code, stdout and stderr.
+- Thirty-nine component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all thirty-eight static checks passed; **1** means one or more
+Exit code **0** means all thirty-nine static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
@@ -121,6 +121,7 @@ listed below; the combined runner supplies the correct installation arguments.
 | Native client shot-construction observer | [inspect_aim_fire_observer.py](../tools/inspect_aim_fire_observer.py) | [observer evidence](../tools/CS2_AIM_FIRE_OBSERVER_EVIDENCE.md) |
 | Native penetration | [inspect_autowall.py](../tools/inspect_autowall.py) | [autowall evidence](../tools/CS2_AUTOWALL_EVIDENCE.md) |
 | Smoke/inferno areas | [inspect_grenade_areas.py](../tools/inspect_grenade_areas.py) | [area evidence](../tools/CS2_GRENADE_AREAS_EVIDENCE.md) |
+| Grenade launch/projectile prediction | [inspect_grenade_prediction.py](../tools/inspect_grenade_prediction.py) | [prediction evidence](../tools/CS2_GRENADE_PREDICTION_EVIDENCE.md) |
 | Smoke/flash effects | [inspect_grenade_effects.py](../tools/inspect_grenade_effects.py) | [effect evidence](../tools/CS2_GRENADE_EFFECTS_EVIDENCE.md) |
 | Scope overlay | [inspect_scope_overlay.py](../tools/inspect_scope_overlay.py) | [scope evidence](../tools/CS2_SCOPE_OVERLAY_EVIDENCE.md) |
 | Viewmodel offsets/base and scoped FOV | [inspect_viewmodel.py](../tools/inspect_viewmodel.py) | [viewmodel evidence](../tools/CS2_VIEWMODEL_EVIDENCE.md) |
@@ -174,7 +175,7 @@ ctest --test-dir build-diagnostic -C Release --output-on-failure
 ```
 
 For first-time configuration, see the [README build instructions](../README.md).
-The current baseline has 57 CTest suites per variant. Run the two build-tree
+The current baseline has 79 CTest suites per variant. Run the two build-tree
 CTest commands sequentially because local configuration fixtures share paths. Passing these tests does
 not certify a new binary or a successful hop/rendered player.
 

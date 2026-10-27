@@ -27,6 +27,7 @@ add_library(cs2_overlay SHARED src/local_config.cpp src/overlay.cpp src/player_r
   src/bullet_tracers.cpp src/bullet_tracer_draw.cpp
   src/aim_visualization.cpp src/aim_visualization_draw.cpp
   src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_visuals.cpp src/grenade_effects.cpp
+  src/grenade_prediction.cpp src/grenade_prediction_draw.cpp src/grenade_prediction_runtime.cpp src/grenade_prediction_tracker.cpp
   src/player_chams_settings.cpp src/player_chams.cpp src/player_chams_pvs.asm src/player_chams_material.cpp src/client_frame.cpp
   src/aim_console.cpp src/console_control.cpp src/console_control_state.cpp src/aim_hitchance.cpp src/aim_weapon.cpp src/aim_shoot_origin.cpp src/aim_occlusion.cpp src/aim_damage.cpp src/aim_autowall.cpp
   src/aim_spread.cpp src/aim_spread_math.cpp src/aim_spread_search.cpp src/aim_native_hitchance.cpp src/aim_fire_observer.cpp
@@ -149,6 +150,27 @@ if(BUILD_TESTING)
   target_compile_definitions(scoped_crosshair_draw_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_options(scoped_crosshair_draw_checks PRIVATE /W4 /Zc:threadSafeInit-)
   add_test(NAME scoped_crosshair_draw_checks COMMAND scoped_crosshair_draw_checks)
+  add_executable(grenade_prediction_checks tests/grenade_prediction_checks.cpp src/grenade_prediction.cpp)
+  target_include_directories(grenade_prediction_checks PRIVATE include)
+  target_compile_options(grenade_prediction_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME grenade_prediction_checks COMMAND grenade_prediction_checks)
+  add_executable(grenade_prediction_tracker_checks tests/grenade_prediction_tracker_checks.cpp src/grenade_prediction_tracker.cpp)
+  target_include_directories(grenade_prediction_tracker_checks PRIVATE include)
+  target_compile_options(grenade_prediction_tracker_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME grenade_prediction_tracker_checks COMMAND grenade_prediction_tracker_checks)
+  add_executable(grenade_prediction_runtime_checks tests/grenade_prediction_runtime_checks.cpp
+    src/grenade_prediction_runtime.cpp src/grenade_prediction.cpp src/grenade_settings.cpp src/grenade_prediction_tracker.cpp)
+  target_include_directories(grenade_prediction_runtime_checks PRIVATE include)
+  target_compile_definitions(grenade_prediction_runtime_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX CS2_GRENADE_PREDICTION_CHECKS)
+  target_compile_options(grenade_prediction_runtime_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME grenade_prediction_runtime_checks COMMAND grenade_prediction_runtime_checks)
+  add_executable(grenade_prediction_draw_checks tests/grenade_prediction_draw_checks.cpp
+    src/grenade_prediction_draw.cpp src/grenade_draw.cpp src/grenade_settings.cpp)
+  target_include_directories(grenade_prediction_draw_checks PRIVATE include)
+  target_link_libraries(grenade_prediction_draw_checks PRIVATE imgui_dx11)
+  target_compile_definitions(grenade_prediction_draw_checks PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(grenade_prediction_draw_checks PRIVATE /W4 /Zc:threadSafeInit-)
+  add_test(NAME grenade_prediction_draw_checks COMMAND grenade_prediction_draw_checks)
   add_executable(grenade_draw_checks tests/grenade_draw_checks.cpp src/grenade_draw.cpp src/grenade_settings.cpp)
   target_include_directories(grenade_draw_checks PRIVATE include)
   target_link_libraries(grenade_draw_checks PRIVATE imgui_dx11)
@@ -466,7 +488,7 @@ if(CS2_BUILD_UI_PREVIEW)
   target_sources(public_menu_preview PRIVATE src/model_swap_settings.cpp src/model_catalog.cpp src/model_resource_validation.cpp)
   target_sources(public_menu_preview PRIVATE src/scoped_crosshair_draw.cpp)
   target_sources(public_menu_preview PRIVATE src/player_chams_settings.cpp)
-  target_sources(public_menu_preview PRIVATE src/grenade_settings.cpp src/grenade_draw.cpp)
+  target_sources(public_menu_preview PRIVATE src/grenade_settings.cpp src/grenade_draw.cpp src/grenade_prediction_draw.cpp)
   target_include_directories(public_menu_preview PRIVATE include)
   target_link_libraries(public_menu_preview PRIVATE imgui_dx11 user32)
   target_compile_definitions(public_menu_preview PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE CS2_WORKSPACE_ROOT=L"${CMAKE_SOURCE_DIR}")

@@ -26,6 +26,7 @@
 #include "player_chams_settings.h"
 #include "grenade_settings.h"
 #include "grenade_draw.h"
+#include "grenade_prediction_draw.h"
 #include "model_catalog.h"
 #include "scoped_crosshair_draw.h"
 #include <cstdio>
@@ -34,6 +35,7 @@
 #include <cstdint>
 #include <fstream>
 #include <array>
+#include <algorithm>
 
 using Microsoft::WRL::ComPtr;
 
@@ -81,14 +83,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls; 25 shows bullet tracers.\n");
-        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu, 19=T knife, 20=CT knife, 21=T weapons, 22=CT gloves, 23=CT knife details, 24=Viewmodel controls, 25=Bullet tracers] [scroll pixels] [width height]\n");
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls; 25 shows bullet tracers; 26 draws synthetic grenade trajectories.\n");
+        std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu, 19=T knife, 20=CT knife, 21=T weapons, 22=CT gloves, 23=CT knife details, 24=Viewmodel controls, 25=Bullet tracers, 26=Grenade trajectory drawing] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 25 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 25 (24=Viewmodel controls, 25=Bullet tracers).\n");
+    if (selectedTab < 0 || selectedTab > 26 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 26 (24=Viewmodel controls, 25=Bullet tracers, 26=Grenade trajectories).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -150,7 +152,11 @@ int wmain(int argc, wchar_t** argv) {
     if (selectedTab == 7) ZoomSetSettings({true, 0, 150, 50, true});
     if (selectedTab == 24) ViewmodelSetSettings({true, 2, -1, 1, 90});
     if (selectedTab == 25) BulletTracerSetSettings({true, BulletTracerMaterial::Plasma, {.3f, .75f, 1, 1}, true, .75f, 2.5f, 3, true, true});
-    if (selectedTab == 15) GrenadeSetSettings({true, true, true, true});
+    if (selectedTab == 15) {
+        GrenadeSettings settings{true, true, true, true};
+        settings.prediction = settings.enemyPrediction = true;
+        GrenadeSetSettings(settings);
+    }
     if (selectedTab >= 19 && selectedTab <= 23) {
         SkinSettings skins;
         skins.enabled = true;
@@ -224,6 +230,55 @@ int wmain(int argc, wchar_t** argv) {
             }
             for (const auto& center : centers) points.points[points.count++] = {center,2};
             AimVisualizationDraw(points, players, io.DisplaySize.x, io.DisplaySize.y, {true,{.3f,.85f,1,1}});
+        }
+        else if (selectedTab == 26) {
+            // Copied schematic data through the production trajectory renderer.
+            // No simulation, native source or game process is used by this mode.
+            auto* draw = ImGui::GetBackgroundDrawList();
+            draw->AddText({24, 18}, IM_COL32(225, 230, 240, 255), "GRENADE PREDICTION / SYNTHETIC DRAW PREVIEW");
+            draw->AddText({24, 42}, IM_COL32(64, 230, 204, 255), "Teal: local prepared throw");
+            draw->AddText({24, 60}, IM_COL32(255, 90, 38, 255), "Orange: enemy after throw");
+            const int columns = width < 500 ? 1 : 2;
+            const int rows = 6 / columns;
+            const float cellWidth = (io.DisplaySize.x - 32) / static_cast<float>(columns);
+            const float cellHeight = std::max(20.0f, (io.DisplaySize.y - 116) / static_cast<float>(rows));
+            constexpr const char* names[]{"HE", "Flash", "Smoke", "Decoy", "Molotov", "Incendiary"};
+            std::array<GrenadePredictionVisual, 6> paths;
+            for (int i = 0; i < 6; ++i) {
+                const float left = 16 + (i % columns) * cellWidth;
+                const float top = 88 + (i / columns) * cellHeight;
+                const float baseline = top + cellHeight - 33;
+                const float start = left + 18, distance = std::max(40.0f, cellWidth - 62);
+                auto& visual = paths[static_cast<std::size_t>(i)];
+                visual.enemy = (i & 1) != 0;
+                visual.path.kind = static_cast<GrenadeKind>(i);
+                visual.path.end = i == 2 || i == 3 ? GrenadeEnd::Settled : GrenadeEnd::Detonated;
+                draw->AddRect({left + 3, top}, {left + cellWidth - 3, top + cellHeight - 7}, IM_COL32(38, 47, 59, 255), 5);
+                draw->AddText({left + 13, top + 9}, IM_COL32(220, 225, 235, 255), names[i]);
+                draw->AddText({left + 13, top + 26}, IM_COL32(125, 143, 160, 255), visual.enemy ? "Enemy / after throw" : "Local / prepared throw");
+                draw->AddLine({start, baseline}, {start + distance + 18, baseline}, IM_COL32(47, 57, 69, 255));
+                const float arcLengths[]{.55f, .28f, .17f};
+                const float arcHeights[]{std::max(8.0f, cellHeight - 100), 18, 7};
+                float x = start;
+                for (int arc = 0; arc < 3; ++arc) {
+                    constexpr int steps = 16;
+                    for (int n = arc ? 1 : 0; n <= steps; ++n) {
+                        const float t = static_cast<float>(n) / steps;
+                        const EspVec3 position{x + distance * arcLengths[arc] * t, baseline - 4 * arcHeights[arc] * t * (1 - t), 0};
+                        visual.path.nodes.push_back({position, static_cast<float>(arc) + t, n == steps && arc != 2});
+                    }
+                    x += distance * arcLengths[arc];
+                }
+                visual.path.finalPosition = {start + distance, baseline, 0};
+                visual.path.finalAge = 3;
+                draw->AddCircleFilled({start, baseline}, 3, IM_COL32(160, 174, 190, 255), 12);
+            }
+            EspMatrix4x4 matrix{};
+            matrix.m[0][0] = 2 / io.DisplaySize.x; matrix.m[0][3] = -1;
+            matrix.m[1][1] = -2 / io.DisplaySize.y; matrix.m[1][3] = 1; matrix.m[3][3] = 1;
+            GrenadeSettings settings; settings.prediction = settings.enemyPrediction = true;
+            GrenadePredictionDraw(paths, matrix, io.DisplaySize.x, io.DisplaySize.y, settings);
+            draw->AddText({24, io.DisplaySize.y - 20}, IM_COL32(125, 143, 160, 255), "Schematic copied data: verifies drawing only.");
         }
         else if (selectedTab == 16) {
             // Synthetic copied footprints, rendered by the production aura path.

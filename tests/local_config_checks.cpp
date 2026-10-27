@@ -94,6 +94,13 @@ int main() {
     invalidGrenades.smokeColor[2] = std::numeric_limits<float>::quiet_NaN();
     invalidGrenades.molotovColor[3] = std::numeric_limits<float>::infinity();
     invalidGrenades.auraWidth = 99;
+    invalidGrenades.prediction = true;
+    invalidGrenades.enemyPrediction = true;
+    invalidGrenades.predictionColor[0] = -2;
+    invalidGrenades.predictionColor[1] = std::numeric_limits<float>::quiet_NaN();
+    invalidGrenades.enemyPredictionColor[2] = 8;
+    invalidGrenades.enemyPredictionColor[3] = std::numeric_limits<float>::infinity();
+    invalidGrenades.predictionWidth = 99;
     GrenadeSetSettings(invalidGrenades);
     const auto boundedGrenades = GrenadeGetSettings();
     Expect(boundedGrenades.removeSmoke && boundedGrenades.removeFlash && boundedGrenades.smokeAura && boundedGrenades.molotovAura &&
@@ -101,10 +108,18 @@ int main() {
         boundedGrenades.smokeColor[2] == grenadeDefaults.smokeColor[2] &&
         boundedGrenades.molotovColor[3] == grenadeDefaults.molotovColor[3] && boundedGrenades.auraWidth == 6,
         "grenade settings clamp RGBA and width while preserving independent toggles");
+    Expect(boundedGrenades.prediction && boundedGrenades.enemyPrediction &&
+        boundedGrenades.predictionColor[0] == 0 && boundedGrenades.predictionColor[1] == grenadeDefaults.predictionColor[1] &&
+        boundedGrenades.enemyPredictionColor[2] == 1 && boundedGrenades.enemyPredictionColor[3] == grenadeDefaults.enemyPredictionColor[3] &&
+        boundedGrenades.predictionWidth == 6, "grenade prediction sanitizes independent toggles, colors and width");
     invalidGrenades.auraWidth = std::numeric_limits<float>::quiet_NaN();
+    invalidGrenades.predictionWidth = std::numeric_limits<float>::quiet_NaN();
     Expect(GrenadeSanitizeSettings(invalidGrenades).auraWidth == 2 &&
         GrenadeSanitizeSettings(GrenadeSettings{.auraWidth = -1}).auraWidth == 1,
         "grenade width defaults for nonfinite input and clamps to one pixel");
+    Expect(GrenadeSanitizeSettings(invalidGrenades).predictionWidth == 2 &&
+        GrenadeSanitizeSettings(GrenadeSettings{.predictionWidth = -1}).predictionWidth == 1,
+        "prediction width defaults for nonfinite input and clamps to one pixel");
     GrenadeResetSettings();
     Expect(GrenadeGetSettings() == grenadeDefaults, "grenade reset restores all toggles, colors and width");
     const PlayerChamsSettings chamsDefaults;
@@ -202,6 +217,11 @@ int main() {
         defaults.find("grenades.smokeColor.3=1\n") != std::string::npos &&
         defaults.find("grenades.molotovColor.3=1\n") != std::string::npos && defaults.find("grenades.auraWidth=2\n") != std::string::npos,
         "default preset saves independent grenade toggles, RGBA channels and width");
+    Expect(defaults.find("grenades.prediction=0\ngrenades.enemyPrediction=0\n") != std::string::npos &&
+        defaults.find("grenades.predictionColor.3=1\n") != std::string::npos &&
+        defaults.find("grenades.enemyPredictionColor.3=1\n") != std::string::npos &&
+        defaults.find("grenades.predictionWidth=2\n") != std::string::npos,
+        "default preset saves disabled prediction toggles and independent appearance");
     Expect(defaults.find("anti_aim.enabled=0\n") != std::string::npos, "default preset explicitly saves disabled anti aim");
     Expect(defaults.find("aim.autofire=0\naim.hitchance=50\naim.samples=256\naim.quickstop=0\naim.min_damage=1\n") != std::string::npos,
         "default preset saves autofire and quickstop off, hitchance controls and minimum damage");
@@ -279,9 +299,14 @@ int main() {
     PlayerChamsSetSettings(expectedChams);
     GrenadeSettings expectedGrenades{true, true, true, true};
     expectedGrenades.auraWidth = 4.25f;
+    expectedGrenades.prediction = true;
+    expectedGrenades.enemyPrediction = true;
+    expectedGrenades.predictionWidth = 3.5f;
     for (int channel = 0; channel < 4; ++channel) {
         expectedGrenades.smokeColor[channel] = (channel + 1) / 8.0f;
         expectedGrenades.molotovColor[channel] = (channel + 4) / 8.0f;
+        expectedGrenades.predictionColor[channel] = (channel + 1) / 16.0f;
+        expectedGrenades.enemyPredictionColor[channel] = (channel + 5) / 16.0f;
     }
     GrenadeSetSettings(expectedGrenades);
     const BulletTracerSettings expectedTracers{true, BulletTracerMaterial::Plasma, {.125f, .25f, .5f, .75f}, false, .875f, 3.25f, 4.5f, false, true, 9.25f};
@@ -449,6 +474,10 @@ int main() {
         "version=1\ngrenades.smokeColor.0=nan\n", "version=1\ngrenades.molotovColor.3=inf\n",
         "version=1\ngrenades.auraWidth=nan\n", "version=1\ngrenades.auraWidth=4oops\n",
         "version=1\ngrenades.removeSmoke=0\ngrenades.removeSmoke=1\n",
+        "version=1\ngrenades.prediction=2\n", "version=1\ngrenades.enemyPrediction=true\n",
+        "version=1\ngrenades.predictionColor.0=nan\n", "version=1\ngrenades.enemyPredictionColor.3=inf\n",
+        "version=1\ngrenades.predictionWidth=nan\n", "version=1\ngrenades.predictionWidth=3oops\n",
+        "version=1\ngrenades.prediction=0\ngrenades.prediction=1\n",
         "version=1\ntracers.enabled=2\n", "version=1\ntracers.material=1.5\n",
         "version=1\ntracers.color.0=nan\n", "version=1\ntracers.color.3=inf\n",
         "version=1\ntracers.glow=true\n", "version=1\ntracers.glowStrength=nan\n",
@@ -469,7 +498,19 @@ int main() {
         "version=1\nworld.enabled=0\nworld.enabled=1\n", "version=1\nbroken\n"}) {
         Write(badPath, invalid);
         Expect(!LocalConfigLoad(bad, error) && !error.empty(), "reject malformed config");
-        Expect(LocalConfigSave(second, error) && Read(secondPath) == custom, "failed load applies no option changes");
+        // This loop checks parser transactionality, not sustained rename load.
+        // Windows scanners can briefly deny an atomic replacement after the
+        // previous read. Keep fixture I/O bounded and still compare every byte.
+        bool savedUnchanged = false;
+        for (int attempt = 0; attempt < 4 && !savedUnchanged; ++attempt) {
+            if (attempt) Sleep(10);
+            savedUnchanged = LocalConfigSave(second, error);
+        }
+        const auto savedContent = savedUnchanged ? Read(secondPath) : std::string{};
+        if (!savedUnchanged || savedContent != custom)
+            std::printf("CONFIG_CHECK_DETAIL saved=%d error=%s expected_bytes=%zu actual_bytes=%zu malformed=%s\n",
+                savedUnchanged, error.c_str(), custom.size(), savedContent.size(), invalid.c_str());
+        Expect(savedUnchanged && savedContent == custom, "failed load applies no option changes");
     }
     Write(badPath, "version=1\nfuture.option=hello\nworld.exposureEv=999\nesp.boxThickness=-99\naim.fov=999\naim.hitbox=99\n");
     Expect(LocalConfigLoad(bad, error) && WorldGetSettings().exposureEv == 3 &&

@@ -470,6 +470,15 @@ void GrenadeControls() {
     ClickControl("Remove smoke");
     Expect(!GrenadeGetSettings().removeSmoke && GrenadeGetSettings().removeFlash && GrenadeGetSettings().smokeAura &&
         GrenadeGetSettings().molotovAura, "smoke aura remains enabled when smoke removal is disabled");
+    ClickControl("##GrenadePredictionWidth", 0.9f);
+    Expect(GrenadeGetSettings().predictionWidth == 2, "trajectory width is disabled while both predictions are off");
+    ClickControl("Grenade prediction");
+    Expect(GrenadeGetSettings().prediction && !GrenadeGetSettings().enemyPrediction && !EspGetSettings().enabled,
+        "local prediction toggles independently of enemies and player ESP");
+    ClickControl("Enemy thrown grenades");
+    ClickControl("##GrenadePredictionWidth", 0.7f);
+    Expect(GrenadeGetSettings().prediction && GrenadeGetSettings().enemyPrediction && GrenadeGetSettings().predictionWidth > 3,
+        "enemy thrown prediction and trajectory width are editable independently");
     ClickControl("Reset grenades");
     Expect(GrenadeGetSettings() == GrenadeSettings{} && EspGetSettings() == disabledEsp,
         "grenade reset restores defaults independently of disabled ESP");

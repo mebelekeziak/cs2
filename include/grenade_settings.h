@@ -8,6 +8,11 @@ struct GrenadeSettings {
     float smokeColor[4]{0.35f, 0.75f, 1.0f, 1.0f};
     float molotovColor[4]{1.0f, 0.35f, 0.08f, 1.0f};
     float auraWidth = 2.0f;
+    bool prediction = false;
+    bool enemyPrediction = false;
+    float predictionColor[4]{0.25f, 0.9f, 0.8f, 1.0f};
+    float enemyPredictionColor[4]{1.0f, 0.35f, 0.15f, 1.0f};
+    float predictionWidth = 2.0f;
 
     bool operator==(const GrenadeSettings&) const = default;
 };
