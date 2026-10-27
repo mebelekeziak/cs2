@@ -149,7 +149,7 @@ build-specific addresses and observations.
 
 ## October 22 revision 10: Axion steering port
 
-Only the client autostrafe planner changes. `src/movement_steering.cpp` adapts
+Only the client autostrafe planner changes. `src/features/movement/movement_steering.cpp` adapts
 Axion's `AutoStrafe` at commit `5e174c1f07b96f5bcaa5c9a09045d0c082325d93`;
 the MIT notice and exact local source provenance are under `third_party/`.
 The ideal angle is `clamp(degrees(atan2(15, speed)), 0, 45)`, correction uses

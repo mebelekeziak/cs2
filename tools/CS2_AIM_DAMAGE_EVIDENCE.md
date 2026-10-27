@@ -229,7 +229,7 @@ contract checks, not runtime observation of actual damage or hit registration.
 
 ## Implementation and verification
 
-`src/aim_damage.cpp` reads copied weapon, armor, helmet, immunity, healthshot
+`src/features/aim/aim_damage.cpp` reads copied weapon, armor, helmet, immunity, healthshot
 expiry and rule inputs on the existing native command owner. It checks full
 target/volume validity and local source, live weapon data and item-service
 ownership. The retained snapshot is invalidated by changed damage inputs;

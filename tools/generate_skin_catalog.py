@@ -259,7 +259,7 @@ def generate(game):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, default=DEFAULT_GAME)
-    parser.add_argument("--output", type=Path, default=ROOT / "src/skin_catalog_data.inc")
+    parser.add_argument("--output", type=Path, default=ROOT / "src/features/skins/skin_catalog_data.inc")
     parser.add_argument("--check", action="store_true", help="Verify the checked-in catalog without replacing it")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()

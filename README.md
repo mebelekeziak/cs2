@@ -2,6 +2,15 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Source layout
+
+Client implementation files live under `src/features/`, grouped by feature.
+Shared overlay, frame, configuration and console code lives in `src/core/`;
+menu code lives in `src/ui/`, and the mapper and launcher live in `src/loader/`.
+Headers remain in `include/`, and CMake explicitly lists the sources for each
+target. The generated skin catalog stays beside its implementation under
+`src/features/skins/`. Build and launch commands are unchanged.
+
 ## Held weapon icons and C4 ESP — October 27, 2026
 
 Under **Visuals**, enable **Held weapon icons** for the active weapon's CS2 HUD

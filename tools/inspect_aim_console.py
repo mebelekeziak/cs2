@@ -103,7 +103,7 @@ def verify_source(path, timestamp, size):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, default=DEFAULT)
-    parser.add_argument("--source", type=Path, default=ROOT / "src/aim_console.cpp")
+    parser.add_argument("--source", type=Path, default=ROOT / "src/features/aim/aim_console.cpp")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     tier0_path = args.game / "bin/win64/tier0.dll"

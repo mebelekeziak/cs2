@@ -1,7 +1,7 @@
 // Include the production mapper unchanged, with its command entry renamed.
 // The child maps only the catalog fixture DLL into its own isolated process.
 #define wmain ProductionMapperCommand
-#include "../src/loader.cpp"
+#include "../src/loader/loader.cpp"
 #undef wmain
 #include "loader_support.h"
 #include <atomic>

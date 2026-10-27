@@ -80,7 +80,7 @@ class ParserChecks(unittest.TestCase):
 
 class GeneratedCatalogChecks(unittest.TestCase):
     def test_generated_metadata_is_complete_and_self_consistent(self):
-        source = (ROOT / "src/skin_catalog_data.inc").read_text(encoding="utf-8")
+        source = (ROOT / "src/features/skins/skin_catalog_data.inc").read_text(encoding="utf-8")
         self.assertIn("scripts/items/items_game.txt SHA-256:", source)
         self.assertIn("resource/csgo_english.txt SHA-256:", source)
         items, remaining = source.split("constexpr Item kItems[] = {\n", 1)[1].split("};", 1)

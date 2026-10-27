@@ -8,7 +8,7 @@ Ported routine: F::MISC::MOVEMENT::AutoStrafe (lines 335-502)
 License: MIT, Copyright (c) 2024 T1GXR; see adjacent LICENSE file.
 Upstream README identifies an Asphyxia base and Pandora-derived features.
 
-Adapted October 22, 2026 into src/movement_steering.cpp:
+Adapted October 22, 2026 into src/features/movement/movement_steering.cpp:
 - Preserve atan2(15, horizontal speed), 0..45-degree ideal-angle clamp,
   >80 speed correction branches, >170-degree branch and sequence parity.
 - Initial port preserved default autostrafe_smooth=99 (correction=0.04*ideal).

@@ -34,7 +34,7 @@ EXTRA = {
 
 
 def item_assets():
-    text = (ROOT / "src/skin_catalog_data.inc").read_text(encoding="utf-8")
+    text = (ROOT / "src/features/skins/skin_catalog_data.inc").read_text(encoding="utf-8")
     result = {int(number): name.removeprefix("weapon_") for number, name in re.findall(
         r'\{(\d+), "([^"]+)", [^\n]*ItemKind::(?:Weapon|Knife),', text)}
     result.update(EXTRA)

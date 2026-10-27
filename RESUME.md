@@ -72,7 +72,7 @@ pass in logs/compatibility/native-grenade-preview-20261027. 23/23 changed native
 headers reject. Both DLL TLS/delay directories zero; hashes and research under
 logs/research/26144732/native-grenade/payload-contract.json. New native header,
 adapter and frozen verifier: include/grenade_native_offsets.h,
-include/grenade_native_prediction.h, src/grenade_native_prediction.cpp,
+include/grenade_native_prediction.h, src/features/grenades/grenade_native_prediction.cpp,
 tools/inspect_grenade_native.py. Existing grenade verifier includes native check.
 README, address index and tools/CS2_GRENADE_PREDICTION_EVIDENCE.md updated.
 No client/server was launched or interacted with. Normal restart + Load Overlay.cmd

@@ -680,8 +680,8 @@ lifecycle requires installing the selected model before calling the callback.
 
 ## Console output and final-image overlay
 
-[aim_console.cpp](../src/aim_console.cpp) retains named tier0 exports Msg `0x7EE60` and ConColorMsg `0x7F710`, exact varargs prologues and current tier0 identity. [inspect_aim_console.py](../tools/inspect_aim_console.py) verifies the export, format, argument and native client callers; [evidence](../tools/CS2_AIM_CONSOLE_EVIDENCE.md).
+[aim_console.cpp](../src/features/aim/aim_console.cpp) retains named tier0 exports Msg `0x7EE60` and ConColorMsg `0x7F710`, exact varargs prologues and current tier0 identity. [inspect_aim_console.py](../tools/inspect_aim_console.py) verifies the export, format, argument and native client callers; [evidence](../tools/CS2_AIM_CONSOLE_EVIDENCE.md).
 
-[overlay.cpp](../src/overlay.cpp) discovers Present/ResizeBuffers through a temporary D3D11 swap chain and SDK COM slots 8/13, then validates real device/swap-chain callbacks. No frozen DXGI function RVA is introduced. [world_postprocess.cpp](../src/world_postprocess.cpp) modifies the final image and also affects HUD. Fresh loaded graphics/runtime and visual behavior remain unobserved.
+[overlay.cpp](../src/core/overlay.cpp) discovers Present/ResizeBuffers through a temporary D3D11 swap chain and SDK COM slots 8/13, then validates real device/swap-chain callbacks. No frozen DXGI function RVA is introduced. [world_postprocess.cpp](../src/features/world/world_postprocess.cpp) modifies the final image and also affects HUD. Fresh loaded graphics/runtime and visual behavior remain unobserved.
 
 Keep initialization/teardown outside DllMain and native mutations on verified engine callbacks. Invalidate stale state and preserve cooperative owner-thread restoration/barriers. Stopped code and trampolines stay resident until normal process exit; stopped and resident is not physically unloaded. No loader session/environment gates were added.

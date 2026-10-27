@@ -76,8 +76,8 @@ prediction are separate questions.
 ## Verification and comparison
 
 The standalone test target requires only
-`tests/aim_native_hitchance_checks.cpp`, `src/aim_native_hitchance.cpp`,
-`src/aim_hitchance.cpp` and project include paths. Default tests use synthetic
+`tests/aim_native_hitchance_checks.cpp`, `src/features/aim/aim_native_hitchance.cpp`,
+`src/features/aim/aim_hitchance.cpp` and project include paths. Default tests use synthetic
 native methods and an independent RNG reference; no game installation is
 required. The test covers state isolation/alignment, every draw/order, native
 failures, parameter rejection, zero spread, sample limits, copied model

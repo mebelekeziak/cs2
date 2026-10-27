@@ -133,7 +133,7 @@ on the owner thread and retain callbacks/code until normal process exit:
 
 ## Implemented adapter and standalone checks
 
-`src/menu_input.cpp` resolves 20 named SDL exports and queues 13 MinHook
+`src/ui/menu_input.cpp` resolves 20 named SDL exports and queues 13 MinHook
 callbacks. The SDL pump changes relative mode, mouse grab and cursor visibility
 only on the selected HWND's owning thread, after matching SDL's HWND property.
 Native mode/hide requests are deferred while captured and the latest requested

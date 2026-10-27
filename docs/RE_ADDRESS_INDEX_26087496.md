@@ -128,7 +128,7 @@ from runtime schema bindings with an additional leading base pointer.
 Do not treat the table as a pointer at system `+0x10`: bucket pointers are
 embedded there. Do not reject pawn label `c_cs_player_for_precache` based on its
 wording; it was observed on active offline pawns too. Names alone do not prove
-an active pawn. [player_reader.cpp](../src/player_reader.cpp) validates controller
+an active pawn. [player_reader.cpp](../src/features/esp/player_reader.cpp) validates controller
 ownership, handles, life state, dormancy and copied geometry, refreshing values
 and projection on the selected Present. Do not retain engine entity pointers
 across lifecycle changes.
@@ -526,13 +526,13 @@ Stop queues owner-thread restoration and retains resident forwarding code.
 
 ## Overlay and final-image pass
 
-[overlay.cpp](../src/overlay.cpp) discovers Present and ResizeBuffers addresses
+[overlay.cpp](../src/core/overlay.cpp) discovers Present and ResizeBuffers addresses
 using a temporary D3D11 swap chain and SDK COM slots 8/13, then verifies real
 callback objects/methods before selecting a chain. There are no frozen DXGI
 function RVAs to relocate in this index. Rediscover/observe the installed
 graphics runtime, actual D3D11 device, swap chain, render thread and device-loss
 behavior before assuming this path is available.
-[world_postprocess.cpp](../src/world_postprocess.cpp) uses that verified D3D11
+[world_postprocess.cpp](../src/features/world/world_postprocess.cpp) uses that verified D3D11
 device/context and final image; exposure/contrast/saturation/gamma also affect
 the game HUD. It does not establish an engine world-material color input.
 
@@ -585,7 +585,7 @@ life/dormancy and current local-team identity. A matching object class alone
 does not establish a player.
 
 Player material creation and model swaps share the verified client stage-8
-owner through [client_frame.cpp](../src/client_frame.cpp); the native callback
+owner through [client_frame.cpp](../src/core/client_frame.cpp); the native callback
 runs first, nested stages forward without dispatch, and each subscriber keeps
 its own stop barrier. The material feature does not depend on a model pack or
 on enabling model swapping. Material/shader creation contracts are recorded

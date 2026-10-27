@@ -5,7 +5,7 @@ Dependencies are fetched without modification at these immutable commits:
 
 Original licenses remain in build/_deps and are copied beside the built DLL in licenses/.
 
-The generated `src/skin_catalog_data.inc` contains cosmetic metadata derived
+The generated `src/features/skins/skin_catalog_data.inc` contains cosmetic metadata derived
 from Valve's installed CS2 `scripts/items/items_game.txt`, English localization,
 and inventory resource names. It retains source attribution, extracted-resource
 hashes and the installed version in its header. No Valve models, textures, VPK

@@ -71,7 +71,7 @@ Investigated October 18, 2026, against the installed Windows AMD64 client
 The installation root is recorded in [the address index](../docs/RE_ADDRESS_INDEX.md).
 This is client command-owner work; no server or live client run was used.
 
-Runtime: [aim_occlusion.cpp](../src/aim_occlusion.cpp),
+Runtime: [aim_occlusion.cpp](../src/features/aim/aim_occlusion.cpp),
 [aim_occlusion_offsets.h](../include/aim_occlusion_offsets.h).
 Portable verifier: `python tools/inspect_aim_occlusion.py`.
 Discovery used the existing `tools/inspect_world_materials.py` and local

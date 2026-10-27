@@ -17,7 +17,7 @@ its checked RGBA setup begins at `0x1C6129`, imported call at `0x1C613D`.
 RCX/RDX/R8 argument ownership, four-byte copied RGBA, temporary formatted line
 and 0x800-byte formatting buffer contracts remain unchanged.
 
-Only runtime tier0 timestamp changes in `src/aim_console.cpp`; named export
+Only runtime tier0 timestamp changes in `src/features/aim/aim_console.cpp`; named export
 lookup and exact prologues remain enforced. Frozen hashes/caller sites were
 updated after scratch decoding in `logs/research/26144732/core/`.
 `inspect_aim_console.py` passes; incorrect timestamp, RVA and color prologue
