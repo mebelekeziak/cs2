@@ -1,3 +1,47 @@
+# Held weapon and C4 ESP - October 27, 2026
+
+User requested held weapon icons, dropped/planted C4 world ESP and a C4 carrier
+badge. Pre-existing native grenade work was checkpointed as 0dfc398 before this
+feature. New switches under Visuals: Held weapon icons, C4 carrier icon, and
+World ESP > Dropped C4 / Planted C4. World markers are independent of player
+master. All additions default off and persist in Configs; appearance reset
+preserves toggles. Weapon icons sit below player details; C4 badge sits beside
+player geometry. Unknown active definitions omit icons. Existing player filters
+remain in effect.
+
+The initial procedural icon preview was rejected by the user. Final icons use
+actual CS2 equipment SVG silhouettes from the installed VPK, imported with
+tools/import_weapon_icons.py into logs/weapon-icons/cs2-hud-icons.ttf (ignored,
+Valve artwork retained locally). Font is loaded during atlas setup. A fresh
+checkout needs fonttools==4.59.1, skia-pathops==0.9.2 and the importer. Do not
+reintroduce the simplified hand-drawn silhouettes. Separate planted_c4 artwork
+identifies planted bombs.
+
+Acquisition is read-only on the existing Present owner. Held item capture
+revalidates full active handle/owner/definition/services. C4 carriers correlate
+exact class instances by full owner handle and do not require C4 selected or a
+C4 scene. Dropped requires owner UINT32_MAX and planted latch false; unresolved
+owner never means dropped. Planted requires ticking=1, defused=0, exploded=0.
+Frames start empty and discard on source changes. No engine callbacks or writes
+were added. Static contracts/evidence: include/esp_item_offsets.h,
+tools/inspect_esp_items.py, tools/CS2_ESP_ITEMS_EVIDENCE.md. Compatibility runner
+now includes esp_items (40 components). All 11 altered new constants rejected.
+Reader fixtures pass 26 checks including pickup/drop/plant/defuse/explosion,
+missing services, full-handle mismatch, scene-less inventory C4 and source loss.
+
+Software preview command (copied data, no game):
+.\build\Release\public_menu_preview.exe .\logs\weapon-c4-esp-preview.bmp 27 0 1000 600
+No game/server launched; actual live appearance remains unobserved. Use normal
+restart and Load Overlay.cmd for user's offline/private comparison.
+
+Validation: both x64 Release variants build with no project compiler warnings,
+82/82 CTest suites each. Actual HUD icon fixture 711 checks; reader 26. Final
+40/40 installed-file checks: logs/compatibility/20261027T073115219211Z.
+11/11 altered new item constants reject: logs/esp-items-negative/summary.json.
+Both DLLs have zero static TLS/delay imports: logs/esp-payload-contract.json.
+Software D3D11 preview visually inspected after replacing procedural drawings.
+Final build/test logs: logs/esp-build-*-final.log, logs/esp-ctest-*.log.
+
 # Native held-grenade preview — October 27, 2026
 
 User reports estimator errors on fast/aggressive throws and requested reuse of

@@ -21,6 +21,17 @@ at the top of each linked evidence file; earlier sections remain historical.
 
 ## Address conventions and installation
 
+October 27 held weapon/C4 ESP adds [item offsets](../include/esp_item_offsets.h),
+[verifier](../tools/inspect_esp_items.py) and [evidence](../tools/CS2_ESP_ITEMS_EVIDENCE.md).
+The combined bundle now has **40** components. Active weapon follows pawn
+services `+0x12F0` → full handle `+0x60` → embedded item `+0x12E0` → uint16
+definition `+0x1BA`. Owner `+0x520` is compared by full pawn handle. C4 primary
+vtable `0x1BDD1D0`, planted C4 `0x1C9A9B0`; C4 planted latch `+0x1F5B`;
+planted ticking/exploded/defused bytes `+0x1288/+0x12BD/+0x12DC`. Captures are
+read-only, discarded each frame, and use the existing scene origin contract.
+The feature introduces no native callbacks or game writes. No live observation
+has been performed.
+
 October 27 native held-grenade preview adds
 [native offsets](../include/grenade_native_offsets.h),
 [verifier](../tools/inspect_grenade_native.py) and

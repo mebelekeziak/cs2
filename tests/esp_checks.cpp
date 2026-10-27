@@ -87,12 +87,15 @@ struct Drawing {
     }
 };
 
-Drawing DrawSample(const EspSettings& appearance, int team = 3, int health = 50) {
+Drawing DrawSample(const EspSettings& appearance, int team = 3, int health = 50,
+                   std::uint16_t weapon = 0, bool carrier = false) {
     EspSetSettings(appearance);
     EspPlayerSnapshot player{};
     strcpy_s(player.name, "WWWWiiii");
     player.team = team;
     player.health = health;
+    player.weaponDefinition = weapon;
+    player.carriesC4 = carrier;
     player.distanceMeters = 24;
     SetBounds(player.worldCorners);
     EspMatrix4x4 matrix{};
@@ -193,6 +196,60 @@ void AppearanceChecks() {
     EspSetSettings(EspSettings{});
 }
 
+void ItemDrawingChecks() {
+    EspSettings style;
+    style.boxes = style.names = style.distance = style.health = false;
+    style.weaponIcons = true;
+    Expect(DrawSample(style, 2, 100, 7).stats.weaponIcons == 1 && DrawSample(style, 2, 100, 7).stats.drawn == 1,
+        "held AK icon and label render without boxes or names");
+    Expect(DrawSample(style, 2, 100, 65535).stats.drawn == 0,
+        "unknown active definition produces no misleading weapon icon");
+    style.weaponColor[3] = 0;
+    Expect(DrawSample(style, 2, 100, 7).vertices.empty(), "transparent weapon also hides label and outline");
+    style.weaponIcons = false; style.c4Carrier = true;
+    Expect(DrawSample(style, 2, 100, 7, true).stats.carriers == 1 &&
+        DrawSample(style, 2, 100, 7, false).stats.drawn == 0,
+        "C4 badge follows inventory ownership independently of active weapon");
+    style.teammates = false;
+    Expect(DrawSample(style, 3, 100, 7, true).stats.drawn == 0 &&
+        DrawSample(style, 2, 0, 7, true).stats.drawn == 0,
+        "carrier badge obeys teammate and death filters");
+
+    EspBombSnapshot bombs[]{{1, {-.4f, 0, 0}, EspBombKind::Dropped},
+        {2, {.4f, 0, 0}, EspBombKind::Planted}, {3, {4, 0, 0}, EspBombKind::Dropped},
+        {4, {0, std::numeric_limits<float>::quiet_NaN(), 0}, EspBombKind::Planted},
+        {5, {}, static_cast<EspBombKind>(99)}};
+    EspFrameSnapshot frame{};
+    frame.valid = frame.matrixValid = true;
+    frame.bombs = bombs; frame.bombCount = std::size(bombs);
+    for (int i = 0; i < 4; ++i) frame.worldToClip.m[i][i] = 1;
+    const auto world = [&](float width = 1000.0f) {
+        EspSetSettings(style);
+        ImGui::NewFrame();
+        const auto stats = EspDraw(frame, width, 800);
+        ImGui::Render();
+        return stats.bombs;
+    };
+    style.enabled = false; style.droppedC4 = true;
+    Expect(world() == 1, "dropped C4 projects while player ESP is disabled; offscreen/invalid points reject");
+    style.droppedC4 = false; style.plantedC4 = true;
+    Expect(world() == 1, "planted C4 has an independent switch");
+    style.droppedC4 = true;
+    Expect(world() == 2, "both C4 states render through independent world controls");
+    Expect(world(0) == 0 && world(std::numeric_limits<float>::infinity()) == 0,
+        "invalid world viewport rejects");
+    frame.worldToClip.m[3][3] = -1;
+    Expect(world() == 0, "C4 behind the camera rejects");
+    frame.worldToClip.m[3][3] = 1;
+    style.c4Color[3] = 0;
+    Expect(world() == 0, "zero C4 opacity hides world icon and label");
+    style.c4Color[3] = 1; frame.valid = false;
+    Expect(world() == 0, "invalidated source never displays world C4");
+    frame.valid = true; frame.bombs = nullptr;
+    Expect(world() == 0, "missing world buffer rejects safely");
+    EspSetSettings(EspSettings{});
+}
+
 void SettingsBounds() {
     EspSettings style;
     style.nameSize = std::numeric_limits<float>::quiet_NaN();
@@ -202,17 +259,23 @@ void SettingsBounds() {
     style.nameFont = 90; style.boxStyle = -1;
     style.boxColor[0] = -1; style.boxColor[1] = 5;
     style.fillColor[3] = std::numeric_limits<float>::quiet_NaN();
+    style.weaponIconSize = std::numeric_limits<float>::quiet_NaN(); style.c4IconSize = 100;
+    style.weaponColor[0] = -1; style.c4Color[3] = std::numeric_limits<float>::infinity();
     EspSetSettings(style);
     const auto sanitized = EspGetSettings();
     Expect(sanitized.nameSize == 14 && sanitized.detailSize == 22 && sanitized.boxThickness == 0.5f &&
            sanitized.healthBarWidth == 3 && sanitized.nameFont == 3 && sanitized.boxStyle == 0 &&
            sanitized.boxColor[0] == 0 && sanitized.boxColor[1] == 1 && sanitized.fillColor[3] == 0.12f,
            "invalid appearance inputs are finite and bounded before rendering");
+    Expect(sanitized.weaponIconSize == 18 && sanitized.c4IconSize == 36 &&
+        sanitized.weaponColor[0] == 0 && sanitized.c4Color[3] == 1, "item icon style is finite and bounded");
     style.enabled = false; style.names = false; style.armor = true;
+    style.weaponIcons = style.c4Carrier = style.droppedC4 = style.plantedC4 = true;
     EspSetSettings(style);
     EspResetStyle();
     auto expected = EspSettings{};
     expected.enabled = false; expected.names = false; expected.armor = true;
+    expected.weaponIcons = expected.c4Carrier = expected.droppedC4 = expected.plantedC4 = true;
     Expect(EspGetSettings() == expected, "appearance reset restores all style fields while preserving toggles");
     EspSetSettings(EspSettings{});
 }
@@ -299,6 +362,7 @@ int main() {
     ImGui::Render();
     Expect(ImGui::GetDrawData()->TotalVtxCount > 0, "ImGui primitives submitted");
     AppearanceChecks();
+    ItemDrawingChecks();
     ImGui::DestroyContext();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = ImGui::GetIO().LogFilename = nullptr;

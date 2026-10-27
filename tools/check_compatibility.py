@@ -47,6 +47,7 @@ def component_commands(game):
     client = str(game / "csgo/bin/win64/client.dll")
     return (
         ("esp", "inspect_cs2.py", ["--client", client]),
+        ("esp_items", "inspect_esp_items.py", ["--client", client]),
         ("grenade_areas", "inspect_grenade_areas.py", ["--game", str(game)]),
         ("grenade_effects", "inspect_grenade_effects.py", ["--client", client]),
         ("grenade_prediction", "inspect_grenade_prediction.py", ["--game", str(game)]),
@@ -145,6 +146,7 @@ def main():
                     ROOT / "src/skin_catalog_data.inc",
                     ROOT / "src/player_chams.cpp", ROOT / "src/player_chams_material.cpp",
                     ROOT / "src/client_frame.cpp",
+                    ROOT / "src/player_reader.cpp", ROOT / "src/esp_draw.cpp", ROOT / "src/weapon_icons.cpp",
                     ROOT / "src/grenade_prediction_runtime.cpp", ROOT / "src/grenade_prediction.cpp",
                     ROOT / "src/grenade_prediction_tracker.cpp",
                     ROOT / "src/scope_overlay.cpp", ROOT / "src/scoped_crosshair.cpp",

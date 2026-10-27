@@ -666,6 +666,8 @@ void DrawPublicMenu() {
                 changed |= FeatureCheckbox("Health bars and values", settings.health);
                 changed |= FeatureCheckbox("Armor", settings.armor);
                 changed |= FeatureCheckbox("Show teammates", settings.teammates);
+                changed |= FeatureCheckbox("Held weapon icons", settings.weaponIcons);
+                changed |= FeatureCheckbox("C4 carrier icon", settings.c4Carrier);
                 ImGui::Separator();
                 const auto color = [&](const char* label, const char* id, float (&value)[4]) {
                     ImGui::TextUnformatted(label);
@@ -724,6 +726,10 @@ void DrawPublicMenu() {
                     changed |= color("Detail color", "##DetailColor", settings.detailColor);
                     changed |= FeatureCheckbox("Text outlines", settings.textOutline);
                 }
+                if (ImGui::CollapsingHeader("Weapon icons", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    changed |= slider("Weapon icon size", "##WeaponIconSize", settings.weaponIconSize, 12, 32, "%.0f px");
+                    changed |= color("Weapon icon color", "##WeaponIconColor", settings.weaponColor);
+                }
                 if (ImGui::CollapsingHeader("Health bar", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
                     changed |= color("Health color", "##HealthColor", settings.healthColor);
                     changed |= FeatureCheckbox("Health gradient", settings.healthGradient);
@@ -740,6 +746,12 @@ void DrawPublicMenu() {
                     ImGui::TextWrapped("Shared by box and text outlines.");
                 }
                 ImGui::EndDisabled();
+                if (ImGui::CollapsingHeader("World ESP", ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {
+                    changed |= FeatureCheckbox("Dropped C4", settings.droppedC4);
+                    changed |= FeatureCheckbox("Planted C4", settings.plantedC4);
+                    changed |= slider("C4 icon size", "##C4IconSize", settings.c4IconSize, 14, 36, "%.0f px");
+                    changed |= color("C4 icon color", "##C4IconColor", settings.c4Color);
+                }
                 // Publish edits before the sample so it responds in the same frame.
                 if (changed) EspSetSettings(settings);
                 if (ImGui::CollapsingHeader("Live preview", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_NoAutoOpenOnLog)) {

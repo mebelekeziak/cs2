@@ -207,6 +207,32 @@ void EspAppearanceControls() {
     ImGui::SetScrollY(Body(), 0);
     Frame(); Frame();
 }
+void ItemEspControls() {
+    const auto saved = EspGetSettings();
+    ClickControl("Held weapon icons");
+    ClickControl("C4 carrier icon");
+    Expect(EspGetSettings().weaponIcons && EspGetSettings().c4Carrier,
+        "weapon and carrier icons enable independently through mouse input");
+    ClickControl("Weapon icons");
+    ClickControl("##WeaponIconSize", .8f);
+    Expect(EspGetSettings().weaponIconSize > 24, "weapon icon size publishes through its slider");
+    ClickControl("Weapon icons");
+    ClickControl("Enable ESP");
+    ClickControl("Held weapon icons");
+    ClickControl("C4 carrier icon");
+    Expect(!EspGetSettings().enabled && EspGetSettings().weaponIcons && EspGetSettings().c4Carrier,
+        "player master blocks weapon and carrier controls");
+    ClickControl("World ESP");
+    ClickControl("Dropped C4");
+    ClickControl("Planted C4");
+    ClickControl("##C4IconSize", .8f);
+    Expect(!EspGetSettings().enabled && EspGetSettings().droppedC4 && EspGetSettings().plantedC4 &&
+        EspGetSettings().c4IconSize > 28, "world C4 controls work while player ESP is disabled");
+    ClickControl("World ESP");
+    EspSetSettings(saved);
+    ImGui::SetScrollY(Body(), 0);
+    Frame(); Frame();
+}
 void NativeSettingsBounds() {
     WorldSettings settings;
     settings.localLightBrightness = -1;
@@ -931,6 +957,7 @@ int main() {
     Expect(EspGetSettings().armor && EspGetSettings().health && EspGetSettings().teammates,
            "armor click preserves other visible feature settings");
     EspAppearanceControls();
+    ItemEspControls();
     CameraControls();
     ViewmodelControls();
     ZoomControls();

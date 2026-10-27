@@ -19,6 +19,15 @@ struct EspPlayerSnapshot {
     // Corner index: bit 0 selects X max, bit 1 Y max, bit 2 Z max.
     // Transform collision bounds into world space before passing this snapshot.
     EspVec3 worldCorners[8]{};
+    std::uint16_t weaponDefinition = 0;
+    bool carriesC4 = false;
+};
+
+enum class EspBombKind { Dropped, Planted };
+struct EspBombSnapshot {
+    std::uint32_t handle = 0;
+    EspVec3 origin{};
+    EspBombKind kind = EspBombKind::Dropped;
 };
 
 struct EspFrameSnapshot {
@@ -29,6 +38,8 @@ struct EspFrameSnapshot {
     bool valid = false;
     bool matrixValid = false;
     bool distanceAvailable = false;
+    const EspBombSnapshot* bombs = nullptr;
+    std::size_t bombCount = 0;
 };
 
 struct EspSettings {
@@ -61,6 +72,14 @@ struct EspSettings {
     float healthLowColor[4] = { 1, 0.2f, 0.2f, 1 };
     float healthBarWidth = 3;
     bool healthText = true;
+    bool weaponIcons = false;
+    bool c4Carrier = false;
+    bool droppedC4 = false;
+    bool plantedC4 = false;
+    float weaponIconSize = 18;
+    float c4IconSize = 22;
+    float weaponColor[4] = { 1, 1, 1, 1 };
+    float c4Color[4] = { 1, 0.72f, 0.2f, 1 };
     bool operator==(const EspSettings&) const = default;
 };
 
@@ -84,6 +103,9 @@ struct EspDrawStats {
     bool matrixValid = false;
     bool distanceAvailable = false;
     bool enabled = false;
+    std::size_t weaponIcons = 0;
+    std::size_t carriers = 0;
+    std::size_t bombs = 0;
 };
 
 using EspLogCallback = void (*)(const char* message);
@@ -100,7 +122,8 @@ EspSettings EspSanitizeSettings(const EspSettings& value) noexcept;
 void EspSetSettings(const EspSettings& value) noexcept;
 void EspResetStyle() noexcept; // Preserve feature toggles, reset appearance only.
 // Once per ImGui atlas, before building its GPU texture; never during a frame.
-// Fonts are read from Windows, owned by the atlas, with safe menu-font fallback.
+// Windows text fonts and the locally imported HUD icon font are atlas-owned.
+// Missing text faces fall back; missing icon glyphs are omitted.
 void EspConfigureFonts();
 bool EspFontAvailable(int font) noexcept;
 // Reserve and draw a synthetic player using the same renderer as live ESP.

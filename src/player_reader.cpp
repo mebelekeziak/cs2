@@ -1,5 +1,6 @@
 #include "player_reader.h"
 #include "cs2_offsets.h"
+#include "esp_item_offsets.h"
 #include <Windows.h>
 #include <array>
 #include <algorithm>
@@ -11,13 +12,20 @@
 
 namespace {
 namespace off = cs2_offsets;
+namespace item = esp_item_offsets;
 EspLogCallback logger = nullptr;
 std::uintptr_t client = 0, lastSystem = 0, lastLocal = 0, lastPawn = 0;
 bool verified = false;
+#ifdef CS2_PLAYER_READER_CHECKS
+bool testRuntime = false;
+#endif
 const char* status = "awaiting client module";
 ULONGLONG lastCapture = 0, lastReport = 0, lastModuleTry = 0;
 unsigned generation = 0;
 std::array<EspPlayerSnapshot, 128> players{};
+std::array<EspBombSnapshot, 64> bombs{};
+std::array<std::uint32_t, 128> bombCarriers{};
+std::size_t bombCarrierCount = 0;
 std::array<EspVec3, 128> positions{};
 std::array<std::uint8_t, 512 * 0x70> bucketData{};
 struct RejectedPawn { std::uint32_t handle; char designer[64]; };
@@ -63,6 +71,9 @@ void SetStatus(const char* next) {
 }
 
 bool ModuleReady() {
+#ifdef CS2_PLAYER_READER_CHECKS
+    if (testRuntime) return client != 0 && verified;
+#endif
     const auto module = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(L"client.dll"));
     if (module != client) {
         PlayerReaderInvalidate("client module identity changed"); client = module; verified = false; lastModuleTry = 0;
@@ -124,6 +135,63 @@ bool Origin(std::uintptr_t pawn, EspVec3& origin, std::uintptr_t& scene) {
         !Read(scene + off::CGameSceneNode::m_vecAbsOrigin, origin)) return false;
     return VecValid(origin);
 }
+std::uint16_t HeldWeapon(std::uintptr_t table, const Identity& pawn) {
+    std::uintptr_t services = 0, afterServices = 0;
+    std::uint32_t handle = UINT32_MAX, afterHandle = UINT32_MAX, owner = UINT32_MAX;
+    Identity weapon{};
+    std::uint16_t definition = 0, afterDefinition = 0;
+    if (!Read(pawn.entity + item::WeaponServices, services) || !services ||
+        !Read(services + item::ActiveWeapon, handle) || !Resolve(table, handle, weapon) ||
+        !Read(weapon.entity + item::OwnerHandle, owner) || owner != pawn.handle ||
+        !Read(weapon.entity + item::Item + item::DefinitionIndex, definition) ||
+        !Read(pawn.entity + item::WeaponServices, afterServices) || afterServices != services ||
+        !Read(services + item::ActiveWeapon, afterHandle) || afterHandle != handle ||
+        !Read(weapon.entity + item::OwnerHandle, owner) || owner != pawn.handle ||
+        !Read(weapon.entity + item::Item + item::DefinitionIndex, afterDefinition) || afterDefinition != definition ||
+        !StillSame(table, weapon) || !StillSame(table, pawn)) return 0;
+    return definition;
+}
+// Called for exact RTTI-matched C4 classes only. The item ownership handle
+// identifies carriers even while another weapon is selected or C4 has no scene.
+void CaptureBomb(std::uintptr_t table, const Identity& id, std::uintptr_t vtable) {
+    if (!StillSame(table, id)) return;
+    const bool planted = vtable == client + item::PlantedC4Vtable;
+    std::uint8_t ticking = 0, exploded = 1, defused = 1, placed = 1;
+    std::uint32_t owner = UINT32_MAX;
+    Identity holder{};
+    if (planted) {
+        if (!Read(id.entity + item::BombTicking, ticking) || ticking != 1 ||
+            !Read(id.entity + item::BombExploded, exploded) || exploded != 0 ||
+            !Read(id.entity + item::BombDefused, defused) || defused != 0) return;
+    } else {
+        if (!Read(id.entity + item::C4BombPlanted, placed) || placed != 0 ||
+            !Read(id.entity + item::OwnerHandle, owner)) return;
+        if (owner != UINT32_MAX) {
+            // An unresolved owner is unknown, never evidence of a dropped item.
+            std::uint32_t afterOwner = UINT32_MAX;
+            std::uintptr_t afterTable = 0;
+            if (bombCarrierCount < bombCarriers.size() && Resolve(table, owner, holder) &&
+                Read(id.entity + item::C4BombPlanted, placed) && placed == 0 &&
+                Read(id.entity + item::OwnerHandle, afterOwner) && afterOwner == owner &&
+                Read(id.entity, afterTable) && afterTable == vtable &&
+                StillSame(table, id) && StillSame(table, holder))
+                bombCarriers[bombCarrierCount++] = owner;
+            return;
+        }
+    }
+    if (frame.bombCount >= bombs.size()) return;
+    EspVec3 origin{}; std::uintptr_t scene = 0, afterScene = 0, afterTable = 0;
+    if (!Origin(id.entity, origin, scene)) return;
+    if (planted) {
+        if (!Read(id.entity + item::BombTicking, ticking) || ticking != 1 ||
+            !Read(id.entity + item::BombExploded, exploded) || exploded != 0 ||
+            !Read(id.entity + item::BombDefused, defused) || defused != 0) return;
+    } else if (!Read(id.entity + item::OwnerHandle, owner) || owner != UINT32_MAX ||
+               !Read(id.entity + item::C4BombPlanted, placed) || placed != 0) return;
+    if (!StillSame(table, id) || !Read(id.entity, afterTable) || afterTable != vtable ||
+        !Read(id.entity + off::C_BaseEntity::m_pGameSceneNode, afterScene) || afterScene != scene) return;
+    bombs[frame.bombCount++] = {id.handle, origin, planted ? EspBombKind::Planted : EspBombKind::Dropped};
+}
 // Source's pitch/yaw/roll Euler convention (AngleMatrix). All values are
 // copied from schema fields; no engine method is called on the Present thread.
 EspVec3 Transform(const EspVec3& value, const EspVec3& angles, float scale, const EspVec3& origin) {
@@ -156,6 +224,13 @@ void PlayerReaderInvalidate(const char* reason) noexcept {
     Log("ESP_INVALIDATE generation=%u reason=%s", generation, reason);
 }
 
+#ifdef CS2_PLAYER_READER_CHECKS
+void PlayerReaderTestConfigure(std::uintptr_t module) noexcept {
+    PlayerReaderInvalidate("synthetic reader fixture");
+    client = module; verified = module != 0; testRuntime = true;
+}
+#endif
+
 EspFrameSnapshot PlayerReaderCapture() {
     if (!ModuleReady()) { frame = {}; return frame; }
     const auto now = GetTickCount64();
@@ -163,7 +238,8 @@ EspFrameSnapshot PlayerReaderCapture() {
     // Logging remains throttled independently of acquisition/render frequency.
     LARGE_INTEGER start{}, finish{}, frequency{};
     QueryPerformanceCounter(&start); QueryPerformanceFrequency(&frequency);
-    lastCapture = now; counts = {}; rejectedCount = 0; frame = {}; frame.players = players.data();
+    lastCapture = now; counts = {}; rejectedCount = 0; bombCarrierCount = 0;
+    frame = {}; frame.players = players.data(); frame.bombs = bombs.data();
     std::uintptr_t system = 0, table = 0, localController = 0, localPawn = 0;
     if (!Read(client + off::globals::dwEntityList, system) || !system ||
         
@@ -206,6 +282,12 @@ EspFrameSnapshot PlayerReaderCapture() {
             if (!controller.entity || controller.handle == UINT32_MAX) continue;
             ++counts.occupied;
             if ((controller.handle & off::entity_layout::IndexMask) != baseIndex + index) { ++counts.stale; continue; }
+            std::uintptr_t vtable = 0;
+            if (Read(controller.entity, vtable) &&
+                (vtable == client + item::C4Vtable || vtable == client + item::PlantedC4Vtable)) {
+                CaptureBomb(table, controller, vtable);
+                continue;
+            }
             if (!Designer(controller.address, "cs_player_controller")) continue;
             ++counts.controllers;
             if (!StillSame(table, controller)) { ++counts.stale; continue; }
@@ -235,6 +317,7 @@ EspFrameSnapshot PlayerReaderCapture() {
             Copy(controller.entity + off::CBasePlayerController::m_iszPlayerName, player.name, sizeof(player.name) - 1);
             for (char& ch : player.name) if (static_cast<unsigned char>(ch) < 32 && ch != '\0') ch = ' ';
             Read(pawn.entity + off::C_CSPlayerPawn::m_ArmorValue, player.armor);
+            player.weaponDefinition = HeldWeapon(table, pawn);
             EspVec3 origin{}, angles{}, mins{}, maxs{}; float scale = 0; std::uintptr_t scene = 0, collision = 0;
             if (!Origin(pawn.entity, origin, scene)) { ++counts.dormant; continue; }
             if (!Read(pawn.entity + off::C_BaseEntity::m_pCollision, collision) || !collision ||
@@ -264,6 +347,9 @@ EspFrameSnapshot PlayerReaderCapture() {
             positions[frame.playerCount] = origin; players[frame.playerCount++] = player;
         }
     }
+    for (std::size_t i = 0; i < frame.playerCount; ++i)
+        for (std::size_t carrier = 0; carrier < bombCarrierCount; ++carrier)
+            if (players[i].handle == bombCarriers[carrier]) { players[i].carriesC4 = true; break; }
     std::uintptr_t systemAfter = 0, localAfter = 0, localPawnAfter = 0;
     if (!Read(client + off::globals::dwEntityList, systemAfter) || systemAfter != system ||
         systemAfter + off::entity_layout::TableOffset != table ||
@@ -283,14 +369,15 @@ void PlayerReaderReportDraw(const EspDrawStats& draw, int espVertices, int total
     const auto now = GetTickCount64();
     if (lastReport && now - lastReport < 2000) return;
     lastReport = now;
-    Log("ESP_SCAN generation=%u status=\"%s\" valid=%d matrix=%d distance=%d highest=%d slots=%u occupied=%u controllers=%u players=%zu missing_pawn=%u wrong_pawn_class=%u dead=%u dormant=%u stale=%u bad_bounds=%u read_failures=%u truncated=%u sample_ms=%.3f age_ms=%llu",
+    Log("ESP_SCAN generation=%u status=\"%s\" valid=%d matrix=%d distance=%d highest=%d slots=%u occupied=%u controllers=%u players=%zu missing_pawn=%u wrong_pawn_class=%u dead=%u dormant=%u stale=%u bad_bounds=%u read_failures=%u truncated=%u sample_ms=%.3f age_ms=%llu bombs=%zu c4_owners=%zu",
         generation, status, frame.valid, frame.matrixValid, frame.distanceAvailable, counts.highest, counts.slots,
         counts.occupied, counts.controllers, frame.playerCount, counts.missingPawn, counts.wrongPawnClass, counts.dead, counts.dormant,
-        counts.stale, counts.badBounds, counts.failures, counts.truncated, counts.sampleMs, lastCapture ? now-lastCapture : 0);
-    Log("ESP_DRAW enabled=%d considered=%zu local=%zu dead=%zu teammates=%zu bad_distance=%zu bad_projection=%zu behind=%zu offscreen=%zu degenerate=%zu projected=%zu drawn=%zu esp_vertices=%d total_vertices=%d",
+        counts.stale, counts.badBounds, counts.failures, counts.truncated, counts.sampleMs, lastCapture ? now-lastCapture : 0,
+        frame.bombCount, bombCarrierCount);
+    Log("ESP_DRAW enabled=%d considered=%zu local=%zu dead=%zu teammates=%zu bad_distance=%zu bad_projection=%zu behind=%zu offscreen=%zu degenerate=%zu projected=%zu drawn=%zu esp_vertices=%d total_vertices=%d weapon_icons=%zu carriers=%zu bombs=%zu",
         draw.enabled, draw.considered, draw.local, draw.dead, draw.teammates,
         draw.invalidDistance, draw.invalidProjection, draw.behindCamera, draw.offscreen, draw.degenerate,
-        draw.projected, draw.drawn, espVertices, totalVertices);
+        draw.projected, draw.drawn, espVertices, totalVertices, draw.weaponIcons, draw.carriers, draw.bombs);
     for (std::size_t i = 0; i < rejectedCount; ++i)
         Log("ESP_REJECT handle=0x%08x designer=\"%s\" reason=pawn_class", rejectedPawns[i].handle, rejectedPawns[i].designer);
     if (frame.valid) for (std::size_t i = 0; i < frame.playerCount; ++i) {
@@ -299,9 +386,16 @@ void PlayerReaderReportDraw(const EspDrawStats& draw, int espVertices, int total
             width, height, box) : EspProjectionResult::InvalidInput;
         // Raw positions prove acquisition independently of the display.
         
-        Log("ESP_PLAYER handle=0x%08x name=\"%s\" local=%d team=%d health=%d armor=%d distance_m=%.2f origin=(%.2f,%.2f,%.2f) corner0=(%.2f,%.2f,%.2f) corner7=(%.2f,%.2f,%.2f) projection=%d screen=(%.1f,%.1f,%.1f,%.1f)",
+        Log("ESP_PLAYER handle=0x%08x name=\"%s\" local=%d team=%d health=%d armor=%d distance_m=%.2f origin=(%.2f,%.2f,%.2f) corner0=(%.2f,%.2f,%.2f) corner7=(%.2f,%.2f,%.2f) projection=%d screen=(%.1f,%.1f,%.1f,%.1f) weapon_definition=%u carries_c4=%d",
             player.handle, player.name, player.localPlayer, player.team, player.health, player.armor, player.distanceMeters,
             positions[i].x, positions[i].y, positions[i].z, player.worldCorners[0].x, player.worldCorners[0].y,
-            player.worldCorners[0].z, player.worldCorners[7].x, player.worldCorners[7].y, player.worldCorners[7].z, static_cast<int>(projection), box.left, box.top, box.right, box.bottom);
+            player.worldCorners[0].z, player.worldCorners[7].x, player.worldCorners[7].y, player.worldCorners[7].z,
+            static_cast<int>(projection), box.left, box.top, box.right, box.bottom,
+            static_cast<unsigned>(player.weaponDefinition), player.carriesC4);
+    }
+    if (frame.valid) for (std::size_t i = 0; i < frame.bombCount; ++i) {
+        const auto& bomb = bombs[i];
+        Log("ESP_C4 handle=0x%08x kind=%s origin=(%.2f,%.2f,%.2f)", bomb.handle,
+            bomb.kind == EspBombKind::Planted ? "planted" : "dropped", bomb.origin.x, bomb.origin.y, bomb.origin.z);
     }
 }

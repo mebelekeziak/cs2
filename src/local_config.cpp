@@ -58,6 +58,8 @@ template<class Visitor> void Fields(Snapshot& s, Visitor visit) {
     FIELD(esp, nameFont); FIELD(esp, nameSize); FIELD(esp, detailSize); COLOR(esp, detailColor);
     FIELD(esp, textOutline); COLOR(esp, outlineColor); COLOR(esp, healthColor);
     FIELD(esp, healthGradient); COLOR(esp, healthLowColor); FIELD(esp, healthBarWidth); FIELD(esp, healthText);
+    FIELD(esp, weaponIcons); FIELD(esp, c4Carrier); FIELD(esp, droppedC4); FIELD(esp, plantedC4);
+    FIELD(esp, weaponIconSize); FIELD(esp, c4IconSize); COLOR(esp, weaponColor); COLOR(esp, c4Color);
     FIELD(movement, bunnyhop); FIELD(movement, autostrafe); FIELD(movement, jumpbug);
     FIELD(world, enabled); FIELD(world, exposureEv); FIELD(world, contrast);
     FIELD(world, saturation); FIELD(world, gamma); COLOR(world, tint);

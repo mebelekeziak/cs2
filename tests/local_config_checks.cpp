@@ -249,8 +249,10 @@ int main() {
     esp.boxStyle = 1; esp.boxThickness = 2.5f; esp.boxOutline = false; esp.boxFill = true;
     esp.nameUseBoxColor = false; esp.nameFont = 2; esp.nameSize = 18; esp.detailSize = 16;
     esp.textOutline = false; esp.healthGradient = true; esp.healthBarWidth = 5; esp.healthText = false;
+    esp.weaponIcons = esp.c4Carrier = esp.droppedC4 = esp.plantedC4 = true;
+    esp.weaponIconSize = 26; esp.c4IconSize = 32;
     float* colors[]{esp.boxColor, esp.tColor, esp.ctColor, esp.fillColor, esp.nameColor,
-        esp.detailColor, esp.outlineColor, esp.healthColor, esp.healthLowColor};
+        esp.detailColor, esp.outlineColor, esp.healthColor, esp.healthLowColor, esp.weaponColor, esp.c4Color};
     for (unsigned c = 0; c < std::size(colors); ++c)
         for (unsigned i = 0; i < 4; ++i) colors[c][i] = (c + i + 1) / 16.0f;
     EspSetSettings(esp);
@@ -536,6 +538,9 @@ int main() {
     Expect(PlayerChamsGetSettings() == chamsDefaults, "older presets without player chams restore every disabled default");
     Expect(GrenadeGetSettings() == grenadeDefaults, "older presets without grenades restore disabled removals and auras");
     Expect(BulletTracerGetSettings() == tracerDefaults, "older presets without tracers restore all disabled appearance defaults");
+    Expect(!EspGetSettings().weaponIcons && !EspGetSettings().c4Carrier && !EspGetSettings().droppedC4 &&
+        !EspGetSettings().plantedC4 && EspGetSettings().weaponIconSize == 18 && EspGetSettings().c4IconSize == 22,
+        "older presets restore disabled item ESP and default icon sizes");
     Expect(SkinGetSettings() == SkinSettings{}, "older presets clear both skin loadouts and disable overrides");
     MovementSetSettings({true, true, true});
     Write(badPath, "version=1\nmovement.bunnyhop=0\nmovement.autostrafe=0\n");

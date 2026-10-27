@@ -1,4 +1,5 @@
 #include "esp_draw.h"
+#include "weapon_icons.h"
 
 #include <Windows.h>
 #include <imgui.h>
@@ -28,10 +29,12 @@ void LogSettings() noexcept {
     char message[768]{};
     std::snprintf(message, sizeof(message),
         "ESP_SETTINGS enabled=%d names=%d boxes=%d distance=%d health=%d teammates=%d armor=%d range=unlimited "
+        "weapons=%d c4_carrier=%d dropped_c4=%d planted_c4=%d "
         "team_colors=%d box_style=%d thickness=%.2f fill=%d font=%d name_size=%.1f detail_size=%.1f "
         "box_rgba=%.2f,%.2f,%.2f,%.2f name_rgba=%.2f,%.2f,%.2f,%.2f",
         settings.enabled, settings.names, settings.boxes, settings.distance, settings.health,
-        settings.teammates, settings.armor, settings.teamColors, settings.boxStyle, settings.boxThickness,
+        settings.teammates, settings.armor, settings.weaponIcons, settings.c4Carrier,
+        settings.droppedC4, settings.plantedC4, settings.teamColors, settings.boxStyle, settings.boxThickness,
         settings.boxFill, settings.nameFont, settings.nameSize, settings.detailSize,
         settings.boxColor[0], settings.boxColor[1], settings.boxColor[2], settings.boxColor[3],
         settings.nameColor[0], settings.nameColor[1], settings.nameColor[2], settings.nameColor[3]);
@@ -135,6 +138,18 @@ void StrokeBox(ImDrawList* draw, const EspScreenRect& box, ImU32 color, float th
     }
 }
 
+bool DrawIcon(ImDrawList* draw, ImVec2 center, std::uint16_t definition, float size, ImU32 color) {
+    if (!(color & IM_COL32_A_MASK) || !WeaponIconAvailable(definition)) return false;
+    if (settings.textOutline) {
+        const float alpha = static_cast<float>((color >> IM_COL32_A_SHIFT) & 255) / 255.0f;
+        const ImU32 outline = ImGui::ColorConvertFloat4ToU32({settings.outlineColor[0],
+            settings.outlineColor[1], settings.outlineColor[2], settings.outlineColor[3] * alpha});
+        for (const ImVec2 offset : {ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1)})
+            WeaponIconDraw(*draw, {center.x + offset.x, center.y + offset.y}, definition, size, outline);
+    }
+    return WeaponIconDraw(*draw, center, definition, size, color);
+}
+
 void DrawPlayer(ImDrawList* draw, const EspPlayerSnapshot& player, const EspScreenRect& box,
                 const EspScreenRect& viewport, bool validDistance) {
     const ImU32 color = BoxColor(player.team);
@@ -181,10 +196,59 @@ void DrawPlayer(ImDrawList* draw, const EspPlayerSnapshot& player, const EspScre
     if (settings.armor)
         std::snprintf(details + used, sizeof(details) - used, "%s%d AP", used ? " | " : "",
                       std::clamp(player.armor, 0, 999));
+    const char* weapon = settings.weaponIcons ? WeaponIconName(player.weaponDefinition) : nullptr;
+    const float detailHeight = details[0] ? settings.detailSize + 3 : 0;
+    const float weaponHeight = weapon ? settings.weaponIconSize + settings.detailSize + 5 : 0;
+    // Reserve the whole stack together so icons never overlap distance/health text.
+    const float stackY = std::max(viewport.top + 1, std::min(box.bottom + 3,
+        viewport.bottom - detailHeight - weaponHeight - 2));
     if (details[0])
         CenteredText(draw, ImGui::GetFont(), settings.detailSize, center,
-            std::min(box.bottom + 3, std::max(viewport.top + 1, viewport.bottom - settings.detailSize - 1)),
+            stackY,
             viewport, Color(settings.detailColor), details);
+    if (weapon) {
+        const float iconX = std::clamp(center, viewport.left + std::min((viewport.right - viewport.left) * 0.5f,
+            settings.weaponIconSize * 1.5f + 2), viewport.right - std::min((viewport.right - viewport.left) * 0.5f,
+            settings.weaponIconSize * 1.5f + 2));
+        DrawIcon(draw, {iconX, stackY + detailHeight + settings.weaponIconSize * 0.5f},
+            player.weaponDefinition, settings.weaponIconSize, Color(settings.weaponColor));
+        CenteredText(draw, ImGui::GetFont(), settings.detailSize, iconX,
+            stackY + detailHeight + settings.weaponIconSize + 2, viewport, Color(settings.weaponColor), weapon);
+    }
+    if (settings.c4Carrier && player.carriesC4) {
+        const float half = settings.c4IconSize * 0.65f + 2;
+        // Move the badge inside the viewport when a player touches its right edge.
+        const float x = box.right + half * 2 + 2 <= viewport.right ? box.right + half + 2 : box.right - half - 2;
+        const float horizontalMargin = std::min(half, (viewport.right - viewport.left) * 0.5f);
+        const float verticalMargin = std::min(half, (viewport.bottom - viewport.top) * 0.5f);
+        DrawIcon(draw, {std::clamp(x, viewport.left + horizontalMargin, viewport.right - horizontalMargin),
+            std::clamp(box.top + half, viewport.top + verticalMargin, viewport.bottom - verticalMargin)},
+            49, settings.c4IconSize, Color(settings.c4Color));
+    }
+}
+
+bool ProjectPoint(const EspVec3& point, const EspMatrix4x4& matrix, float width, float height, ImVec2& screen) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) return false;
+    const ClipPoint clip{matrix.m[0][0]*point.x + matrix.m[0][1]*point.y + matrix.m[0][2]*point.z + matrix.m[0][3],
+        matrix.m[1][0]*point.x + matrix.m[1][1]*point.y + matrix.m[1][2]*point.z + matrix.m[1][3],
+        matrix.m[3][0]*point.x + matrix.m[3][1]*point.y + matrix.m[3][2]*point.z + matrix.m[3][3]};
+    if (!Finite(clip) || clip.w < nearW || std::abs(clip.x) > clip.w || std::abs(clip.y) > clip.w) return false;
+    screen = {(clip.x / clip.w * 0.5f + 0.5f) * width, (0.5f - clip.y / clip.w * 0.5f) * height};
+    return std::isfinite(screen.x) && std::isfinite(screen.y);
+}
+
+bool DrawBomb(ImDrawList* draw, const EspBombSnapshot& bomb, const EspMatrix4x4& matrix,
+              float width, float height) {
+    if (bomb.kind != EspBombKind::Dropped && bomb.kind != EspBombKind::Planted) return false;
+    if (!(bomb.kind == EspBombKind::Planted ? settings.plantedC4 : settings.droppedC4)) return false;
+    ImVec2 point{};
+    if (!ProjectPoint(bomb.origin, matrix, width, height, point)) return false;
+    const ImU32 color = Color(settings.c4Color);
+    if (!DrawIcon(draw, point, bomb.kind == EspBombKind::Planted ? WeaponIconPlantedC4 : 49,
+        settings.c4IconSize, color)) return false;
+    CenteredText(draw, ImGui::GetFont(), settings.detailSize, point.x, point.y + settings.c4IconSize * 0.5f + 4,
+        {0, 0, width, height}, color, bomb.kind == EspBombKind::Planted ? "PLANTED C4" : "DROPPED C4");
+    return true;
 }
 } // namespace
 
@@ -269,12 +333,16 @@ EspSettings EspSanitizeSettings(const EspSettings& value) noexcept {
     color(result.outlineColor, defaults.outlineColor);
     color(result.healthColor, defaults.healthColor);
     color(result.healthLowColor, defaults.healthLowColor);
+    color(result.weaponColor, defaults.weaponColor);
+    color(result.c4Color, defaults.c4Color);
     result.boxStyle = std::clamp(result.boxStyle, 0, 1);
     result.nameFont = std::clamp(result.nameFont, 0, 3);
     result.boxThickness = bounded(result.boxThickness, 0.5f, 5, defaults.boxThickness);
     result.nameSize = bounded(result.nameSize, 10, 28, defaults.nameSize);
     result.detailSize = bounded(result.detailSize, 9, 22, defaults.detailSize);
     result.healthBarWidth = bounded(result.healthBarWidth, 1, 8, defaults.healthBarWidth);
+    result.weaponIconSize = bounded(result.weaponIconSize, 12, 32, defaults.weaponIconSize);
+    result.c4IconSize = bounded(result.c4IconSize, 14, 36, defaults.c4IconSize);
     return result;
 }
 
@@ -294,6 +362,10 @@ void EspResetStyle() noexcept {
     defaults.health = settings.health;
     defaults.teammates = settings.teammates;
     defaults.armor = settings.armor;
+    defaults.weaponIcons = settings.weaponIcons;
+    defaults.c4Carrier = settings.c4Carrier;
+    defaults.droppedC4 = settings.droppedC4;
+    defaults.plantedC4 = settings.plantedC4;
     EspSetSettings(defaults);
 }
 
@@ -305,6 +377,7 @@ void EspConfigureFonts() {
     if (atlas.Fonts.empty()) ImGui::GetIO().FontDefault = atlas.AddFontDefault();
     for (int choice = 1; choice <= 3; ++choice)
         if (!FindFont(choice)) LoadFont(atlas, choice);
+    WeaponIconConfigure();
 }
 
 bool EspFontAvailable(int font) noexcept {
@@ -321,11 +394,12 @@ void EspDrawPreview(float width, float height) {
     draw->PushClipRect(origin, { viewport.right, viewport.bottom }, true);
     draw->AddRectFilled(origin, { viewport.right, viewport.bottom }, IM_COL32(19, 24, 31, 255));
     const int samples = width >= 300 ? 2 : 1;
-    const float halfBoxWidth = std::min(width / samples * 0.25f, std::max(1.0f, height - 70) * 0.25f);
+    const float extra = settings.weaponIcons ? settings.weaponIconSize + settings.detailSize + 6 : 0;
+    const float halfBoxWidth = std::min(width / samples * 0.25f, std::max(1.0f, height - 70 - extra) * 0.25f);
     for (int sample = 0; sample < samples; ++sample) {
         const float center = origin.x + width * (static_cast<float>(sample) + 0.5f) / samples;
         const EspScreenRect box { center - halfBoxWidth, origin.y + 36,
-                                  center + halfBoxWidth, origin.y + height - 34 };
+                                  center + halfBoxWidth, origin.y + height - 34 - extra };
         EspPlayerSnapshot player{};
         const bool terrorist = samples == 2 && sample == 0;
         strcpy_s(player.name, terrorist ? "T preview" : "CT preview");
@@ -333,6 +407,8 @@ void EspDrawPreview(float width, float height) {
         player.health = 72;
         player.armor = 50;
         player.distanceMeters = 24;
+        player.weaponDefinition = terrorist ? 7 : 16;
+        player.carriesC4 = terrorist;
         if (settings.enabled && box.bottom > box.top && box.right > box.left)
             DrawPlayer(draw, player, box, viewport, true);
     }
@@ -369,11 +445,16 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
     stats.matrixValid = frame.matrixValid;
     stats.distanceAvailable = frame.distanceAvailable;
     stats.enabled = settings.enabled;
-    if (!frame.valid || !frame.matrixValid || !settings.enabled ||
-        (!frame.players && frame.playerCount) || !ImGui::GetCurrentContext()) return stats;
+    if (!frame.valid || !frame.matrixValid ||
+        (!frame.players && frame.playerCount) || (!frame.bombs && frame.bombCount) ||
+        !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0 ||
+        !ImGui::GetCurrentContext()) return stats;
+    for (const auto& row : frame.worldToClip.m)
+        for (float value : row) if (!std::isfinite(value)) return stats;
     // Keep player primitives behind either menu so the controls remain readable.
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
-    for (std::size_t i = 0; i < frame.playerCount; ++i) {
+    draw->PushClipRect({0, 0}, {width, height}, true);
+    for (std::size_t i = 0; settings.enabled && i < frame.playerCount; ++i) {
         const EspPlayerSnapshot& player = frame.players[i];
         ++stats.considered;
         if (player.localPlayer) { ++stats.local; continue; }
@@ -395,7 +476,13 @@ EspDrawStats EspDraw(const EspFrameSnapshot& frame, float width, float height) {
         ++stats.projected;
         const int verticesBefore = draw->VtxBuffer.Size;
         DrawPlayer(draw, player, box, { 0, 0, width, height }, validDistance);
+        if (settings.weaponIcons && WeaponIconAvailable(player.weaponDefinition) && settings.weaponColor[3] > 0)
+            ++stats.weaponIcons;
+        if (settings.c4Carrier && player.carriesC4 && WeaponIconAvailable(49) && settings.c4Color[3] > 0) ++stats.carriers;
         if (draw->VtxBuffer.Size > verticesBefore) ++stats.drawn;
     }
+    for (std::size_t i = 0; i < frame.bombCount; ++i)
+        if (DrawBomb(draw, frame.bombs[i], frame.worldToClip, width, height)) ++stats.bombs;
+    draw->PopClipRect();
     return stats;
 }

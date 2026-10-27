@@ -83,14 +83,14 @@ struct ModelPickerFixture {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc < 2 || argc > 6 || argc == 5) {
-        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls; 25 shows bullet tracers; 26 draws synthetic grenade trajectories.\n");
+        std::fprintf(stderr, "Preview 17 draws synthetic eligible aim centers; 18 shows Fresnel chams; 19-23 show skins and item details; 24 shows viewmodel controls; 25 shows bullet tracers; 26 draws synthetic grenade trajectories; 27 draws weapon and C4 ESP.\n");
         std::fprintf(stderr, "Usage: public_menu_preview <output.bmp> [tab: 0=Visuals, 1=Movement, 2=World, 3=Lighting, 4=Aim, 5=Configs, 6=Camera preview, 7=Scoped zoom preview, 8=Player model preview, 9=Anti aim jitter preview, 10=Anti aim spin preview, 11=Scoped crosshair still, 12=Scoped crosshair spread, 13=Flat player chams menu, 14=Iridescent player chams menu, 15=Grenades menu, 16=Grenade aura drawing, 17=Eligible aim points, 18=Fresnel player chams menu, 19=T knife, 20=CT knife, 21=T weapons, 22=CT gloves, 23=CT knife details, 24=Viewmodel controls, 25=Bullet tracers, 26=Grenade trajectory drawing] [scroll pixels] [width height]\n");
         return 1;
     }
     wchar_t* end = nullptr;
     const long selectedTab = argc >= 3 ? std::wcstol(argv[2], &end, 10) : 0;
-    if (selectedTab < 0 || selectedTab > 26 || (argc >= 3 && (end == argv[2] || *end))) {
-        std::fprintf(stderr, "Tab must be between 0 and 26 (24=Viewmodel controls, 25=Bullet tracers, 26=Grenade trajectories).\n");
+    if (selectedTab < 0 || selectedTab > 27 || (argc >= 3 && (end == argv[2] || *end))) {
+        std::fprintf(stderr, "Tab must be between 0 and 27 (24=Viewmodel controls, 25=Bullet tracers, 26=Grenade trajectories, 27=Weapon and C4 ESP).\n");
         return 1;
     }
     const long scroll = argc >= 4 ? std::wcstol(argv[3], &end, 10) : 0;
@@ -230,6 +230,34 @@ int wmain(int argc, wchar_t** argv) {
             }
             for (const auto& center : centers) points.points[points.count++] = {center,2};
             AimVisualizationDraw(points, players, io.DisplaySize.x, io.DisplaySize.y, {true,{.3f,.85f,1,1}});
+        }
+        else if (selectedTab == 27) {
+            auto* draw = ImGui::GetBackgroundDrawList();
+            draw->AddText({24, 18}, IM_COL32(225, 230, 240, 255), "WEAPON AND C4 ESP / SYNTHETIC DRAW PREVIEW");
+            draw->AddText({24, 42}, IM_COL32(150, 165, 180, 255), "Held weapons below players / C4 carrier badge beside the first player");
+            EspPlayerSnapshot actors[4]{};
+            constexpr std::uint16_t weapons[]{7, 16, 9, 61};
+            for (int i = 0; i < 4; ++i) {
+                auto& actor = actors[i]; actor.handle = i + 1; actor.health = 72; actor.team = i & 1 ? 3 : 2;
+                actor.weaponDefinition = weapons[i]; actor.carriesC4 = i == 0; actor.distanceMeters = 24;
+                strcpy_s(actor.name, i == 0 ? "C4 carrier" : "Player");
+                const float x = io.DisplaySize.x * (i + .5f) / 4;
+                for (int corner = 0; corner < 8; ++corner)
+                    actor.worldCorners[corner] = {x + (corner & 1 ? 25.0f : -25.0f),
+                        corner & 2 ? io.DisplaySize.y * .53f : 110.0f, 0};
+            }
+            EspBombSnapshot bombs[]{{10, {io.DisplaySize.x * .3f, io.DisplaySize.y * .78f, 0}, EspBombKind::Dropped},
+                {11, {io.DisplaySize.x * .7f, io.DisplaySize.y * .78f, 0}, EspBombKind::Planted}};
+            EspFrameSnapshot snapshot{};
+            snapshot.players = actors; snapshot.playerCount = 4; snapshot.bombs = bombs; snapshot.bombCount = 2;
+            snapshot.valid = snapshot.matrixValid = snapshot.distanceAvailable = true;
+            snapshot.worldToClip.m[0][0] = 2 / io.DisplaySize.x; snapshot.worldToClip.m[0][3] = -1;
+            snapshot.worldToClip.m[1][1] = -2 / io.DisplaySize.y; snapshot.worldToClip.m[1][3] = 1;
+            snapshot.worldToClip.m[3][3] = 1;
+            EspSettings settings; settings.weaponIcons = settings.c4Carrier = settings.droppedC4 = settings.plantedC4 = true;
+            EspSetSettings(settings);
+            EspDraw(snapshot, io.DisplaySize.x, io.DisplaySize.y);
+            draw->AddText({24, io.DisplaySize.y - 24}, IM_COL32(125, 143, 160, 255), "Copied sample data: drawing verification only.");
         }
         else if (selectedTab == 26) {
             // Copied schematic data through the production trajectory renderer.

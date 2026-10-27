@@ -2,6 +2,51 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Held weapon icons and C4 ESP — October 27, 2026
+
+Under **Visuals**, enable **Held weapon icons** for the active weapon's CS2 HUD
+silhouette and short name beneath each player, or **C4 carrier icon** for a
+C4 badge beside the carrier. The badge follows C4 ownership even while the
+player holds another weapon. Existing teammate, death and local-player filters
+apply to player icons.
+
+Open **Visuals → World ESP** for independent **Dropped C4** and **Planted C4**
+markers. These work with player ESP disabled. Pickup removes the dropped marker;
+planting replaces it with the separate planted-bomb icon. Defused, exploded and
+inactive bombs disappear. Weapon and C4 sizes/colors are configurable and save
+through **Configs**. All four additions start disabled; older presets leave them
+disabled. **Reset ESP appearance** preserves these switches.
+
+Icons use the actual installed game's equipment SVG silhouettes, imported into
+a local font atlas. No replacement drawings or game artwork are bundled in Git.
+Before the first build in a fresh checkout, generate the local font:
+
+```powershell
+python -m pip install fonttools==4.59.1 skia-pathops==0.9.2
+python tools/import_weapon_icons.py
+```
+
+The importer reads the installed `csgo/pak01_dir.vpk` and writes only workspace
+files under `logs/weapon-icons/`. Keep `logs/weapon-icons/cs2-hud-icons.ttf`
+available when loading the overlay. See [asset provenance](assets/README.md)
+and [entity contracts](tools/CS2_ESP_ITEMS_EVIDENCE.md).
+
+Build and launch commands otherwise remain unchanged. Restart CS2 normally and
+use **Load Overlay.cmd** for an offline/private comparison. No game or server
+was launched for this addition; its live appearance remains unobserved.
+
+Both x64 Release variants build and pass **82/82 CTest suites each**. The icon
+fixture passes **711 checks**, including original raster details and atlas
+lifecycle; acquisition passes **26**. All **40/40 installed-file components**
+pass, and all **11** altered item constants reject. Both DLLs retain zero static
+TLS and delay imports. The software preview was visually inspected.
+
+Software D3D11 preview, using copied sample players and bomb positions:
+
+```powershell
+.\build\Release\public_menu_preview.exe .\logs\weapon-c4-esp-preview.bmp 27 0 1000 600
+```
+
 ## Native held-grenade preview — October 27, 2026
 
 **Visuals → Grenades → Grenade prediction** now calls CS2's installed

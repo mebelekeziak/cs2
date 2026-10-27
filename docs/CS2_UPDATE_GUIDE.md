@@ -25,8 +25,11 @@ For another installation, point at the **game** directory containing `bin/` and
 python tools/check_compatibility.py --game 'D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive\game'
 ```
 
+The ESP item component checks held-weapon ownership plus dropped/planted C4
+class and lifecycle contracts with `tools/inspect_esp_items.py`.
+
 This does not start/open CS2, inject, contact a server, change installed files or
-rewrite offsets. It runs all thirty-nine frozen verifiers independently, so
+rewrite offsets. It runs all forty frozen verifiers independently, so
 an ESP failure cannot hide a passing world component. Default output is a new
 UTC-dated directory under `logs/compatibility/`. `--output PATH` selects a report
 directory; reusing one replaces its report files.
@@ -36,10 +39,10 @@ The bundle contains:
 - `summary.json`: per-component results, executable/module hashes and PE
   identities, `steam.inf` version, Steam build ID when available, and hashes of
   the source offset headers/verifier entry points used for the run.
-- Thirty-nine component JSON files: exact command, exit code, stdout and stderr.
+- Forty component JSON files: exact command, exit code, stdout and stderr.
   Successful verifier stdout contains the detailed decoded evidence.
 
-Exit code **0** means all thirty-nine static checks passed; **1** means one or more
+Exit code **0** means all forty static checks passed; **1** means one or more
 failed or could not run. Missing installations also produce a failure bundle.
 This command does not build, run CTest, establish the active graphics API, or
 observe gameplay. Inventory of a renderer DLL establishes its presence only.
