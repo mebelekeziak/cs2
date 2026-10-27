@@ -2,6 +2,43 @@
 
 x64 client overlay with local player model selection, third person, configurable anti aim, silent aim, movement assistance, player ESP and an explicit manual mapper. Installed game files are not modified. Existing ESP appearance work was preserved before silent aim in commit `2e8e1c7`.
 
+## Native held-grenade preview — October 27, 2026
+
+**Visuals → Grenades → Grenade prediction** now calls CS2's installed
+`CGrenadeTracer` practice simulator for held grenades. The native launch query
+supplies position and velocity; the engine advances the flight, resolves
+collisions and supplies the endpoint. The overlay copies its path and bounce
+segments, retaining that forecast through the throw with the existing full-handle
+handoff. The practice picture-in-picture setting is not changed.
+
+Temporary tracer entities are created, simulated, copied and submitted to the
+engine's native removal path on the client frame owner. No tracer pointer is
+published or retained between calls. Native clock slots are restored on normal
+and fault exits. A failed held preview never falls back to our flight integrator.
+
+**Scope:** enemy thrown grenades, and local projectiles first seen without a
+prepared preview, still use the previous estimator. Diagnostics identify
+`local_backend=native`, `enemy_backend=estimated`, `native_ok`, `native_failed`
+and `estimated_local_fallback`. Native previews have priority over projectile
+estimation. Colors, icons, controls and configuration remain unchanged.
+
+The native endpoint is Valve's practice-preview result, not an independently
+verified server detonation position. Its simulation horizon is bounded; native
+preview points expose no timestamps. Aggressive launch vectors are forwarded
+unchanged in the fixtures, but actual high-velocity accuracy and frame cost still
+need an offline/private in-game comparison. No game or server was launched for
+this change. See [native contracts](tools/CS2_GRENADE_PREDICTION_EVIDENCE.md).
+
+Build and launch commands are unchanged. Restart CS2 normally, use
+**Load Overlay.cmd**, and enable **Grenade prediction** for the comparison.
+Cooperatively stopped code remains resident until normal process exit.
+
+Both x64 Release variants build without project compiler warnings and pass
+**80/80 CTest suites each**. The native adapter passes **79 checks** and the
+updated prediction runtime passes **163**. All **39/39 installed-file checks**
+pass; all **23** altered native headers reject. Both DLLs retain zero static TLS
+and delay imports. These are static and synthetic checks, not an in-game result.
+
 ## Grenade trajectory prediction — October 26, 2026
 
 Open **Visuals → Grenades → Grenade prediction** for a preview while a local

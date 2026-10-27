@@ -1,6 +1,8 @@
 #include "grenade_prediction_runtime.h"
 #include "grenade_prediction_tracker.h"
 #include "grenade_prediction_offsets.h"
+#include "grenade_native_prediction.h"
+#include "grenade_native_offsets.h"
 #include "cs2_offsets.h"
 #include "aim_weapon_offsets.h"
 #include "aim_shoot_origin_offsets.h"
@@ -36,6 +38,7 @@ ShapeFn shape=nullptr;
 ResultFn result=nullptr;
 FilterFn filter=nullptr;
 TraceFn trace=nullptr;
+GrenadeNativeApi nativePreview{};
 bool prepared=false;
 std::atomic<bool> active{false};
 std::atomic<const char*> status{"grenade prediction not initialized"};
@@ -72,6 +75,7 @@ std::uint64_t budgetFrequency=0;
 #ifdef CS2_GRENADE_PREDICTION_CHECKS
 bool testRuntime=false;
 std::uint64_t (*testBudgetNowUs)()=nullptr;
+bool (*testHeldPrediction)(std::uintptr_t,const GrenadeState&,GrenadePath&)=nullptr;
 #endif
 bool PrepareBudgetClock() noexcept {
     LARGE_INTEGER frequency{};
@@ -306,7 +310,14 @@ struct ProjectileCandidate {
 struct FrameCounts {
     unsigned projectiles=0, local=0, enemy=0, ownership=0, state=0;
     unsigned input=0, clock=0, physics=0, trace=0, budget=0, transferred=0;
+    unsigned nativeSuccess=0, nativeFailed=0, estimatedLocal=0;
 };
+bool PredictHeld(std::uintptr_t held,const GrenadeState& state,GrenadePath& path) {
+#ifdef CS2_GRENADE_PREDICTION_CHECKS
+    if (testRuntime) return testHeldPrediction && testHeldPrediction(held,state,path);
+#endif
+    return GrenadeNativePredict(nativePreview,held,state,path);
+}
 void HandoffPrepared(const std::vector<ProjectileCandidate>& observed,FrameCounts& counts) {
     if (!active.load(std::memory_order_acquire)) return;
     // Handoff needs a newly observed local projectile, not a usable physics
@@ -323,7 +334,7 @@ void HandoffPrepared(const std::vector<ProjectileCandidate>& observed,FrameCount
             if (logSink) {
                 char message[224]{};
                 std::snprintf(message,sizeof(message),
-                    "GRENADE_PATH_TRANSFER revision=3 weapon=0x%x projectile=0x%x release_time=%.6f prepared_frame=%llu observed_frame=%llu",
+                    "GRENADE_PATH_TRANSFER revision=4 weapon=0x%x projectile=0x%x release_time=%.6f prepared_frame=%llu observed_frame=%llu",
                     preparedThrow.weapon,candidate.entity.handle,preparedThrow.releaseTime,
                     static_cast<unsigned long long>(preparedThrow.frame),static_cast<unsigned long long>(firstFrame));
                 logSink(message);
@@ -453,37 +464,16 @@ void OwnerFrame(void*,int) noexcept {
     }
     unsigned traceBudget=4096;
     const auto deadline=BudgetDeadline();
-    // New thrown predictions have priority. Completed paths need no further
-    // native simulation and cannot starve subsequent enemy projectiles.
-    for (std::size_t offset=0;offset<candidates.size();++offset) {
-        const auto& candidate=candidates[(candidateCursor+offset)%candidates.size()];
-        if (tracker.Complete(candidate.entity.handle)) continue;
-        if (!active.load(std::memory_order_acquire)) break;
-        if (!traceBudget || BudgetExpired(deadline)) { ++counts.budget; continue; }
-        GrenadePhysics physics;
-        if (!Physics(candidate.state.kind,candidate.entity.address,physics)) { ++counts.physics; continue; }
-        if (physics.fuseTime>=0 && candidate.state.age>physics.fuseTime+std::max(physics.thinkInterval,physics.step)) {
-            ++counts.clock; continue;
-        }
-        auto state=candidate.state;
-        if (!Same(source.system,candidate.entity) || !Velocity(candidate.entity,state.velocity)) { ++counts.input; continue; }
-        SweepContext sweep{source,candidate.entity,&traceBudget,deadline};
-        auto path=GrenadeSimulate(state,physics,Sweep,&sweep);
-        if (path.end==GrenadeEnd::TraceFailure || path.end==GrenadeEnd::Invalid) ++counts.trace;
-        else if (active.load(std::memory_order_acquire) && Same(source.system,candidate.entity))
-            tracker.SetPath(candidate.entity.handle,std::move(path));
-    }
-    if (!candidates.empty()) candidateCursor=(candidateCursor+1)%candidates.size();
     bool showPrepared=false;
     if (haveHeld && active.load(std::memory_order_acquire)) {
         const bool sameCommitted=preparedThrow.weapon==held.handle && preparedThrow.committed && heldPin==0 &&
             heldThrowTime==preparedThrow.releaseTime;
         if (sameCommitted) showPrepared=!preparedThrow.transferred;
-        GrenadePhysics physics;
-        if (!sameCommitted && Physics(heldState.kind,0,physics) && traceBudget && !BudgetExpired(deadline)) {
-            SweepContext sweep{source,source.pawn,&traceBudget,deadline};
-            auto path=GrenadeSimulate(heldState,physics,Sweep,&sweep);
-            if (active.load(std::memory_order_acquire) && path.end!=GrenadeEnd::Invalid && path.end!=GrenadeEnd::TraceFailure &&
+        if (!sameCommitted && !BudgetExpired(deadline)) {
+            GrenadePath path;
+            const bool predicted=PredictHeld(held.address,heldState,path);
+            if (predicted) ++counts.nativeSuccess; else ++counts.nativeFailed;
+            if (predicted && active.load(std::memory_order_acquire) && path.Terminal() &&
                 Same(source.system,held)) {
                 const bool committed=heldPin==0 && heldThrowTime>0;
                 preparedThrow={held.handle,std::move(path),now,frameSerial,committed?heldThrowTime:0,
@@ -502,9 +492,30 @@ void OwnerFrame(void*,int) noexcept {
             Read(previous.address+off::ThrowTime,throwTime) && std::isfinite(throwTime) &&
             throwTime>0 && throwTime==preparedThrow.releaseTime;
     }
-    // A newly captured released preview can meet its projectile in this same
-    // owner frame. Merge it before drawing instead of showing two paths.
+    // Transfer a release captured this frame before considering any fallback.
     HandoffPrepared(observed,counts);
+    // Local native preview has priority over remaining projectile trace work.
+    // Completed paths require no repeated simulation.
+    for (std::size_t offset=0;offset<candidates.size();++offset) {
+        const auto& candidate=candidates[(candidateCursor+offset)%candidates.size()];
+        if (tracker.Complete(candidate.entity.handle)) continue;
+        if (!active.load(std::memory_order_acquire)) break;
+        if (!traceBudget || BudgetExpired(deadline)) { ++counts.budget; continue; }
+        GrenadePhysics physics;
+        if (!Physics(candidate.state.kind,candidate.entity.address,physics)) { ++counts.physics; continue; }
+        if (physics.fuseTime>=0 && candidate.state.age>physics.fuseTime+std::max(physics.thinkInterval,physics.step)) {
+            ++counts.clock; continue;
+        }
+        auto state=candidate.state;
+        if (!Same(source.system,candidate.entity) || !Velocity(candidate.entity,state.velocity)) { ++counts.input; continue; }
+        SweepContext sweep{source,candidate.entity,&traceBudget,deadline};
+        auto path=GrenadeSimulate(state,physics,Sweep,&sweep);
+        if (!candidate.enemy) ++counts.estimatedLocal;
+        if (path.end==GrenadeEnd::TraceFailure || path.end==GrenadeEnd::Invalid) ++counts.trace;
+        else if (active.load(std::memory_order_acquire) && Same(source.system,candidate.entity))
+            tracker.SetPath(candidate.entity.handle,std::move(path));
+    }
+    if (!candidates.empty()) candidateCursor=(candidateCursor+1)%candidates.size();
     // Native queries may dispatch callbacks. Recheck lifecycle after them,
     // including complete paths that did not need a new trace this frame.
     for (const auto& candidate:observed) {
@@ -523,14 +534,14 @@ void OwnerFrame(void*,int) noexcept {
         AcquireSRWLockExclusive(&publicationLock);
         published=std::move(next); publishedSource=source; capturedAt=now;
         ReleaseSRWLockExclusive(&publicationLock);
-        status.store("grenade paths retained until detonation/deployment",std::memory_order_release);
+        status.store("native local preview; estimated enemy paths; retained to actual end",std::memory_order_release);
         if (logSink && (!reportedAt || now-reportedAt>=2000)) {
-            char message[448]{};
+            char message[512]{};
             std::snprintf(message,sizeof(message),
-                "GRENADE_PREDICTION revision=3 projectiles=%u local=%u enemy=%u retained=%zu ownership_reject=%u state_reject=%u "
-                "input_reject=%u clock_reject=%u physics_reject=%u trace_reject=%u budget_deferred=%u prepared_transfers=%u",
+                "GRENADE_PREDICTION revision=4 local_backend=native enemy_backend=estimated projectiles=%u local=%u enemy=%u retained=%zu ownership_reject=%u state_reject=%u "
+                "input_reject=%u clock_reject=%u physics_reject=%u trace_reject=%u budget_deferred=%u prepared_transfers=%u native_ok=%u native_failed=%u estimated_local_fallback=%u",
                 counts.projectiles,counts.local,counts.enemy,retainedPaths,counts.ownership,counts.state,
-                counts.input,counts.clock,counts.physics,counts.trace,counts.budget,counts.transferred);
+                counts.input,counts.clock,counts.physics,counts.trace,counts.budget,counts.transferred,counts.nativeSuccess,counts.nativeFailed,counts.estimatedLocal);
             logSink(message); reportedAt=now;
         }
     } else if (!active.load(std::memory_order_acquire) || !Local(after) || source!=after) {
@@ -550,6 +561,10 @@ bool GrenadePredictionPrepare(GrenadePredictionLogCallback logger) noexcept {
         nt.OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC || nt.FileHeader.TimeDateStamp!=ent::ClientTimestamp ||
         nt.OptionalHeader.SizeOfImage!=ent::ClientImageSize || !Match(client+off::Launch,off::LaunchBytes) ||
         !Match(client+off::GetAbsVelocity,off::GetAbsVelocityBytes) ||
+        !Match(client+grenade_native_offsets::Create,grenade_native_offsets::CreateBytes) ||
+        !Match(client+grenade_native_offsets::Simulate,grenade_native_offsets::SimulateBytes) ||
+        !Match(client+grenade_native_offsets::Remove,grenade_native_offsets::RemoveBytes) ||
+        !Match(client+grenade_native_offsets::Position,grenade_native_offsets::PositionBytes) ||
         !Match(client+weapon::CurrentTime,weapon::CurrentTimeBytes) || !Match(client+cam::InitializeShape,cam::InitializeShapeBytes) ||
         !Match(client+cam::InitializeTrace,cam::InitializeTraceBytes) || !Match(client+cam::PopulateFilter,cam::PopulateFilterBytes) ||
         !Match(client+cam::TraceShape,cam::TraceShapeBytes) || !ClientFrameSubscribe(OwnerFrame,logger)) {
@@ -562,9 +577,14 @@ bool GrenadePredictionPrepare(GrenadePredictionLogCallback logger) noexcept {
     result=reinterpret_cast<ResultFn>(client+cam::InitializeTrace);
     filter=reinterpret_cast<FilterFn>(client+cam::PopulateFilter);
     trace=reinterpret_cast<TraceFn>(client+cam::TraceShape);
+    nativePreview={client,
+        reinterpret_cast<decltype(nativePreview.create)>(client+grenade_native_offsets::Create),
+        reinterpret_cast<decltype(nativePreview.simulate)>(client+grenade_native_offsets::Simulate),
+        reinterpret_cast<decltype(nativePreview.remove)>(client+grenade_native_offsets::Remove),
+        reinterpret_cast<decltype(nativePreview.position)>(client+grenade_native_offsets::Position),MovementCopy};
     prepared=true;
     status.store("grenade prediction ready",std::memory_order_release);
-    if (logger) logger("GRENADE_PREDICTION_READY revision=3 per-throw release tokens; observed full-handle handoff independent of physics clock; retained to actual end");
+    if (logger) logger("GRENADE_PREDICTION_READY revision=4 local_backend=CGrenadeTracer native practice physics; enemy_backend=estimated; retained to actual end");
     return true;
 }
 void GrenadePredictionActivate() noexcept { if (prepared) active.store(true,std::memory_order_release); }
@@ -602,6 +622,7 @@ void GrenadePredictionTestConfigure(std::uintptr_t base,const GrenadePredictionT
     launch=native.launch; nativeTime=native.time; shape=native.shape;
     result=native.result; filter=native.filter; trace=native.trace;
     nativeVelocity=native.velocity; testBudgetNowUs=native.budgetNowUs; reportedAt=0;
+    testHeldPrediction=native.heldPrediction;
     PrepareBudgetClock();
     GrenadePredictionActivate();
 }

@@ -43,6 +43,7 @@ void NativeFilter(void*, void*, std::uint64_t, std::uint8_t, std::uint8_t);
 bool NativeTrace(void*, void*, const void*, const void*, void*, void*);
 EspVec3* NativeVelocity(void*, EspVec3*);
 std::uint64_t NativeBudgetNow();
+bool NativeHeldPrediction(std::uintptr_t,const GrenadeState&,GrenadePath&);
 
 struct Fixture {
     std::vector<unsigned char> client = std::vector<unsigned char>(ent::ClientImageSize);
@@ -60,6 +61,9 @@ struct Fixture {
     EspVec3 projectileVelocity{100, 0, 0}, secondVelocity{80, 0, 0};
     int launches = 0, traces = 0, filters = 0, shapes = 0;
     int velocityCalls = 0;
+    int nativePredictions = 0;
+    bool failNativePrediction = false;
+    EspVec3 nativeEndpoint{17,23,91};
     DWORD traceDelayMs = 0;
     std::uint64_t fakeBudgetUs = 1;
     bool negativeGroupSeen = false;
@@ -88,6 +92,7 @@ struct Fixture {
         gravityData.fill(0);
         molotovFuseData.fill(0); molotovSlopeData.fill(0);
         time = 100.75f; launches = traces = filters = shapes = velocityCalls = 0; negativeGroupSeen = false; traceDelayMs = 0;
+        nativePredictions = 0; failNativePrediction = false; nativeEndpoint = {17,23,91};
         fakeBudgetUs = 1;
         failFrameClock = false; failedClockCalls = 0;
         nativeArguments = launchWrites = true; duringTrace = DuringTrace::None; ignored = 0;
@@ -135,7 +140,7 @@ struct Fixture {
         Put(projectile.data(), off::Elasticity, float{.45f});
         GrenadeSettings settings; settings.prediction = true; settings.enemyPrediction = true;
         GrenadeSetSettings(settings);
-        const GrenadePredictionTestNative native{NativeLaunch, NativeTime, NativeShape, NativeResult, NativeFilter, NativeTrace, NativeVelocity, NativeBudgetNow};
+        const GrenadePredictionTestNative native{NativeLaunch, NativeTime, NativeShape, NativeResult, NativeFilter, NativeTrace, NativeVelocity, NativeBudgetNow, NativeHeldPrediction};
         GrenadePredictionTestConfigure(Address(client.data()), native);
     }
     std::vector<GrenadePredictionVisual> Sample() {
@@ -202,16 +207,30 @@ void NativeFilter(void*, void* ignored, std::uint64_t mask, std::uint8_t layer, 
     ++fixture->filters; fixture->ignored = Address(ignored);
     fixture->nativeArguments &= flags == 0x0F && mask == off::GrenadeMask && layer == off::GrenadeLayer;
 }
-bool NativeTrace(void* manager, void*, const void* start, const void* end, void*, void*) {
-    auto& f = *fixture; ++f.traces;
-    if (f.traceDelayMs) { f.fakeBudgetUs += static_cast<std::uint64_t>(f.traceDelayMs) * 1000; f.traceDelayMs = 0; }
-    f.nativeArguments &= Address(manager) == Address(f.system.data()) && start && end;
+void DuringNativeQuery() {
+    auto& f = *fixture;
     const auto action = f.duringTrace; f.duringTrace = DuringTrace::None;
     if (action == DuringTrace::Stop) GrenadePredictionStop();
     if (action == DuringTrace::Death) Put(f.pawn.data(), ent::C_BaseEntity::m_iHealth, int{0});
     if (action == DuringTrace::ReplaceSystem) Put(f.client.data(), ent::globals::dwGameEntitySystem, Address(f.otherSystem.data()));
     if (action == DuringTrace::RetireHeld) f.Retire(Fixture::Held);
     if (action == DuringTrace::RetireProjectile) f.Retire(Fixture::Projectile);
+}
+bool NativeHeldPrediction(std::uintptr_t held,const GrenadeState& state,GrenadePath& path) {
+    auto& f=*fixture; ++f.nativePredictions;
+    f.nativeArguments &= held==Address(f.held.data()) && state.age==0 &&
+        state.position.x==f.launchPosition.x && state.velocity.x==f.launchVelocity.x;
+    DuringNativeQuery();
+    if (f.failNativePrediction) return false;
+    path.kind=state.kind; path.nodes={{state.position,0,false},{f.nativeEndpoint,0,false}};
+    path.finalPosition=f.nativeEndpoint; path.end=GrenadeEnd::NativePreview;
+    return true;
+}
+bool NativeTrace(void* manager, void*, const void* start, const void* end, void*, void*) {
+    auto& f = *fixture; ++f.traces;
+    if (f.traceDelayMs) { f.fakeBudgetUs += static_cast<std::uint64_t>(f.traceDelayMs) * 1000; f.traceDelayMs = 0; }
+    f.nativeArguments &= Address(manager) == Address(f.system.data()) && start && end;
+    DuringNativeQuery();
     return false; // Unobstructed trace has initialized fraction one.
 }
 }
@@ -262,17 +281,30 @@ int main() {
     Check(f.Sample().empty(), "stale active weapon serial is rejected");
     f.Reset(); f.LocalOnly(); f.launchVelocity.x = std::numeric_limits<float>::quiet_NaN();
     Check(f.Sample().empty(), "nonfinite launch output is rejected");
-    f.Reset(); Put(f.gravityData.data(), weapon::CvarValue, std::numeric_limits<float>::quiet_NaN());
-    Check(f.Sample().empty(), "nonfinite native gravity cvar rejects all predictions");
-    f.Reset(); Put(f.client.data(), movement_jumpbug_offsets::Gravity + weapon::CvarValuePointer, std::uintptr_t{0});
-    Check(f.Sample().empty(), "missing native gravity storage rejects all predictions");
+    f.Reset(); f.EnemyOnly(); Put(f.gravityData.data(), weapon::CvarValue, std::numeric_limits<float>::quiet_NaN());
+    Check(f.Sample().empty(), "nonfinite native gravity cvar rejects estimated enemy prediction");
+    f.Reset(); f.EnemyOnly(); Put(f.client.data(), movement_jumpbug_offsets::Gravity + weapon::CvarValuePointer, std::uintptr_t{0});
+    Check(f.Sample().empty(), "missing native gravity storage rejects estimated enemy prediction");
     for (const auto& entry : off::WeaponTables) {
         f.Reset(); f.LocalOnly(); Put(f.held.data(), 0, Address(f.client.data()) + entry.rva);
         paths = f.Sample();
         Check(paths.size() == 1 && paths[0].path.kind == static_cast<GrenadeKind>(entry.kind), "all six native held grenade classes retain their icon kind");
     }
     f.Reset(); f.LocalOnly(); Put(f.client.data(), cam::TraceManager, std::uintptr_t{0});
-    Check(f.Sample().empty(), "missing native trace manager clears path");
+    Check(f.Sample().size()==1 && f.traces==0, "native local forecast never calls the custom hull adapter");
+    for (const EspVec3 velocity: {EspVec3{2500,-1800,1200},EspVec3{-3500,2400,-1700},EspVec3{0,0,5000}}) {
+        f.Reset(); f.LocalOnly(); f.launchVelocity=velocity;
+        Put(f.client.data(),movement_offsets::TickIntervalConstant,float{0});
+        Put(f.client.data(),movement_jumpbug_offsets::Gravity+weapon::CvarValuePointer,std::uintptr_t{0});
+        paths=f.Sample();
+        Check(paths.size()==1 && paths[0].path.end==GrenadeEnd::NativePreview &&
+            paths[0].path.finalPosition.x==f.nativeEndpoint.x && paths[0].path.finalPosition.z==f.nativeEndpoint.z &&
+            f.nativePredictions==1 && f.traces==0 && f.nativeArguments,
+            "aggressive launch inputs use native output unchanged without custom gravity, tick or sweeps");
+    }
+    f.Reset(); f.LocalOnly(); f.failNativePrediction=true;
+    Check(f.Sample().empty() && f.nativePredictions==1 && f.traces==0,
+        "native local failure never silently falls back to approximate physics");
 
     f.Reset(); f.EnemyOnly(); Put(f.projectile.data(), 0, Address(f.client.data()) + off::WeaponTables[0].rva);
     Check(f.Sample().empty(), "enemy held or primed weapons never publish a projectile path");
@@ -612,10 +644,10 @@ int main() {
     for (auto action : {DuringTrace::Death, DuringTrace::ReplaceSystem, DuringTrace::RetireHeld}) {
         f.Reset(); f.LocalOnly(); f.duringTrace = action;
         Check(f.Sample().empty(), "source changes during native trace prevent local publication");
-        if (action==DuringTrace::ReplaceSystem) Check(f.traces==1, "changed entity system aborts before another native sweep");
+        if (action==DuringTrace::ReplaceSystem) Check(f.nativePredictions==1 && f.traces==0, "changed entity system rejects the completed native forecast");
     }
     f.Reset(); f.LocalOnly(); Put(f.client.data(), movement_offsets::TickIntervalConstant, float{0});
-    Check(f.Sample().empty(), "unavailable native tick interval rejects prediction without a guessed rate");
+    Check(f.Sample().size()==1 && f.nativePredictions==1, "native local preview owns its timestep without a guessed rate");
     f.Reset(); f.EnemyOnly(); f.duringTrace = DuringTrace::RetireProjectile;
     Check(f.Sample().empty(), "projectile retirement during trace prevents stale publication");
     f.Reset(); f.LocalOnly(); f.duringTrace = DuringTrace::Stop;

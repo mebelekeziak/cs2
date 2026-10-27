@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import struct
 from verify_sky_draw import mapped, primary_vtable, DEFAULT
+from inspect_grenade_native import verify as verify_native
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_SHA256 = 'ccaf4e4926babc052994502b19ec61198a11008a39dce712921b93dd993be9f5'
@@ -160,7 +161,8 @@ def verify(game, header):
         expected = [(primary_vtable(image, base, ('.?AV'+name+'@@').encode()), k) for k, name in enumerate(names)]
         if records != expected: raise SystemExit('Header RTTI tables mismatch: '+symbol)
         tables[symbol] = expected
-    return {'client_sha256': CLIENT_SHA256, 'server_sha256': SERVER_SHA256, 'live_observation': False, 'contracts': values, 'tables': tables,
+    native = verify_native(game)
+    return {'client_sha256': CLIENT_SHA256, 'server_sha256': SERVER_SHA256, 'live_observation': False, 'contracts': values, 'tables': tables, 'native_preview': native,
             'complete_windows': list(WINDOWS), 'server_windows': list(SERVER_WINDOWS),
             'native_launch_return': 'stashed source selected; outputs valid on either return'}
 

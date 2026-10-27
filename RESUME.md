@@ -1,3 +1,40 @@
+# Native held-grenade preview — October 27, 2026
+
+User reports estimator errors on fast/aggressive throws and requested reuse of
+CS2 practice prediction. Implemented revision 4: held preview now calls the
+installed CGrenadeTracer factory/simulator and copies its nested path vectors
+and current endpoint. Native temporary tracer lifecycle follows the independent
+cl_sim_grenade_trajectory caller: create, simulate, copy, native removal, all on
+the existing client frame owner. Exact RTTI/full identity checks guard ownership.
+Native clock slots restore through SEH finally; malformed output/failed cleanup
+reject. Fire fuse must be finite 0..30 before entering its synchronous loop.
+
+Existing full-handle release retention is preserved. Held native preview has
+priority over projectile estimator work; it does not enable PiP or change
+server/game files. Enemy forecasts and local already-flying grenades with no
+captured held preview still use the estimator; logs expose this explicitly as
+local_backend=native, enemy_backend=estimated, estimated_local_fallback, plus
+native_ok/native_failed. No silent approximate held fallback.
+
+Native endpoint means the bounded practice preview, not proven server impact or
+exact detonation scheduling. Native points have unspecified timestamps (zero),
+GrenadeEnd::NativePreview. Segment-boundary bounce positions are native samples.
+Native routine is synchronous and cannot be preempted by our 6ms trace budget;
+real frame cost and high-velocity alignment remain unobserved.
+
+Both standard Release outputs rebuilt, 80/80 CTest each, no project warnings;
+native adapter 79 checks, owner runtime 163. 39/39 installed component checks
+pass in logs/compatibility/native-grenade-preview-20261027. 23/23 changed native
+headers reject. Both DLL TLS/delay directories zero; hashes and research under
+logs/research/26144732/native-grenade/payload-contract.json. New native header,
+adapter and frozen verifier: include/grenade_native_offsets.h,
+include/grenade_native_prediction.h, src/grenade_native_prediction.cpp,
+tools/inspect_grenade_native.py. Existing grenade verifier includes native check.
+README, address index and tools/CS2_GRENADE_PREDICTION_EVIDENCE.md updated.
+No client/server was launched or interacted with. Normal restart + Load Overlay.cmd
+and Grenade prediction on for the user's offline/private high-speed comparison.
+Stopped callbacks remain resident until normal process exit.
+
 # Native replay and ordinary takeoff guard — October 25, 2026
 
 Latest user reports `several possible aim commands` dominates annoying misses.

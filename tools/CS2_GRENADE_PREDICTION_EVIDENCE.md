@@ -16,6 +16,130 @@ the values/fingerprint in `include/grenade_prediction_offsets.h`.
 `--header PATH` permits workspace copies for negative verification. It does
 not launch/open CS2, inject, contact a server or modify installed files.
 
+## Native practice-preview backend — October 27, 2026, revision 4
+
+This extension uses the same installed Windows AMD64 client and D3D11 overlay
+baseline above. `steam.inf` still reports 1.41.9.2 / 2000935 / revision 11162119.
+The initial combined compatibility bundle passed all 39 components in
+`logs/compatibility/20261027T065307097370Z/`. Research reads installed PE files;
+no process was opened, game launched, injection performed or server contacted.
+Capstone 5.0.9 was used for discovery from `logs/research/python-deps/`.
+Disassembly is in `logs/research/26144732/native-grenade/`.
+
+### Entry points, argument producers and ownership
+
+The named registration `client+0x9A270..0x9A316` establishes
+`sv_grenade_trajectory_prac_pipreview` and wrapper `0x24C8F60`.
+The client practice producer `0x7E0A50..0x7E0BD3` checks its value, obtains
+the weapon's native kind through vslot `+0xD58`, then calls:
+
+1. `void* Create(int nativeKind, void* weapon, float duration)` at `0x10CBA50`.
+   The third argument uses XMM2 under Windows x64 ABI; the practice producer
+   supplies zero. The factory constructs a real client `CGrenadeTracer` entity,
+   sets native `grenade_type` and `tracer_duration` spawn attributes, and installs
+   the optional weapon's full handle in the tracer. RTTI establishes the exact
+   primary vtable `0x1D0DAA8`; this is not a raw heap buffer to initialize ourselves.
+2. The existing launch query `0x7C7940`, with the original verified arguments.
+3. `void Simulate(void* tracer, const VectorWS* start, const Vector* velocity)`
+   at `0x10CC800..0x10CCC72`.
+
+The independent `cl_sim_grenade_trajectory` console implementation at
+`0x10D9630..0x10D971F` calls the same factory with a null weapon, runs the same
+simulator and then calls native removal `0xA1C6C0..0xA1C775`. This establishes
+the temporary create/simulate/remove lifecycle used by our adapter. Native
+removal transfers retirement to the engine's entity lifecycle; it is not a
+manual C++ destructor/free or a DLL unload. No picture-in-picture cvar or
+practice server setting is changed by the overlay.
+
+`GrenadeKind` is not the native kind enum. Vslot bodies for the six recognized
+held classes establish HE=0, flash=1, smoke=4, decoy=3, Molotov/incendiary=2.
+The latter retain separate overlay icons and the native launch velocity of
+their actual weapon. Factory failure, class mismatch and malformed identity
+do not authorize calling guessed cleanup or other entity virtuals.
+
+### Simulation output and clock ownership
+
+The native simulator configures the tracer's native collision property, sets
+move type 10 and collision group 16, and invokes its native physics virtual
+`+0x498`. The inherited physics dispatcher and tracer collision callback
+`0x10D2A80..0x10D2E1E` own sweep/remainder/bounce behavior. Our local path does
+not perform its own integration, velocity clipping or collision retries.
+
+The simulator temporarily replaces GlobalVars pointed to by `client+0x2232088`:
+four-byte slots `+0x30`, `+0x34`, `+0x44`, `+0x50`, `+0x58`. Its normal loop
+restores them. The adapter snapshots these immediately before the synchronous
+call and restores the same five slots in `__finally`, including native faults.
+It checks that the global pointer still identifies the original source and
+does not write a replacement map/lifecycle's globals. Other slots are untouched.
+
+Path storage at tracer `+0x10D0` is a 24-byte vector descriptor containing
+24-byte vector descriptors of 12-byte world positions. Descriptor count is
+`+0`, data `+8`, capacity `+16`, flags `+20`. Native append at `0x10C98F0` and
+segment creation at `0x10D4430` establish these widths and strides independently.
+The collision callback starts another segment; copied segment boundaries give
+bounce markers at the native sampled positions, not an independently recovered
+contact timestamp or exact unsampled contact point. The endpoint is copied
+from the native current absolute-origin query `0x219A60..0x219A8C`, after its
+scene-cache refresh, and appended even when the last sampled point precedes it.
+
+At most 128 descriptors and 4,096 copied nodes, including the endpoint, are
+accepted. Empty output, excessive counts, count/capacity disagreement, unreadable
+buffers, nonfinite positions, changed full identity or failed retirement reject
+the whole result. Tracer ownership is scoped to a single frame-owner call;
+the exact identity/back-link/handle and RTTI class are revalidated before reads
+and retirement. The adapter submits removal even after a failed simulation or
+copy if that exact owned entity still exists. No engine pointer is published.
+
+The native samples have no per-point timestamps. `GrenadeEnd::NativePreview`
+marks a completed engine preview; its point times/final age are unspecified
+zeroes. It must not be presented as a measured server detonation deadline.
+The native horizon is bounded: HE/flash use 1.5+0.125 seconds, smoke/decoy
+10+0.125, fire uses the live Molotov fuse+0.125; low native speed can stop earlier.
+The adapter rejects a nonfinite, negative or greater-than-30-second fire fuse
+before allocation, preventing an extreme live setting from extending its
+synchronous native loop without a usable bound.
+The `+0x10CD` byte is native curve-processing state, not a detonation flag, and
+is deliberately not used as one. Native preview is not proof of future server
+agreement for moving objects, breakables or server scheduling.
+
+### Runtime integration and verification limits
+
+Held paths now use this native backend and retain the existing full-handle
+throw handoff/end detection. Native held failure never calls the custom flight
+integrator. Native local work takes priority over bounded projectile tracing;
+the synchronous native routine itself cannot be preempted by our six-ms trace
+budget. Its actual cost remains unmeasured in-game. Completed saved paths need
+no repeat simulation after handoff. Reentrant stop disarms publication, lets
+the synchronous native call finish, restores its clock and retires its entity.
+Stopped callbacks remain resident until normal process exit.
+
+Enemy thrown predictions, and local projectiles discovered without a prepared
+forecast, retain the previous estimator. The native API verified here models a
+full throw from launch, not a drop-in query for arbitrary partially simulated
+projectiles. Logs identify both backends, native success/failure, and
+`estimated_local_fallback` rather than labeling every projectile native.
+
+`python tools/inspect_grenade_native.py` verifies the exact client hash, eleven
+frozen native windows, independent caller targets, RTTI, kind getters, vector
+layout, clock operands and entry fingerprints in `grenade_native_offsets.h`.
+It is also called by the existing grenade component in the 39-part combined
+bundle. `--header PATH` accepts workspace copies for negative verification.
+Native and owner fixtures check aggressive input forwarding, copied output,
+cleanup, clock restoration, malformed data and lifecycle rejection. They do not
+execute installed engine physics or establish high-speed trajectory alignment.
+No in-game native preview has yet been observed for this change.
+
+Final verification: both x64 Release builds pass 80/80 CTest suites with no
+project compiler warnings. Native adapter: 79 checks; owner runtime: 163.
+All 39/39 compatibility components pass in
+`logs/compatibility/native-grenade-preview-20261027/`. All 23 individual native
+scalar, kind, clock-slot and fingerprint mutations reject; reports are
+`logs/research/26144732/native-grenade/verified.json` and `negative-results.json`.
+Both DLLs retain zero static TLS and delay-import directories; exact hashes
+are in the adjacent `payload-contract.json`. Build and CTest output is in
+`logs/native-grenade-build-{public,diagnostic}.log` and
+`logs/native-grenade-ctest-{public,diagnostic}.log`.
+
 ## Native launch query
 
 `client+0x7C7940..0x7C7B07` accepts `(weapon,pawn,outPosition,outVelocity,

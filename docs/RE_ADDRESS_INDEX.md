@@ -21,6 +21,19 @@ at the top of each linked evidence file; earlier sections remain historical.
 
 ## Address conventions and installation
 
+October 27 native held-grenade preview adds
+[native offsets](../include/grenade_native_offsets.h),
+[verifier](../tools/inspect_grenade_native.py) and
+[prediction evidence](../tools/CS2_GRENADE_PREDICTION_EVIDENCE.md).
+The existing grenade-prediction compatibility component runs both verifiers.
+Installed `CGrenadeTracer` factory `client+0x10CBA50`, simulator `0x10CC800`,
+native removal `0xA1C6C0`, current origin getter `0x219A60`, primary vtable
+`0x1D0DAA8`, GlobalVars pointer `0x2232088`, nested path vectors `+0x10D0`.
+Held forecasts use engine physics and retain copied paths through throws;
+enemy and uncaptured local projectile fallback paths remain estimated.
+No native entity, point buffer or clock pointer escapes a prediction call.
+No live native forecast or high-velocity alignment has yet been observed.
+
 New native cosmetics: [skybox offsets](../include/world_skybox_offsets.h),
 [verifier](../tools/verify_skybox.py), [evidence](../tools/CS2_SKYBOX_EVIDENCE.md);
 [Fullbright offsets](../include/world_fullbright_offsets.h),

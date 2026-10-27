@@ -4,7 +4,7 @@
 #include <vector>
 
 enum class GrenadeKind { HE, Flash, Smoke, Decoy, Molotov, Incendiary };
-enum class GrenadeEnd { Invalid, TraceFailure, Budget, Detonated, Settled };
+enum class GrenadeEnd { Invalid, TraceFailure, Budget, Detonated, Settled, NativePreview };
 
 // Copied trace output. The adapter owns the native swept hull and its filter.
 struct GrenadeTrace {
@@ -59,7 +59,7 @@ struct GrenadeState {
 };
 struct GrenadePathNode {
     EspVec3 position{};
-    float time = 0; // Projectile age, including time before this prediction.
+    float time = 0; // Projectile age; unspecified (zero) for native preview points.
     bool impact = false;
 };
 struct GrenadePath {
@@ -69,7 +69,7 @@ struct GrenadePath {
     EspVec3 finalPosition{};
     float finalAge = 0;
     bool Terminal() const noexcept {
-        return end == GrenadeEnd::Detonated || end == GrenadeEnd::Settled;
+        return end == GrenadeEnd::Detonated || end == GrenadeEnd::Settled || end == GrenadeEnd::NativePreview;
     }
 };
 GrenadePath GrenadeSimulate(const GrenadeState&, const GrenadePhysics&,

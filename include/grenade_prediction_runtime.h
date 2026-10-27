@@ -17,6 +17,7 @@ struct GrenadePredictionTestNative {
     bool (*trace)(void*,void*,const void*,const void*,void*,void*)=nullptr;
     EspVec3* (*velocity)(void*,EspVec3*)=nullptr;
     std::uint64_t (*budgetNowUs)()=nullptr;
+    bool (*heldPrediction)(std::uintptr_t,const GrenadeState&,GrenadePath&)=nullptr;
 };
 void GrenadePredictionTestConfigure(std::uintptr_t,const GrenadePredictionTestNative&) noexcept;
 void GrenadePredictionTestFrame() noexcept;
